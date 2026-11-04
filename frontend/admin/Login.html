@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#07150d">
+    <meta name="description" content="Administrator sign in for imPRESSions Print Works.">
+    <title>Admin sign in — imPRESSions Print Works</title>
+    <link rel="stylesheet" href="/assets/admin/login.css">
+</head>
+
+<body>
+    <main class="login-shell">
+        <aside class="brand-panel" aria-label="imPRESSions Print Works">
+            <a class="brand" href="#" aria-label="imPRESSions Print Works">
+                <span class="brand-mark" aria-hidden="true">iP</span>
+                <span class="brand-copy">
+                    imPRESSions
+                    <small>Printing Works</small>
+                </span>
+            </a>
+
+            <div class="brand-story">
+                <span class="eyebrow">A little more personal</span>
+                <h1>Your ideas,<br>beautifully <em>printed.</em></h1>
+                <p>Manage print orders, customer requests, services, and shop activity from one place.</p>
+                <div class="print-preview" aria-hidden="true">
+                    <span class="print-stack"><span class="print-paper"></span></span>
+                    <span class="print-note">
+                        <strong>Made for your moments</strong>
+                        <span>Thoughtful details. Keepsake quality.</span>
+                    </span>
+                </div>
+            </div>
+
+            <p class="brand-footer">© 2026 imPRESSions Print Works</p>
+        </aside>
+
+        <section class="form-panel" aria-labelledby="login-title">
+            <div class="login-card">
+                <a class="brand mobile-brand" href="#" aria-label="imPRESSions Print Works">
+                    <span class="brand-mark" aria-hidden="true">iP</span>
+                    <span class="brand-copy">
+                        imPRESSions
+                        <small>Printing Works</small>
+                    </span>
+                </a>
+
+                <header class="form-heading">
+                    <span class="eyebrow">Administrator access</span>
+                    <h2 id="login-title">Admin sign in</h2>
+                    <p>Sign in with your administrator credentials.</p>
+                </header>
+
+                <form id="admin-login-form" aria-label="Administrator sign in">
+                    <div class="field">
+                        <label for="email">Admin email or username</label>
+                        <input id="email" name="email" type="text" placeholder="Enter your admin email or username" autocomplete="username" required>
+                    </div>
+                    <div class="field">
+                        <label for="password">Password</label>
+                        <div class="password-field">
+                            <input id="password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+                            <button class="password-toggle" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+                        </div>
+                    </div>
+
+                    <p class="login-error" id="login-error" role="alert" hidden></p>
+                    <button class="sign-in-button" type="submit">Sign in to admin</button>
+                </form>
+
+                <p class="prototype-note">Administrator sign-in is verified by the backend. Configure PRINTSHOP_ADMIN_EMAIL and a PBKDF2 hash in PRINTSHOP_ADMIN_PASSWORD_HASH before signing in.</p>
+            </div>
+        </section>
+    </main>
+    <script src="/assets/admin/login.js"></script>
+</body>
+
+</html>

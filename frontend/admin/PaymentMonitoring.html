@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f6f3ed">
+    <title>Payments &amp; Transactions — imPRESSions Print Works</title>
+    <link rel="stylesheet" href="/assets/admin/dashboard.css">
+</head>
+<body class="admin-page" data-admin-view="payments">
+    <div class="admin-shell">
+        <aside class="sidebar" id="admin-sidebar">
+            <a class="admin-brand" href="/admin/dashboard"><span class="admin-brand-mark">iP</span><span><strong>imPRESSions</strong><small>PRINT WORKS · ADMIN</small></span></a>
+            <div class="sidebar-label">WORKSPACE</div>
+            <nav class="sidebar-nav" aria-label="Admin navigation">
+                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon">⌂</span>Dashboard</a>
+                <a href="/admin/orders" data-view="orders"><span class="nav-icon">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon">♙</span>Customer Management</a>
+                <a href="/admin/services" data-view="services"><span class="nav-icon">▧</span>Services &amp; Products</a>
+                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon">₱</span>Pricing Management</a>
+                <a href="/admin/payments" data-view="payments"><span class="nav-icon">▣</span>Payments &amp; Transactions</a>
+                <a href="/admin/reports" data-view="reports"><span class="nav-icon">▥</span>Sales &amp; Reports</a>
+                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
+            </nav>
+            <div class="sidebar-bottom">
+                <a href="/admin/settings" data-view="settings"><span class="nav-icon">⚙</span>Settings</a>
+                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon">↪</span>Log out</button>
+                <div class="sidebar-user"><span class="avatar">A</span><span><strong>Shop Admin</strong><small>Administrator</small></span><span class="online-dot"></span></div>
+            </div>
+        </aside>
+        <div class="workspace">
+            <header class="topbar"><button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button><div class="breadcrumb"><span>Admin</span><span>/</span><strong id="current-section">Payments &amp; Transactions</strong></div><div class="topbar-actions"><span class="demo-pill"><span></span> DEMO DATA</span><button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot"></span></button><div class="topbar-date" id="today-date"></div></div></header>
+            <main class="main-content">
+                <div class="prototype-banner">
+                    <span class="banner-icon">i</span>
+                    <p><strong>Prototype mode</strong> — Payment records are sample data and are not connected to a payment gateway.</p>
+                    <button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button>
+                </div>
+                <div id="view-root" tabindex="-1">
+                    <header class="page-heading">
+                        <div>
+                            <h1>Payments &amp; transactions</h1>
+                            <p>Record payments only after they have actually been received. No payment gateway is connected.</p>
+                        </div>
+                        <div class="page-heading-actions">
+                            <button class="button button-primary" type="button" data-action="record-payment">＋ Record payment</button>
+                        </div>
+                    </header>
+                    <section class="stats-grid" aria-label="Payment summary">
+                        <article class="stat-card">
+                            <div class="stat-top"><span class="stat-label">Recorded payments</span><span class="stat-icon">₱</span></div>
+                            <div class="stat-value" data-payment-received>₱0</div>
+                            <div class="stat-foot">Demo transactions only</div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-top"><span class="stat-label">Outstanding balance</span><span class="stat-icon">◷</span></div>
+                            <div class="stat-value" data-payment-outstanding>₱0</div>
+                            <div class="stat-foot">Across agreed demo orders</div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-top"><span class="stat-label">Transactions</span><span class="stat-icon">▣</span></div>
+                            <div class="stat-value" data-payment-count>0</div>
+                            <div class="stat-foot">Manually recorded sample entries</div>
+                        </article>
+                        <article class="stat-card">
+                            <div class="stat-top"><span class="stat-label">Unpriced requests</span><span class="stat-icon">⌕</span></div>
+                            <div class="stat-value" data-payment-unpriced>0</div>
+                            <div class="stat-foot">No agreed amount recorded</div>
+                        </article>
+                    </section>
+                    <div class="notice-card payment-records-note"><strong>Manual records only:</strong> The customer-order payment table shows amounts recorded by an administrator. The legacy demo transactions below are illustrative and are not connected to a payment gateway.</div>
+                    <section class="panel table-panel customer-payments-panel">
+                        <div class="panel-heading">
+                            <div>
+                                <h2>Customer order payments <span class="table-secondary" data-customer-payment-total>₱0 recorded</span></h2>
+                                <p>Payment entries recorded against submitted customer requests; no payment gateway is connected.</p>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Order / reference</th>
+                                        <th scope="col">Customer / product</th>
+                                        <th scope="col">Received</th>
+                                        <th scope="col">Method</th>
+                                        <th scope="col">Amount</th>
+                                        <th scope="col">Payment status</th>
+                                    </tr>
+                                </thead>
+                                <tbody data-customer-payment-rows>
+                                    <tr><td class="empty-state" colspan="6">Loading customer payments…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                    <div class="toolbar">
+                        <label class="search-control"><span aria-hidden="true">⌕</span><input id="payment-search" type="search" placeholder="Search transaction, order, customer, reference…" autocomplete="off"></label>
+                    </div>
+                    <section class="panel table-panel">
+                        <div class="panel-heading"><div><h2>Payment history <span class="table-secondary" data-payment-history-count>0 records · demo data</span></h2></div></div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Transaction</th>
+                                        <th scope="col">Order / customer</th>
+                                        <th scope="col">Date</th>
+                                        <th scope="col">Method</th>
+                                        <th scope="col">Amount received</th>
+                                        <th scope="col">Payment status</th>
+                                        <th scope="col">Remarks</th>
+                                    </tr>
+                                </thead>
+                                <tbody data-payment-history-rows>
+                                    <tr><td class="empty-state" colspan="7">Loading payment history…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                    <template id="customer-payment-row-template">
+                        <tr>
+                            <td><span class="table-primary" data-field="reference"></span><span class="table-secondary" data-field="receipt"></span></td>
+                            <td><span class="table-primary" data-field="customer"></span><span class="table-secondary" data-field="product"></span></td>
+                            <td data-field="date"></td>
+                            <td data-field="method"></td>
+                            <td data-field="amount"></td>
+                            <td><span class="status-badge" data-field="status"></span></td>
+                        </tr>
+                    </template>
+                    <template id="payment-history-row-template">
+                        <tr>
+                            <td><span class="table-primary" data-field="transaction"></span><span class="table-secondary" data-field="reference"></span></td>
+                            <td><span class="table-primary" data-field="order"></span><span class="table-secondary" data-field="customer"></span></td>
+                            <td data-field="date"></td>
+                            <td data-field="method"></td>
+                            <td data-field="amount"></td>
+                            <td><span class="status-badge" data-field="status"></span></td>
+                            <td data-field="remarks"></td>
+                        </tr>
+                    </template>
+                </div>
+            </main>
+        </div>
+    </div>
+    <dialog class="admin-dialog" id="admin-dialog"><div class="dialog-frame"><button type="button" class="dialog-close" aria-label="Close dialog" data-action="close-dialog">×</button><div id="dialog-content"></div></div></dialog>
+    <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+    <script src="/assets/admin/dashboard.js"></script>
+</body>
+</html>

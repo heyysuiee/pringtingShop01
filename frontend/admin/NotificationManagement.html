@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f6f3ed">
+    <title>Notifications — imPRESSions Print Works</title>
+    <link rel="stylesheet" href="/assets/admin/dashboard.css">
+    <link rel="stylesheet" id="admin-view-stylesheet" href="/assets/admin/notifications.css">
+</head>
+<body class="admin-page" data-admin-view="notifications">
+    <div class="admin-shell">
+        <aside class="sidebar" id="admin-sidebar">
+            <a class="admin-brand" href="/admin/dashboard"><span class="admin-brand-mark">iP</span><span><strong>imPRESSions</strong><small>PRINT WORKS · ADMIN</small></span></a>
+            <div class="sidebar-label">WORKSPACE</div>
+            <nav class="sidebar-nav" aria-label="Admin navigation">
+                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon">⌂</span>Dashboard</a>
+                <a href="/admin/orders" data-view="orders"><span class="nav-icon">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon">♙</span>Customer Management</a>
+                <a href="/admin/services" data-view="services"><span class="nav-icon">▧</span>Services &amp; Products</a>
+                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon">₱</span>Pricing Management</a>
+                <a href="/admin/payments" data-view="payments"><span class="nav-icon">▣</span>Payments &amp; Transactions</a>
+                <a href="/admin/reports" data-view="reports"><span class="nav-icon">▥</span>Sales &amp; Reports</a>
+                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
+            </nav>
+            <div class="sidebar-bottom">
+                <a href="/admin/settings" data-view="settings"><span class="nav-icon">⚙</span>Settings</a>
+                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon">↪</span>Log out</button>
+                <div class="sidebar-user"><span class="avatar">A</span><span><strong>Shop Admin</strong><small>Administrator</small></span><span class="online-dot"></span></div>
+            </div>
+        </aside>
+        <div class="workspace">
+            <header class="topbar"><button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button><div class="breadcrumb"><span>Admin</span><span>/</span><strong id="current-section">Notifications</strong></div><div class="topbar-actions"><span class="demo-pill"><span></span> DEMO DATA</span><button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot"></span></button><div class="topbar-date" id="today-date"></div></div></header>
+            <main class="main-content">
+                <div class="prototype-banner">
+                    <span class="banner-icon">i</span>
+                    <p><strong>Prototype mode</strong> — Notifications are sample events and are not connected to a live system.</p>
+                    <button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button>
+                </div>
+                <div id="view-root" tabindex="-1">
+                    <div class="notifications-page">
+                        <header class="page-heading">
+                            <div>
+                                <h1>Notifications</h1>
+                                <p data-notifications-description>Loading notifications…</p>
+                            </div>
+                            <div class="page-heading-actions">
+                                <button class="button" type="button" data-action="mark-all-read">Mark all as read</button>
+                            </div>
+                        </header>
+                        <section class="notification-list" aria-label="Admin notifications" data-notification-list>
+                            <p class="empty-state">Loading notifications…</p>
+                        </section>
+                        <template id="notification-item-template">
+                            <article class="notification-item">
+                                <span class="notification-symbol" aria-hidden="true" data-notification-symbol></span>
+                                <div>
+                                    <h2 data-notification-title></h2>
+                                    <p data-notification-body></p>
+                                </div>
+                                <time data-notification-time></time>
+                            </article>
+                        </template>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <dialog class="admin-dialog" id="admin-dialog"><div class="dialog-frame"><button type="button" class="dialog-close" aria-label="Close dialog" data-action="close-dialog">×</button><div id="dialog-content"></div></div></dialog>
+    <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+    <script src="/assets/admin/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#061A0C">
+    <meta name="description" content="Browse sample designs across invitations, souvenirs, stickers, Sintra boards, party needs, and tarpaulins.">
+    <link rel="stylesheet" href="/assets/style.css">
+    <title>Sample Work — Printing Shop</title>
+</head>
+
+<body class="inner-page sample-work-page">
+    <!-- Top Information Bar -->
+    <div class="top-bar">
+        <div class="top-bar-content">
+            <p>(555) 123-4567 • (0949) 157-4778</p>
+            <p>printImpress@gmail.com • Mon–Sat 8AM–6PM</p>
+        </div>
+    </div>
+
+    <!-- Main Navigation Bar -->
+    <nav class="nav" aria-label="Main navigation">
+        <div class="nav-brand">
+            <a href="/home">printing shop</a>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="nav-menu">
+            <a href="/home">Home</a>
+            <a href="/services">Services</a>
+            <a href="/order">Order</a>
+            <a href="/sample-work" class="active" aria-current="page">Sample Work</a>
+            <a href="/customer-portal">Customer Portal</a>
+        </div>
+    </nav>
+
+    <!-- Page Hero -->
+    <header class="page-hero page-hero-compact">
+        <div class="page-hero-inner">
+            <span class="eyebrow">Portfolio preview</span>
+            <h1>Browse <em>sample designs</em></h1>
+            <p class="page-hero-lead">Filter by product to see what we print. These are demonstrations, not verified completed customer orders.</p>
+        </div>
+    </header>
+
+    <main class="page-main">
+        <div class="container">
+            <section class="sample-work-gallery" aria-labelledby="sample-gallery-title">
+                <div class="sample-work-heading">
+                    <div>
+                        <span class="sample-work-kicker">Made for your moments</span>
+                        <h2 id="sample-gallery-title">Explore the collection</h2>
+                    </div>
+                    <p>Browse by product and find inspiration for your next print.</p>
+                </div>
+
+                <div class="portfolio-filters" role="group" aria-label="Filter sample designs">
+                    <button class="portfolio-filter active" type="button" aria-pressed="true" data-portfolio-filter="all">All samples</button>
+                    <button class="portfolio-filter" type="button" aria-pressed="false" data-portfolio-filter="invitation">Invitation</button>
+                    <button class="portfolio-filter" type="button" aria-pressed="false" data-portfolio-filter="souvenir">Souvenir</button>
+                    <button class="portfolio-filter" type="button" aria-pressed="false" data-portfolio-filter="sticker">Sticker</button>
+                    <button class="portfolio-filter" type="button" aria-pressed="false" data-portfolio-filter="sintra-board">Sintra board</button>
+                    <button class="portfolio-filter" type="button" aria-pressed="false" data-portfolio-filter="party-needs">Party needs</button>
+                    <button class="portfolio-filter" type="button" aria-pressed="false" data-portfolio-filter="large-format">Tarpaulins</button>
+                </div>
+
+                <p class="result-count" id="result-count" aria-live="polite"></p>
+                <div class="sample-grid" id="portfolio-grid"></div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+                <div class="footer-bottom-links">
+                    <a href="/home">Home</a>
+                    <span>•</span>
+                    <a href="/services">Services</a>
+                    <span>•</span>
+                    <a href="/order">Order Online</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/index.js"></script>
+</body>
+
+</html>

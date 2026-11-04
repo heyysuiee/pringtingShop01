@@ -1,0 +1,256 @@
+<template id="dialog-live-order">
+    <div class="live-order-dialog">
+        <h2 class="dialog-heading" data-live-title></h2>
+        <p class="dialog-subtitle">Review the submitted details and record each real-world action. Printing is blocked until the customer approves a draft.</p>
+        <div class="detail-grid" data-live-details></div>
+        <div class="notice-card live-customization-note">
+            <strong>Customization:</strong> <span data-live-customization></span><br>
+            <strong>Special instructions:</strong> <span data-live-instructions></span>
+        </div>
+        <div class="live-product-image" data-live-product-image hidden>
+            <span class="field-note">Selected product sample</span>
+            <img alt="" data-live-product-image-source>
+        </div>
+        <div class="live-order-files" data-live-attachments hidden>
+            <strong>Customer reference files</strong>
+            <ul data-live-attachment-list></ul>
+        </div>
+        <p class="field-note" data-live-no-attachments>No reference files attached.</p>
+        <div class="notice-card" data-live-payment-instructions hidden>
+            <strong>Payment instructions shared:</strong> <span></span>
+        </div>
+        <div class="live-order-files" data-live-payments hidden>
+            <strong>Recorded payments</strong>
+            <ul data-live-payment-list></ul>
+        </div>
+        <div class="notice-card" data-live-draft-notice hidden></div>
+        <div class="notice-card" data-live-approval-notice hidden>
+            <strong>Waiting for customer approval.</strong> Admin cannot approve printing on the customer's behalf.
+        </div>
+        <div class="live-admin-actions" data-live-actions></div>
+        <form class="live-admin-form" data-form="live-quote" data-live-quote-form hidden>
+            <h3>Confirm quotation</h3>
+            <p class="field-note">Enter the confirmed total amount. Saved quotation details appear in the customer's My Orders page; no external message is sent automatically.</p>
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="live-quote-total">Total order amount (PHP)</label>
+                    <input id="live-quote-total" name="total_amount" type="number" min="0.01" step="0.01" required>
+                </div>
+                <div class="form-field full">
+                    <label for="live-quote-instructions">Payment instructions</label>
+                    <textarea id="live-quote-instructions" name="payment_instructions" maxlength="1000" placeholder="Add the shop's approved payment instructions"></textarea>
+                </div>
+            </div>
+            <div class="dialog-actions"><button class="button button-primary" type="submit">Save quote to customer portal</button></div>
+        </form>
+        <form class="live-admin-form" data-form="live-payment" data-live-payment-form hidden>
+            <h3>Record payment actually received</h3>
+            <p class="field-note" data-live-payment-summary></p>
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="live-payment-amount">Amount received (PHP)</label>
+                    <input id="live-payment-amount" name="amount" type="number" min="0.01" step="0.01" required>
+                </div>
+                <div class="form-field">
+                    <label for="live-payment-method">Payment method</label>
+                    <select id="live-payment-method" name="method">
+                        <option>GCash</option><option>Maya</option><option>Bank transfer</option><option>Cash</option><option>Other</option>
+                    </select>
+                </div>
+                <div class="form-field full">
+                    <label for="live-payment-reference">Payment reference (optional)</label>
+                    <input id="live-payment-reference" name="reference" maxlength="120">
+                </div>
+                <label class="field-note full"><input name="received" type="checkbox" required> I confirm this payment has actually been received.</label>
+            </div>
+            <div class="dialog-actions"><button class="button button-primary" type="submit">Record received payment</button></div>
+        </form>
+        <form class="live-admin-form" data-form="live-draft" data-live-draft-form hidden>
+            <h3>Attach a draft layout for customer approval</h3>
+            <p class="field-note">The draft becomes available in My Orders. No chat message is sent automatically; the customer must approve it before production.</p>
+            <div class="form-field">
+                <label for="live-draft-file">Draft layout (JPG, PNG, or PDF · max 5 MB)</label>
+                <input id="live-draft-file" name="file" type="file" accept=".jpg,.jpeg,.png,.pdf" required>
+            </div>
+            <div class="dialog-actions"><button class="button button-primary" type="submit">Save draft for customer review</button></div>
+        </form>
+        <div class="live-order-files">
+            <strong>Order activity</strong>
+            <ul data-live-history></ul>
+        </div>
+    </div>
+</template>
+
+<template id="dialog-sample-order">
+    <div>
+        <h2 class="dialog-heading" data-sample-title></h2>
+        <p class="dialog-subtitle">Review sample request details and record an admin decision. No customer message is sent.</p>
+        <div class="detail-grid" data-sample-details></div>
+        <div class="notice-card"><strong>Customization details:</strong> <span data-sample-specs></span></div>
+        <div class="sample-reference-image" data-sample-image hidden>
+            <span class="field-note">Customer reference image (sample)</span>
+            <img alt="" data-sample-image-source>
+        </div>
+        <form data-form="order-update">
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="order-detail-status">Sample order status</label>
+                    <select id="order-detail-status" name="status"></select>
+                </div>
+                <div class="form-field">
+                    <label for="order-detail-amount">Agreed amount (PHP)</label>
+                    <input id="order-detail-amount" name="amount" type="number" min="0" step="0.01" placeholder="Leave blank until agreed">
+                </div>
+                <div class="form-field full">
+                    <label for="order-detail-remarks">Internal admin remarks</label>
+                    <textarea id="order-detail-remarks" name="remarks" placeholder="Notes for the shop team only"></textarea>
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button class="button button-danger" type="button" data-action="reject-order" data-sample-decision hidden>Reject request</button>
+                <button class="button button-primary" type="button" data-action="accept-order" data-sample-decision hidden>Accept request</button>
+                <button class="button button-primary" type="submit">Save changes</button>
+            </div>
+        </form>
+    </div>
+</template>
+
+<template id="dialog-customer">
+    <div>
+        <h2 class="dialog-heading" data-customer-title></h2>
+        <p class="dialog-subtitle">Customer profile · sample information only. Authentication details are not available in this view.</p>
+        <div class="detail-grid" data-customer-details></div>
+        <section class="panel table-panel customer-history-panel">
+            <div class="panel-heading"><div><h2>Order history</h2></div></div>
+            <div class="table-wrap">
+                <table class="data-table">
+                    <thead><tr><th scope="col">Order</th><th scope="col">Product</th><th scope="col">Date</th><th scope="col">Status</th></tr></thead>
+                    <tbody data-customer-history-rows></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</template>
+
+<template id="dialog-service-form">
+    <div>
+        <h2 class="dialog-heading" data-service-form-title></h2>
+        <p class="dialog-subtitle">Catalog changes are temporary demo data and are not published to the customer website.</p>
+        <form data-form="service-save">
+            <div class="form-grid">
+                <div class="form-field"><label for="service-name">Product or service name</label><input id="service-name" name="name" required></div>
+                <div class="form-field"><label for="service-category">Category</label><select id="service-category" name="category"></select></div>
+                <div class="form-field full"><label for="service-description">Description / customization options</label><textarea id="service-description" name="description" required></textarea></div>
+                <div class="form-field">
+                    <label for="service-pricing-mode">Pricing method</label>
+                    <select id="service-pricing-mode" name="pricingMode"><option value="quote">Request a quote</option><option value="fixed">Fixed price</option></select>
+                </div>
+                <div class="form-field">
+                    <label for="service-price">Price (PHP)</label>
+                    <input id="service-price" name="price" type="number" min="0" step="0.01" placeholder="Admin-defined only">
+                </div>
+                <div class="form-field">
+                    <label for="service-image">Product image (prototype)</label>
+                    <input id="service-image" name="image" type="file" accept="image/*">
+                    <img id="service-image-preview" class="service-image-preview" alt="Selected product preview" hidden>
+                    <span class="field-note">Preview is held in memory only; it is not uploaded or saved.</span>
+                </div>
+                <div class="form-field">
+                    <label for="service-available">Availability</label>
+                    <select id="service-available" name="available"><option value="true">Available</option><option value="false">Unavailable</option></select>
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button class="button" type="button" data-action="close-dialog">Cancel</button>
+                <button class="button button-primary" type="submit">Save service</button>
+            </div>
+        </form>
+    </div>
+</template>
+
+<template id="dialog-price-form">
+    <div>
+        <h2 class="dialog-heading">Pricing rule</h2>
+        <p class="dialog-subtitle" data-price-description></p>
+        <form data-form="price-save">
+            <div class="form-grid">
+                <div class="form-field">
+                    <label for="price-mode">Pricing method</label>
+                    <select id="price-mode" name="pricingMode"><option value="quote">Request a quote</option><option value="fixed">Fixed price</option></select>
+                </div>
+                <div class="form-field">
+                    <label for="fixed-price">Unit price (PHP)</label>
+                    <input id="fixed-price" name="price" type="number" min="0" step="0.01" placeholder="No price set">
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button class="button" type="button" data-action="close-dialog">Cancel</button>
+                <button class="button button-primary" type="submit">Save pricing rule</button>
+            </div>
+        </form>
+    </div>
+</template>
+
+<template id="dialog-calculator">
+    <div>
+        <h2 class="dialog-heading">Order estimate</h2>
+        <p class="dialog-subtitle">Estimate uses only administrator-defined fixed prices. Quote-based services need a custom quotation first.</p>
+        <form data-form="estimate">
+            <div class="form-grid">
+                <div class="form-field full">
+                    <label for="estimate-service">Product / service</label>
+                    <select id="estimate-service" name="serviceId"></select>
+                </div>
+                <div class="form-field">
+                    <label for="estimate-quantity">Quantity</label>
+                    <input id="estimate-quantity" name="quantity" type="number" min="1" step="1" value="1">
+                </div>
+                <div class="form-field">
+                    <label for="estimate-total">Estimated total</label>
+                    <output id="estimate-total" class="text-control">Select a service</output>
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button class="button" type="button" data-action="calculate-estimate">Calculate</button>
+                <button class="button button-primary" type="button" data-action="close-dialog">Done</button>
+            </div>
+        </form>
+    </div>
+</template>
+
+<template id="dialog-payment-form">
+    <div>
+        <h2 class="dialog-heading">Record a received payment</h2>
+        <p class="dialog-subtitle">Use this only after the shop has actually received payment. This creates a temporary demo transaction.</p>
+        <form data-form="payment-save">
+            <div class="form-grid">
+                <div class="form-field full"><label for="payment-order">Order</label><select id="payment-order" name="orderId"></select></div>
+                <div class="form-field"><label for="payment-amount">Amount received (PHP)</label><input id="payment-amount" name="amount" type="number" min="0.01" step="0.01" required></div>
+                <div class="form-field">
+                    <label for="payment-method">Payment method</label>
+                    <select id="payment-method" name="method"><option>GCash</option><option>Maya</option><option>Bank transfer</option><option>Cash</option><option>Other</option></select>
+                </div>
+                <div class="form-field"><label for="payment-reference">Reference / receipt</label><input id="payment-reference" name="reference" required></div>
+                <div class="form-field"><label for="payment-date">Received date</label><input id="payment-date" name="date" type="date" required></div>
+                <div class="form-field full"><label for="payment-remarks">Remarks</label><textarea id="payment-remarks" name="remarks" placeholder="Optional internal note"></textarea></div>
+            </div>
+            <div class="dialog-actions">
+                <button class="button" type="button" data-action="close-dialog">Cancel</button>
+                <button class="button button-primary" type="submit">Record payment</button>
+            </div>
+        </form>
+    </div>
+</template>
+
+<template id="dialog-detail-item">
+    <div class="detail-item"><small data-detail-label></small><strong data-detail-value></strong></div>
+</template>
+
+<template id="dialog-customer-order-row">
+    <tr>
+        <td data-field="order"></td>
+        <td data-field="product"></td>
+        <td data-field="date"></td>
+        <td><span class="status-badge" data-field="status"></span></td>
+    </tr>
+</template>

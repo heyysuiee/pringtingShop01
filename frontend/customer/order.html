@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#061A0C">
+    <meta name="description" content="Place a custom print order online. Choose your product, upload artwork or request design help, and submit for proof approval.">
+    <link rel="stylesheet" href="/assets/style.css">
+    <title>Place an Order — Printing Shop</title>
+</head>
+
+<body class="inner-page order-system">
+    <!-- Top Information Bar -->
+    <div class="top-bar">
+        <div class="top-bar-content">
+            <p>(555) 123-4567 • (0949) 157-4778</p>
+            <p>Official email: shop email to be provided • Mon–Sat 8AM–6PM</p>
+        </div>
+    </div>
+
+    <!-- Main Navigation Bar -->
+    <nav class="nav" aria-label="Main navigation">
+        <div class="nav-brand">
+            <a href="/home">printing shop</a>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="nav-menu">
+            <a href="/home">Home</a>
+            <a href="/services">Services</a>
+            <a href="/order" class="active" aria-current="page">Order</a>
+            <a href="/sample-work">Sample Work</a>
+            <a href="/customer-portal">Customer Portal</a>
+        </div>
+    </nav>
+
+    <!-- Page Hero -->
+    <header class="page-hero page-hero-compact">
+        <div class="page-hero-inner">
+            <span class="eyebrow">ImPRESSion PrintShop · Custom order</span>
+            <h1>Make it <em>personal</em></h1>
+            <p class="page-hero-lead">Tell us what you have in mind. We’ll review your request, confirm a quote, and share a draft for your approval before anything is printed.</p>
+        </div>
+    </header>
+
+    <main class="page-main">
+        <div class="container narrow">
+
+            <ol class="stepper" id="stepper" aria-label="Order progress">
+                <li class="stepper-item active" data-step-indicator="1"><span class="stepper-num">1</span><span class="stepper-label">Product</span></li>
+                <li class="stepper-item" data-step-indicator="2"><span class="stepper-num">2</span><span class="stepper-label">Customize</span></li>
+                <li class="stepper-item" data-step-indicator="3"><span class="stepper-num">3</span><span class="stepper-label">Contact</span></li>
+                <li class="stepper-item" data-step-indicator="4"><span class="stepper-num">4</span><span class="stepper-label">Review</span></li>
+            </ol>
+
+            <form id="order-form" class="card order-card" novalidate>
+                <div class="order-error" id="order-error" role="alert" hidden></div>
+                <section class="wizard-step active" data-step="1" aria-labelledby="step1-title">
+                    <p class="order-step-kicker">01 · Start with a product</p>
+                    <h2 id="step1-title" class="step-title">What would you like printed?</h2>
+                    <p class="order-step-lead">Choose a product to see its sample image and details. Your selection stays with you from Services or Sample Work.</p>
+                    <div class="form-grid">
+                        <div class="field"><label for="category" class="field-label">Product category</label><select id="category" class="input" required></select></div>
+                        <div class="field"><label for="item" class="field-label">Product</label><select id="item" class="input" required></select></div>
+                    </div>
+                    <article class="selected-product" id="selected-product" aria-live="polite"></article>
+                    <div class="quote-banner"><span aria-hidden="true">₱</span><div><strong>Request a quote</strong><p>Prices depend on your final size, material, and design. An administrator will confirm the total before payment is requested.</p></div></div>
+                </section>
+
+                <section class="wizard-step" data-step="2" aria-labelledby="step2-title">
+                    <p class="order-step-kicker">02 · Make it yours</p>
+                    <h2 id="step2-title" class="step-title">Product details &amp; artwork</h2>
+                    <div class="form-grid">
+                        <div class="field"><label for="size" class="field-label">Size or dimensions</label><input id="size" class="input" maxlength="120" placeholder="e.g. 5 × 7 in, or custom size" required></div>
+                        <div class="field"><label for="material" class="field-label">Material or variant</label><select id="material" class="input" required><option value="">Choose a material / variant</option><option>Standard paper</option><option>Matte finish</option><option>Gloss finish</option><option>Vinyl</option><option>Sintra board</option><option>Acrylic</option><option>Fabric</option><option>Custom / discuss with shop</option></select></div>
+                        <div class="field"><label for="quantity" class="field-label">Quantity</label><input id="quantity" class="input" type="number" min="1" max="50000" value="1" inputmode="numeric" required></div>
+                    </div>
+                    <div class="field"><label for="customization" class="field-label">Customization details</label><textarea id="customization" class="input" rows="4" maxlength="2000" placeholder="Colors, wording, names, layout preferences, and any design ideas…"></textarea></div>
+                    <div class="field"><label for="instructions" class="field-label">Special instructions <span class="optional">(optional)</span></label><textarea id="instructions" class="input" rows="3" maxlength="2000" placeholder="Anything else our team should know?"></textarea></div>
+                    <div class="field">
+                        <label for="artwork" class="field-label">Reference images or files <span class="optional">(optional · up to 3 files)</span></label>
+                        <label class="upload-zone" for="artwork"><span class="upload-icon" aria-hidden="true">↥</span><strong>Choose JPG, PNG, or PDF files</strong><small>5 MB maximum per file. JPG/JPEG, PNG, and PDF only.</small></label>
+                        <input id="artwork" class="visually-hidden" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple>
+                        <div class="upload-previews" id="upload-previews"></div>
+                        <p class="field-hint">For the best print quality, please email your original, high-resolution image to <strong>[Official shop email to be provided]</strong>. The order form stores only the files attached here.</p>
+                    </div>
+                </section>
+
+                <section class="wizard-step" data-step="3" aria-labelledby="step3-title">
+                    <p class="order-step-kicker">03 · How we can reach you</p>
+                    <h2 id="step3-title" class="step-title">Your contact details</h2>
+                    <div class="form-grid">
+                        <div class="field"><label for="name" class="field-label">Full name</label><input id="name" class="input" autocomplete="name" maxlength="120" required></div>
+                        <div class="field"><label for="email" class="field-label">Email address</label><input id="email" class="input" type="email" autocomplete="email" maxlength="254" required></div>
+                        <div class="field"><label for="phone" class="field-label">Contact number</label><input id="phone" class="input" type="tel" autocomplete="tel" maxlength="40" placeholder="09XX XXX XXXX" required></div>
+                        <div class="field"><label for="messenger" class="field-label">Messenger name <span class="optional">(optional)</span></label><input id="messenger" class="input" maxlength="120" placeholder="Name we can search in Messenger"></div>
+                    </div>
+                    <fieldset class="event-fields" id="event-fields" hidden>
+                        <legend>Event information</legend>
+                        <p class="field-hint">This product is commonly used for an event. Share the details that apply.</p>
+                        <div class="form-grid">
+                            <div class="field"><label for="celebrant" class="field-label">Name of celebrant</label><input id="celebrant" class="input" maxlength="120"></div>
+                            <div class="field"><label for="event-type" class="field-label">Event type</label><input id="event-type" class="input" maxlength="120" placeholder="Birthday, wedding, graduation…" ></div>
+                            <div class="field"><label for="event-date" class="field-label">Event date</label><input id="event-date" class="input" type="date"></div>
+                            <div class="field"><label for="event-time" class="field-label">Event time</label><input id="event-time" class="input" type="time"></div>
+                        </div>
+                        <div class="field"><label for="event-location" class="field-label">Event location</label><input id="event-location" class="input" maxlength="240" placeholder="Venue, city, or full address"></div>
+                    </fieldset>
+                </section>
+
+                <section class="wizard-step" data-step="4" aria-labelledby="step4-title">
+                    <p class="order-step-kicker">04 · Check before you send</p>
+                    <h2 id="step4-title" class="step-title">Review your order request</h2>
+                    <button class="text-button" type="button" id="edit-order">← Edit order details</button>
+                    <dl class="summary order-summary" id="summary"></dl>
+                    <section class="order-instructions" aria-labelledby="instructions-title">
+                        <h3 id="instructions-title">Before you place your order</h3>
+                        <ol>
+                            <li>Send your original, high-quality picture to <strong>[Official shop email to be provided]</strong> for better print quality.</li>
+                            <li>Provide the celebrant’s name and any applicable event details.</li>
+                            <li>Include the event date, time, and location when applicable.</li>
+                            <li>A 50% down payment is required after the administrator confirms the final amount. Payment instructions will come from the shop administrator.</li>
+                            <li>We will send a draft layout via chat for you to check and approve.</li>
+                            <li class="approval-rule">NO APPROVAL, NO PRINT.</li>
+                            <li>Order processing takes approximately 2–5 days. This is processing time, not a guaranteed delivery date.</li>
+                        </ol>
+                    </section>
+                    <label class="order-acknowledgement"><input id="acknowledge" type="checkbox" required><span>I have reviewed my details and understand the order instructions, including the 50% down payment requirement and “NO APPROVAL, NO PRINT.”</span></label>
+                    <p class="field-error" id="acknowledgement-error" role="alert"></p>
+                </section>
+
+                <div class="wizard-actions">
+                    <button type="button" class="btn btn-ghost-dark" id="btn-back" hidden>Back</button>
+                    <button type="button" class="btn btn-ghost-dark" id="btn-cancel" hidden>Cancel</button>
+                    <span class="spacer"></span>
+                    <button type="button" class="btn btn-dark" id="btn-next">Continue</button>
+                    <button type="submit" class="btn btn-gold" id="btn-submit" hidden>Submit order request</button>
+                </div>
+            </form>
+
+            <section class="card confirmation" id="confirmation" hidden aria-live="polite">
+                <span class="confirm-badge" aria-hidden="true">✓</span>
+                <p class="order-step-kicker">Request received</p>
+                <h2>Your order is pending confirmation</h2>
+                <p>The shop administrator must review your request. Payment instructions will be provided by the administrator. No payment has been recorded and printing has not started.</p>
+                <p class="order-ref" id="confirm-ref"></p>
+                <div id="confirm-details" class="confirmation-details"></div>
+                <div class="page-hero-actions">
+                    <a class="btn btn-dark" id="confirm-track" href="/customer-portal">View my orders</a>
+                    <a class="btn btn-ghost-dark" href="/services">Browse products</a>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+                <div class="footer-bottom-links">
+                    <a href="/home">Home</a>
+                    <span>•</span>
+                    <a href="/services">Services</a>
+                    <span>•</span>
+                    <a href="/customer-portal">Track Order</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/index.js"></script>
+    <script src="/assets/order.js"></script>
+</body>
+
+</html>

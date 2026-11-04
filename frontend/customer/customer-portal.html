@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#061A0C">
+    <meta name="description" content="Track your Printing Shop order with your reference number and email.">
+    <link rel="stylesheet" href="/assets/style.css">
+    <title>Customer Portal — Printing Shop</title>
+</head>
+
+<body class="inner-page portal-system">
+    <!-- Top Information Bar -->
+    <div class="top-bar">
+        <div class="top-bar-content">
+            <p>(555) 123-4567 • (0949) 157-4778</p>
+            <p>Official email: shop email to be provided • Mon–Sat 8AM–6PM</p>
+        </div>
+    </div>
+
+    <!-- Main Navigation Bar -->
+    <nav class="nav" aria-label="Main navigation">
+        <div class="nav-brand">
+            <a href="/home">printing shop</a>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="nav-menu">
+            <a href="/home">Home</a>
+            <a href="/services">Services</a>
+            <a href="/order">Order</a>
+            <a href="/sample-work">Sample Work</a>
+            <a href="/customer-portal" class="active" aria-current="page">Customer Portal</a>
+        </div>
+    </nav>
+
+    <!-- Page Hero -->
+    <header class="page-hero page-hero-compact">
+        <div class="page-hero-inner">
+            <span class="eyebrow">Your print journey</span>
+            <h1>Your <em>print journey</em></h1>
+            <p class="page-hero-lead">Sign in or create an account to manage your details, or track an order with the email and private reference number from your confirmation.</p>
+        </div>
+    </header>
+
+    <main class="page-main">
+        <div class="container my-orders-layout">
+            <section class="portal-account" id="customer-account" aria-labelledby="account-access-title">
+                <header class="portal-account-heading">
+                    <div>
+                        <span class="order-step-kicker">Customer account</span>
+                        <h2 class="card-title" id="account-access-title">Sign in or create an account</h2>
+                        <p class="field-hint">Manage your contact details and see orders placed while signed in. You can also track any order below using its reference number.</p>
+                    </div>
+                    <p id="account-message" class="field-error" role="status" aria-live="polite" hidden></p>
+                </header>
+                <section id="account-forms" class="account-auth-grid" hidden>
+                    <form id="customer-login-form" class="card portal-auth-card">
+                        <span class="order-step-kicker">Welcome back</span>
+                        <h3 class="card-title">Sign in</h3>
+                        <label for="login-email">Email address<input id="login-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
+                        <label for="login-password">Password<input id="login-password" name="password" type="password" class="input" autocomplete="current-password" maxlength="256" required></label>
+                        <button class="btn btn-dark" type="submit">Sign in</button>
+                    </form>
+                    <form id="customer-register-form" class="card portal-auth-card">
+                        <span class="order-step-kicker">New customer</span>
+                        <h3 class="card-title">Create an account</h3>
+                        <label for="register-name">Full name<input id="register-name" name="name" type="text" class="input" autocomplete="name" maxlength="120" required></label>
+                        <label for="register-email">Email address<input id="register-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
+                        <label for="register-phone">Contact number<input id="register-phone" name="phone" type="tel" class="input" autocomplete="tel" minlength="7" maxlength="40" required></label>
+                        <label for="register-messenger">Messenger name <span class="optional">(optional)</span><input id="register-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
+                        <label for="register-password">Password <span class="optional">(at least 12 characters)</span><input id="register-password" name="password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <button class="btn btn-dark" type="submit">Create account</button>
+                        <p class="field-hint">Email verification is not configured. Use an email address you control.</p>
+                    </form>
+                </section>
+                <section id="account-panel" class="card portal-account-panel" hidden>
+                    <div class="panel-heading">
+                        <div><span class="order-step-kicker">Customer profile</span><h3 class="card-title">Your details</h3></div>
+                        <button id="customer-logout" class="btn btn-ghost-dark" type="button">Sign out</button>
+                    </div>
+                    <form id="customer-profile-form">
+                        <label for="profile-name">Full name<input id="profile-name" name="name" type="text" class="input" maxlength="120" required></label>
+                        <label for="profile-email">Email address<input id="profile-email" name="email" type="email" class="input" readonly></label>
+                        <label for="profile-phone">Contact number<input id="profile-phone" name="phone" type="tel" class="input" minlength="7" maxlength="40" required></label>
+                        <label for="profile-messenger">Messenger name<input id="profile-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
+                        <button class="btn btn-dark" type="submit">Save profile</button>
+                    </form>
+                    <div class="orders-list-heading"><h3 class="card-title">Orders from this account</h3></div>
+                    <div id="account-orders" class="my-orders-list" aria-live="polite"></div>
+                    <a class="btn btn-ghost-dark" href="/order">Place a new order</a>
+                </section>
+            </section>
+            <section class="card my-orders-search" id="order-lookup">
+                <div><span class="order-step-kicker">Order history</span><h2 class="card-title">Find your requests</h2><p class="field-hint">Enter your email and a private reference number from a confirmation. The reference verifies access to your order history.</p></div>
+                <form id="orders-lookup-form" novalidate>
+                    <div class="orders-lookup-grid">
+                        <label for="lookup-email">Email address used to order<input id="lookup-email" name="email" type="email" class="input" autocomplete="email" required></label>
+                        <label for="lookup-ref">Reference number from a confirmation<input id="lookup-ref" name="reference" type="text" class="input" autocomplete="off" required></label>
+                        <button type="submit" class="btn btn-dark">Find my orders</button>
+                    </div>
+                    <p class="field-error" id="lookup-error" role="alert"></p>
+                </form>
+            </section>
+            <section class="my-orders-list" id="orders-list" aria-live="polite">
+                <div class="card portal-empty" id="portal-empty"><span class="confirm-badge confirm-badge-muted" aria-hidden="true">i</span><h2>Orders will appear here</h2><p>Enter your email and a reference number from your confirmation to see status, quote, and payment updates.</p></div>
+            </section>
+            <article class="card order-detail" id="order-detail" hidden aria-live="polite">
+                <button class="text-button" type="button" id="back-to-orders">← Back to my orders</button>
+                <header class="order-detail-head">
+                    <div><span class="service-tag" id="detail-service"></span><h2 class="order-detail-title" id="detail-item"></h2><p class="field-hint" id="detail-meta"></p></div>
+                    <div class="order-ref" id="detail-ref"></div>
+                </header>
+                <div class="status-banner" id="detail-status"></div>
+                <h3 class="section-label">Order progress</h3><ol class="timeline" id="detail-timeline" aria-label="Order progress"></ol>
+                <h3 class="section-label">Request details</h3><dl class="summary" id="detail-summary"></dl>
+                <section class="customer-draft" id="customer-draft" hidden><h3>Your draft is ready to review</h3><p>Printing will not begin until you approve the draft.</p><a id="draft-download" class="btn btn-ghost-dark" href="#">Open draft layout</a><div class="draft-actions"><button type="button" class="btn btn-dark" id="approve-draft">Approve draft</button><button type="button" class="btn btn-ghost-dark" id="request-draft-changes">Request changes</button></div></section>
+                <div class="customer-order-actions"><button type="button" class="btn btn-ghost-dark" id="cancel-order" hidden>Cancel request</button></div>
+                <h3 class="section-label">Activity</h3><ul class="activity" id="detail-history"></ul>
+            </article>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+                <div class="footer-bottom-links">
+                    <a href="/home">Home</a>
+                    <span>•</span>
+                    <a href="/services">Services</a>
+                    <span>•</span>
+                    <a href="/order">Order Online</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/shop.js"></script>
+    <script src="/assets/account.js"></script>
+    <script src="/assets/portal.js"></script>
+</body>
+
+</html>
