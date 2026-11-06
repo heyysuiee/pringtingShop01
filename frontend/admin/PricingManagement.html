@@ -36,43 +36,39 @@
                 <div class="topbar-actions"><span class="demo-pill"><span></span> DEMO DATA</span><button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot"></span></button><div class="topbar-date" id="today-date"></div></div>
             </header>
             <main class="main-content">
-                <div class="prototype-banner"><span class="banner-icon">i</span><p><strong>Prototype mode</strong> — Price rules are sample data. No actual business prices are prefilled.</p><button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button></div>
+                <div class="prototype-banner"><span class="banner-icon">i</span><p><strong>Live prices</strong> — Saved prices are used immediately for customer estimates. No business prices are prefilled.</p><button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button></div>
                 <div id="view-root" tabindex="-1">
-                    <header class="page-heading"><div><h1>Pricing management</h1><p>Set administrator-approved fixed prices or keep customized items quote-based.</p></div></header>
-                    <div class="notice-card"><strong>Prices are not invented.</strong> Items stay set to “Request a quote” until an administrator enters an approved price.</div>
-                    <section class="panel table-panel pricing-rules-panel"><div class="panel-heading"><div><h2>Pricing rules <span class="table-secondary" data-pricing-count></span></h2></div></div>
+                    <header class="page-heading">
+                        <div><h1>Pricing management</h1><p>Set each product's base price and the extra charge for each size, material, color, finish, or add-on.</p></div>
+                        <div class="page-heading-actions"><button class="button" type="button" data-catalog-action="reload-catalog">Reload</button></div>
+                    </header>
+                    <div class="notice-card"><strong>Prices are not invented.</strong> A product stays on “Request a quote” until an administrator enters its base price. Options marked “Quote only” always send the order for a quotation. The administrator confirms every order's final amount.</div>
+                    <section class="panel table-panel pricing-rules-panel" data-catalog-pricing><div class="panel-heading"><div><h2>Product prices <span class="table-secondary" data-pricing-count></span></h2></div></div>
                         <div class="table-wrap">
                             <table class="data-table">
                                 <thead>
                                     <tr>
                                         <th scope="col">Product</th>
                                         <th scope="col">Category</th>
-                                        <th scope="col">Current pricing</th>
-                                        <th scope="col">Rule</th>
+                                        <th scope="col">Method</th>
+                                        <th scope="col">Base price</th>
+                                        <th scope="col">Option prices</th>
                                         <th scope="col">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody data-pricing-rows>
-                                    <tr><td class="empty-state" colspan="5">Loading administrator-defined pricing rules…</td></tr>
+                                    <tr><td class="empty-state" colspan="6">Loading administrator-defined prices…</td></tr>
                                 </tbody>
                             </table>
                         </div>
                     </section>
-                    <template id="pricing-row-template">
-                        <tr>
-                            <td><span class="table-primary" data-field="name"></span></td>
-                            <td data-field="category"></td>
-                            <td data-field="price"></td>
-                            <td><span class="status-badge" data-field="mode"></span></td>
-                            <td><button class="table-link" type="button" data-action="edit-price">Set pricing</button></td>
-                        </tr>
-                    </template>
                 </div>
             </main>
         </div>
     </div>
     <dialog class="admin-dialog" id="admin-dialog"><div class="dialog-frame"><button type="button" class="dialog-close" aria-label="Close dialog" data-action="close-dialog">×</button><div id="dialog-content"></div></div></dialog>
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+    <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>
 </html>

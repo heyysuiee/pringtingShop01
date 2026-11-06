@@ -37,23 +37,43 @@
             <main class="main-content">
                 <div class="prototype-banner">
                     <span class="banner-icon">i</span>
-                    <p><strong>Prototype mode</strong> — Catalog edits are temporary and reset on refresh.</p>
+                    <p><strong>Live catalog</strong> — Changes here are saved to the database and appear on the customer order form immediately.</p>
                     <button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button>
                 </div>
                 <div id="view-root" tabindex="-1">
                     <header class="page-heading">
                         <div>
                             <h1>Services &amp; products</h1>
-                            <p>Manage the shop catalog, descriptions, availability, and customer customization details.</p>
+                            <p>Manage categories and products, and configure the exact questions, sizes, materials, colors, finishes, and uploads each product's order form asks for.</p>
                         </div>
                         <div class="page-heading-actions">
-                            <button class="button button-primary" type="button" data-action="add-service">＋ Add service</button>
+                            <button class="button" type="button" data-catalog-action="reload-catalog">Reload</button>
+                            <button class="button" type="button" data-catalog-action="add-category">＋ Add category</button>
+                            <button class="button button-primary" type="button" data-catalog-action="add-product">＋ Add product</button>
                         </div>
                     </header>
-                    <div class="notice-card services-pricing-note"><strong>Pricing note:</strong> Catalog items use “Request a quote” until an administrator enters a price. No business prices have been prefilled.</div>
+                    <div class="notice-card services-pricing-note"><strong>Pricing note:</strong> Products stay on “Request a quote” until an administrator enters a price in Pricing Management or the product editor. No business prices have been prefilled.</div>
+                    <section class="panel table-panel" data-catalog-services>
+                        <div class="panel-heading"><div><h2>Service categories</h2><p class="table-secondary">Hidden categories are not offered on the order form.</p></div></div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">Category</th>
+                                        <th scope="col">Products</th>
+                                        <th scope="col">Visibility</th>
+                                        <th scope="col">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody data-category-rows>
+                                    <tr><td class="empty-state" colspan="4">Loading categories…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
                     <div class="toolbar">
                         <label class="search-control"><span aria-hidden="true">⌕</span><input id="service-search" type="search" placeholder="Search products or category…" autocomplete="off"></label>
-                        <select id="service-category-filter" aria-label="Filter services by category">
+                        <select id="service-category-filter" aria-label="Filter products by category">
                             <option value="">All categories</option>
                         </select>
                     </div>
@@ -63,42 +83,27 @@
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th scope="col">Service / product</th>
+                                        <th scope="col">Product</th>
                                         <th scope="col">Category</th>
                                         <th scope="col">Pricing</th>
+                                        <th scope="col">Order form</th>
                                         <th scope="col">Availability</th>
                                         <th scope="col">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody data-service-rows>
-                                    <tr><td class="empty-state" colspan="5">Loading product catalog…</td></tr>
+                                    <tr><td class="empty-state" colspan="6">Loading product catalog…</td></tr>
                                 </tbody>
                             </table>
                         </div>
                     </section>
-                    <template id="service-row-template">
-                        <tr>
-                            <td>
-                                <div class="product-cell">
-                                    <img class="product-thumb" alt="" data-field="image">
-                                    <span>
-                                        <span class="table-primary" data-field="name"></span>
-                                        <span class="table-secondary" data-field="description"></span>
-                                    </span>
-                                </div>
-                            </td>
-                            <td data-field="category"></td>
-                            <td data-field="pricing"></td>
-                            <td><span class="status-badge" data-field="availability"></span></td>
-                            <td><button class="table-link" type="button" data-action="edit-service">Edit</button></td>
-                        </tr>
-                    </template>
                 </div>
             </main>
         </div>
     </div>
     <dialog class="admin-dialog" id="admin-dialog"><div class="dialog-frame"><button type="button" class="dialog-close" aria-label="Close dialog" data-action="close-dialog">×</button><div id="dialog-content"></div></div></dialog>
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+    <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>
 </html>

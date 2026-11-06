@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import ipaddress
 import json
 import secrets
 import time
@@ -12,7 +11,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, Response
 
-from backend.app.code.config import settings
+from backend.app.core.config import settings
 
 
 SESSION_COOKIE = "impress_session"
@@ -79,13 +78,17 @@ def read_session_token(token: str | None) -> dict[str, Any] | None:
     return claims
 
 
+def secure_cookie(request: Request) -> bool:
+    return settings.production or request.url.scheme == "https"
+
+
 def create_session_cookie(response: Response, request: Request, subject: str, role: str) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         create_session_token(subject, role),
         max_age=SESSION_TTL_SECONDS,
         httponly=True,
-        secure=settings.production or request.url.scheme == "https",
+        secure=secure_cookie(request),
         samesite="strict",
         path="/",
     )
@@ -108,14 +111,6 @@ def require_session(request: Request, role: str) -> dict[str, Any]:
     if claims is None:
         raise HTTPException(status_code=401, detail="A valid signed-in session is required.")
     return claims
-
-
-def is_loopback_request(request: Request) -> bool:
-    host = request.client.host if request.client else ""
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def require_same_origin(request: Request) -> None:

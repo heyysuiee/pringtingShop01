@@ -15,6 +15,8 @@ class OrderSubmission(BaseModel):
     has_event: Any = None
     acknowledged: Any = None
     files: Any = None
+    # Files attached to product-specific upload fields, keyed by field key: {"photo_upload": [{name, dataUrl}]}.
+    field_files: Any = None
 
 
 class CustomerOrderAction(BaseModel):

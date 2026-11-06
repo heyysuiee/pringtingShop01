@@ -46,23 +46,18 @@
                 <button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button>
                 <div class="breadcrumb"><span>Admin</span><span aria-hidden="true">/</span><strong id="current-section">Dashboard</strong></div>
                 <div class="topbar-actions">
-                    <span class="demo-pill"><span></span> DEMO DATA</span>
                     <button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot"></span></button>
                     <div class="topbar-date" id="today-date"></div>
                 </div>
             </header>
 
             <main class="main-content">
-                <div class="prototype-banner">
-                    <span class="banner-icon">i</span>
-                    <p><strong>Local application mode</strong> — Submitted customer requests are stored in SQLite. Dashboard metrics, catalog changes, and sample orders remain illustrative. Admin pages and APIs require the configured administrator password.</p>
-                    <button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button>
-                </div>
+                
                 <div id="view-root" tabindex="-1">
                     <header class="page-heading">
                         <div>
                             <h1>Dashboard overview</h1>
-                            <p>A snapshot of shop activity. Sample records are illustrative; customer requests are stored by the local prototype.</p>
+                            <p>Live figures from the shop database. Revenue counts only payments recorded by the administrator.</p>
                         </div>
                         <div class="page-heading-actions">
                             <a class="button" href="/admin/reports" data-view="reports">View reports <span aria-hidden="true">→</span></a>
@@ -89,49 +84,19 @@
                             </table>
                         </div>
                     </section>
-                    <section class="stats-grid" aria-label="Order summary">
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Total orders</span><span class="stat-icon">▤</span></div><div class="stat-value" data-stat="total-orders">0</div><div class="stat-foot"><strong>Demo</strong> sample requests</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Pending orders</span><span class="stat-icon">◷</span></div><div class="stat-value" data-stat="pending-orders">0</div><div class="stat-foot"><span data-stat="under-review-note">0</span> under review</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Awaiting down payment</span><span class="stat-icon">₱</span></div><div class="stat-value" data-stat="awaiting-payment">0</div><div class="stat-foot">Quotation confirmed; payment not yet recorded</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Ready for pickup</span><span class="stat-icon">▣</span></div><div class="stat-value" data-stat="ready-orders">0</div><div class="stat-foot"><span data-stat="completed-note">0</span> completed orders</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Under review</span><span class="stat-icon">⌕</span></div><div class="stat-value" data-stat="review-orders">0</div><div class="stat-foot">Awaiting admin review</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">In production</span><span class="stat-icon">⚒</span></div><div class="stat-value" data-stat="production-orders">0</div><div class="stat-foot">Active production jobs</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Completed</span><span class="stat-icon">✓</span></div><div class="stat-value" data-stat="completed-orders">0</div><div class="stat-foot">Marked complete in demo records</div></article>
-                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Recorded payments</span><span class="stat-icon">₱</span></div><div class="stat-value" data-stat="recorded-payments">₱0</div><div class="stat-foot">Demo transaction records only</div></article>
-                    </section>
-                    <section class="dashboard-grid">
-                        <article class="panel">
-                            <div class="panel-heading">
-                                <div><h2>Recorded payments</h2><p>Illustrative transactions only · not actual shop sales</p></div>
-                                <select class="select-control" id="chart-period" aria-label="Sales chart period">
-                                    <option value="day">Today</option><option value="week">This week</option><option value="month">This month</option>
-                                </select>
-                            </div>
-                            <div class="sales-chart" aria-label="Illustrative recorded payment trend" data-sales-chart></div>
-                        </article>
-                        <article class="panel">
-                            <div class="panel-heading"><div><h2>Orders by status</h2><p><span data-status-order-count>0</span> illustrative records</p></div></div>
-                            <div class="status-breakdown" data-status-breakdown></div>
-                        </article>
-                    </section>
-                    <section class="dashboard-grid">
-                        <article class="panel table-panel">
-                            <div class="panel-heading"><div><h2>Recent orders</h2><p>Latest sample requests</p></div><a class="button button-small" href="/admin/orders" data-view="orders">All orders</a></div>
-                            <div class="table-wrap">
-                                <table class="data-table">
-                                    <thead><tr><th scope="col">Order</th><th scope="col">Customer</th><th scope="col">Product</th><th scope="col">Date</th><th scope="col">Agreed amount</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
-                                    <tbody data-dashboard-order-rows><tr><td class="empty-state" colspan="7">Loading sample orders…</td></tr></tbody>
-                                </table>
-                            </div>
-                        </article>
-                        <article class="panel">
-                            <div class="panel-heading"><div><h2>Most requested services</h2><p>Based on demo requests</p></div></div>
-                            <div class="service-bars" data-popular-services></div>
-                        </article>
+                    <p class="notice-card" data-dashboard-error role="alert" hidden></p>
+                    <section class="stats-grid" aria-label="Order and customer summary">
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Total customers</span><span class="stat-icon">👥</span></div><div class="stat-value" data-stat="total-customers">…</div><div class="stat-foot">Registered customer accounts</div></article>
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Total orders</span><span class="stat-icon">▤</span></div><div class="stat-value" data-stat="total-orders">…</div><div class="stat-foot">All submitted order requests</div></article>
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Pending orders</span><span class="stat-icon">◷</span></div><div class="stat-value" data-stat="pending-orders">…</div><div class="stat-foot">Awaiting confirmation, quotation, or down payment</div></article>
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Processing orders</span><span class="stat-icon">⚒</span></div><div class="stat-value" data-stat="processing-orders">…</div><div class="stat-foot">Drafting, approval, production, or pickup</div></article>
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Completed orders</span><span class="stat-icon">✓</span></div><div class="stat-value" data-stat="completed-orders">…</div><div class="stat-foot">Marked completed by the administrator</div></article>
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Cancelled orders</span><span class="stat-icon">✕</span></div><div class="stat-value" data-stat="cancelled-orders">…</div><div class="stat-foot">Cancelled or rejected requests</div></article>
+                        <article class="stat-card"><div class="stat-top"><span class="stat-label">Total revenue</span><span class="stat-icon">₱</span></div><div class="stat-value" data-stat="total-revenue">…</div><div class="stat-foot">Sum of recorded payments only</div></article>
                     </section>
                     <section class="panel">
-                        <div class="panel-heading"><div><h2>Recent activity</h2><p>Sample admin activity log</p></div></div>
-                        <div class="activity-list" data-dashboard-activity></div>
+                        <div class="panel-heading"><div><h2>Orders by status</h2><p><span data-status-order-count>0</span> orders in the database</p></div></div>
+                        <div class="status-breakdown" data-status-breakdown></div>
                     </section>
                     <template id="dashboard-order-row-template">
                         <tr>
@@ -183,6 +148,7 @@
     </dialog>
     <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
 
+    <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>
 

@@ -36,8 +36,12 @@ loginForm.addEventListener("submit", async (event) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email, password }),
         });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || "Administrator sign in failed.");
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            // FastAPI reports validation problems (such as an invalid email address) as a list of {msg} objects.
+            const detail = Array.isArray(result.detail) ? result.detail.map((item) => item.msg).join(" ") : result.detail;
+            throw new Error(detail || "Administrator sign in failed.");
+        }
         window.location.assign("/admin/dashboard");
     } catch (error) {
         loginError.textContent = error instanceof Error ? error.message : "Administrator sign in failed.";

@@ -14,16 +14,16 @@ _test_directory = tempfile.TemporaryDirectory(prefix="impress-tests-")
 os.environ["PRINTSHOP_DATABASE_PATH"] = str(Path(_test_directory.name) / "test.sqlite3")
 os.environ["PRINTSHOP_UPLOAD_DIR"] = str(Path(_test_directory.name) / "uploads")
 
-from backend.app.code.security import hash_password, read_session_token, require_same_origin, verify_password
-from backend.app.database import customer_store
-from backend.app.order_store import create_order, get_order_by_idempotency_key, list_orders_for_customer
+from backend.app.core.security import hash_password, read_session_token, require_same_origin, verify_password
+from backend.app.repositories import order_repository
+from backend.app.repositories.order_repository import create_order, get_order_by_idempotency_key, list_orders_for_customer
 from backend.app.schemas.user import CustomerRegistration
 from backend.app.services.auth_services import authenticate_customer, register_customer, update_customer
 
 
 class CustomerAccountTests(unittest.TestCase):
     def setUp(self) -> None:
-        customer_store.initialize()
+        order_repository.initialize()
         self.payload = CustomerRegistration(
             name="Print Shop Customer",
             email=f"{uuid.uuid4().hex}@example.test",
@@ -55,7 +55,7 @@ class CustomerAccountTests(unittest.TestCase):
         self.assertEqual(updated["email"], self.payload.email)
 
     def test_session_signature_and_role_claims(self) -> None:
-        from backend.app.code.security import create_session_token
+        from backend.app.core.security import create_session_token
 
         token = create_session_token("account-id", "customer")
         claims = read_session_token(token)

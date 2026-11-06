@@ -48,9 +48,26 @@
 
     async function request(url, options = {}) {
         const response = await fetch(url, options);
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || "The order information could not be loaded.");
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const detail = Array.isArray(result.detail) ? result.detail.map((item) => item.msg).join(" ") : result.detail;
+            throw new Error(detail || "The order information could not be loaded.");
+        }
         return result;
+    }
+
+    /** POST a customer action (approve / request-changes / cancel) for the open order and show the result. */
+    async function orderAction(action, body, failure) {
+        try {
+            const order = await request(`/api/orders/${encodeURIComponent(currentOrder.reference)}/${action}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: activeEmail, ...body }),
+            });
+            renderDetail(order);
+        } catch (issue) {
+            error.textContent = issue instanceof Error ? issue.message : failure;
+        }
     }
 
     function appendSummaryRow(target, label, value) {
@@ -87,6 +104,8 @@
             if (order.total_amount !== null) {
                 const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
                 meta.append(make("span", "field-hint", `Total ${money(order.total_amount)} · Balance ${money(Math.max(0, order.total_amount - received))}`));
+            } else if (estimateOf(order) !== null) {
+                meta.append(make("span", "field-hint", `Estimate ${money(estimateOf(order))} · awaiting confirmation`));
             } else {
                 meta.append(make("span", "field-hint", "Waiting for Admin Quotation"));
             }
@@ -96,6 +115,24 @@
             card.append(main, meta, button);
             list.append(card);
         });
+    }
+
+    function estimateOf(order) {
+        const estimate = order.pricing?.estimated_total;
+        return typeof estimate === "number" ? estimate : null;
+    }
+
+    /** Product options saved with the order. Older orders used fixed size/material fields. */
+    function specificationRows(order) {
+        const customization = order.customization || {};
+        if (Array.isArray(customization.specifications)) {
+            return customization.specifications.map((spec) => [spec.label, spec.value]);
+        }
+        return [
+            ["Size / dimensions", customization.size],
+            ["Material / variant", customization.material],
+            ["Customization", customization.details],
+        ];
     }
 
     function renderTimeline(order) {
@@ -123,7 +160,8 @@
         const container = make("div", "order-attachments");
         container.append(make("strong", "", label));
         attachments.forEach((file) => {
-            const link = make("a", "", `${file.name} · ${(file.size / 1024).toFixed(0)} KB`);
+            const prefix = file.field_label && file.field_label !== "Reference file" ? `${file.field_label}: ` : "";
+            const link = make("a", "", `${prefix}${file.name} · ${(file.size / 1024).toFixed(0)} KB`);
             link.href = file.url;
             link.target = "_blank";
             link.rel = "noopener";
@@ -145,11 +183,9 @@
 
         const summary = document.querySelector("#detail-summary");
         summary.replaceChildren();
-        appendSummaryRow(summary, "Size / dimensions", order.customization.size);
         appendSummaryRow(summary, "Quantity", String(order.customization.quantity));
-        appendSummaryRow(summary, "Material / variant", order.customization.material);
-        appendSummaryRow(summary, "Customization", order.customization.details);
-        appendSummaryRow(summary, "Special instructions", order.customization.instructions);
+        specificationRows(order).forEach(([label, value]) => appendSummaryRow(summary, label, value));
+        appendSummaryRow(summary, "Special instructions", order.customization.notes ?? order.customization.instructions);
         appendSummaryRow(summary, "Customer", order.customer.name);
         appendSummaryRow(summary, "Email", order.customer.email);
         appendSummaryRow(summary, "Contact number", order.customer.phone);
@@ -161,6 +197,9 @@
             appendSummaryRow(summary, "Event time", order.event_details.event_time);
             appendSummaryRow(summary, "Event location", order.event_details.event_location);
         }
+        if (order.total_amount === null && estimateOf(order) !== null) {
+            appendSummaryRow(summary, "Estimated total", `${money(estimateOf(order))} (from shop prices; not yet confirmed)`);
+        }
         appendSummaryRow(summary, "Confirmed total", order.total_amount === null ? "Waiting for Admin Quotation" : money(order.total_amount));
         if (order.total_amount !== null) {
             const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
@@ -169,7 +208,7 @@
             appendSummaryRow(summary, "Remaining balance", money(Math.max(0, order.total_amount - received)));
         }
         if (order.payment_instructions) appendSummaryRow(summary, "Payment instructions", order.payment_instructions);
-        renderAttachments(summary, order.attachments, "Reference files");
+        renderAttachments(summary, order.attachments, "Uploaded files");
 
         const draft = document.querySelector("#customer-draft");
         const awaitingApproval = order.status === "Awaiting Customer Approval" && order.draft_attachment;
@@ -196,7 +235,12 @@
     async function loadOrder(reference, source = "lookup") {
         error.textContent = "";
         try {
-            const order = await request(`/api/orders/${encodeURIComponent(reference)}?email=${encodeURIComponent(activeEmail)}`);
+            // Signed-in customers are verified by their session; lookup visitors prove access with email + reference.
+            const url = source === "account"
+                ? `/api/account/orders/${encodeURIComponent(reference)}`
+                : `/api/orders/${encodeURIComponent(reference)}?email=${encodeURIComponent(activeEmail)}`;
+            const order = await request(url);
+            if (source === "account") activeEmail = order.customer.email;
             detailSource = source;
             if (source === "account") {
                 accountSection.hidden = true;
@@ -209,9 +253,8 @@
     }
 
     document.addEventListener("customer-order-select", (event) => {
-        const { email, reference } = event.detail || {};
-        if (typeof email !== "string" || typeof reference !== "string" || !email || !reference) return;
-        activeEmail = email;
+        const { reference } = event.detail || {};
+        if (typeof reference !== "string" || !reference) return;
         void loadOrder(reference, "account");
     });
 
@@ -250,53 +293,26 @@
             return;
         }
         try {
-            renderOrders((await request(`/api/orders?email=${encodeURIComponent(activeEmail)}&reference=${encodeURIComponent(accessReference)}`)).orders);
+            await loadOrders(activeEmail, accessReference);
             list.scrollIntoView({ block: "start", behavior: "instant" });
         } catch (issue) {
             error.textContent = issue instanceof Error ? issue.message : "Your orders could not be loaded.";
         }
     });
 
-    document.querySelector("#approve-draft").addEventListener("click", async () => {
+    document.querySelector("#approve-draft").addEventListener("click", () => {
         if (!currentOrder || !window.confirm("Approve this draft? The administrator may then move the order to printing.")) return;
-        try {
-            const order = await request(`/api/orders/${encodeURIComponent(currentOrder.reference)}/approve`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: activeEmail }),
-            });
-            renderDetail(order);
-        } catch (issue) {
-            error.textContent = issue instanceof Error ? issue.message : "The draft approval could not be recorded.";
-        }
+        void orderAction("approve", {}, "The draft approval could not be recorded.");
     });
 
-    document.querySelector("#request-draft-changes").addEventListener("click", async () => {
+    document.querySelector("#request-draft-changes").addEventListener("click", () => {
         if (!currentOrder || !window.confirm("Ask the shop to revise this draft?")) return;
-        try {
-            const order = await request(`/api/orders/${encodeURIComponent(currentOrder.reference)}/request-changes`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: activeEmail, note: "Customer requested changes to the draft layout." }),
-            });
-            renderDetail(order);
-        } catch (issue) {
-            error.textContent = issue instanceof Error ? issue.message : "The change request could not be recorded.";
-        }
+        void orderAction("request-changes", { note: "Customer requested changes to the draft layout." }, "The change request could not be recorded.");
     });
 
-    document.querySelector("#cancel-order").addEventListener("click", async () => {
+    document.querySelector("#cancel-order").addEventListener("click", () => {
         if (!currentOrder || !window.confirm("Cancel this request? This cannot be undone.")) return;
-        try {
-            const order = await request(`/api/orders/${encodeURIComponent(currentOrder.reference)}/cancel`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: activeEmail }),
-            });
-            renderDetail(order);
-        } catch (issue) {
-            error.textContent = issue instanceof Error ? issue.message : "The request could not be cancelled.";
-        }
+        void orderAction("cancel", {}, "The request could not be cancelled.");
     });
 
     const parameters = new URLSearchParams(window.location.search);

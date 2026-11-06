@@ -3,10 +3,14 @@
         <h2 class="dialog-heading" data-live-title></h2>
         <p class="dialog-subtitle">Review the submitted details and record each real-world action. Printing is blocked until the customer approves a draft.</p>
         <div class="detail-grid" data-live-details></div>
+        <section class="live-specs" data-live-specs-section>
+            <h3 class="live-section-title">Product specifications chosen by the customer</h3>
+            <div class="detail-grid" data-live-specs></div>
+        </section>
         <div class="notice-card live-customization-note">
-            <strong>Customization:</strong> <span data-live-customization></span><br>
             <strong>Special instructions:</strong> <span data-live-instructions></span>
         </div>
+        <div class="live-order-files live-pricing" data-live-pricing hidden></div>
         <div class="live-product-image" data-live-product-image hidden>
             <span class="field-note">Selected product sample</span>
             <img alt="" data-live-product-image-source>
@@ -31,6 +35,7 @@
         <form class="live-admin-form" data-form="live-quote" data-live-quote-form hidden>
             <h3>Confirm quotation</h3>
             <p class="field-note">Enter the confirmed total amount. Saved quotation details appear in the customer's My Orders page; no external message is sent automatically.</p>
+            <p class="field-note" data-live-quote-estimate></p>
             <div class="form-grid">
                 <div class="form-field">
                     <label for="live-quote-total">Total order amount (PHP)</label>
@@ -129,92 +134,6 @@
                 </table>
             </div>
         </section>
-    </div>
-</template>
-
-<template id="dialog-service-form">
-    <div>
-        <h2 class="dialog-heading" data-service-form-title></h2>
-        <p class="dialog-subtitle">Catalog changes are temporary demo data and are not published to the customer website.</p>
-        <form data-form="service-save">
-            <div class="form-grid">
-                <div class="form-field"><label for="service-name">Product or service name</label><input id="service-name" name="name" required></div>
-                <div class="form-field"><label for="service-category">Category</label><select id="service-category" name="category"></select></div>
-                <div class="form-field full"><label for="service-description">Description / customization options</label><textarea id="service-description" name="description" required></textarea></div>
-                <div class="form-field">
-                    <label for="service-pricing-mode">Pricing method</label>
-                    <select id="service-pricing-mode" name="pricingMode"><option value="quote">Request a quote</option><option value="fixed">Fixed price</option></select>
-                </div>
-                <div class="form-field">
-                    <label for="service-price">Price (PHP)</label>
-                    <input id="service-price" name="price" type="number" min="0" step="0.01" placeholder="Admin-defined only">
-                </div>
-                <div class="form-field">
-                    <label for="service-image">Product image (prototype)</label>
-                    <input id="service-image" name="image" type="file" accept="image/*">
-                    <img id="service-image-preview" class="service-image-preview" alt="Selected product preview" hidden>
-                    <span class="field-note">Preview is held in memory only; it is not uploaded or saved.</span>
-                </div>
-                <div class="form-field">
-                    <label for="service-available">Availability</label>
-                    <select id="service-available" name="available"><option value="true">Available</option><option value="false">Unavailable</option></select>
-                </div>
-            </div>
-            <div class="dialog-actions">
-                <button class="button" type="button" data-action="close-dialog">Cancel</button>
-                <button class="button button-primary" type="submit">Save service</button>
-            </div>
-        </form>
-    </div>
-</template>
-
-<template id="dialog-price-form">
-    <div>
-        <h2 class="dialog-heading">Pricing rule</h2>
-        <p class="dialog-subtitle" data-price-description></p>
-        <form data-form="price-save">
-            <div class="form-grid">
-                <div class="form-field">
-                    <label for="price-mode">Pricing method</label>
-                    <select id="price-mode" name="pricingMode"><option value="quote">Request a quote</option><option value="fixed">Fixed price</option></select>
-                </div>
-                <div class="form-field">
-                    <label for="fixed-price">Unit price (PHP)</label>
-                    <input id="fixed-price" name="price" type="number" min="0" step="0.01" placeholder="No price set">
-                </div>
-            </div>
-            <div class="dialog-actions">
-                <button class="button" type="button" data-action="close-dialog">Cancel</button>
-                <button class="button button-primary" type="submit">Save pricing rule</button>
-            </div>
-        </form>
-    </div>
-</template>
-
-<template id="dialog-calculator">
-    <div>
-        <h2 class="dialog-heading">Order estimate</h2>
-        <p class="dialog-subtitle">Estimate uses only administrator-defined fixed prices. Quote-based services need a custom quotation first.</p>
-        <form data-form="estimate">
-            <div class="form-grid">
-                <div class="form-field full">
-                    <label for="estimate-service">Product / service</label>
-                    <select id="estimate-service" name="serviceId"></select>
-                </div>
-                <div class="form-field">
-                    <label for="estimate-quantity">Quantity</label>
-                    <input id="estimate-quantity" name="quantity" type="number" min="1" step="1" value="1">
-                </div>
-                <div class="form-field">
-                    <label for="estimate-total">Estimated total</label>
-                    <output id="estimate-total" class="text-control">Select a service</output>
-                </div>
-            </div>
-            <div class="dialog-actions">
-                <button class="button" type="button" data-action="calculate-estimate">Calculate</button>
-                <button class="button button-primary" type="button" data-action="close-dialog">Done</button>
-            </div>
-        </form>
     </div>
 </template>
 

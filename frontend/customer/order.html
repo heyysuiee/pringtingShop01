@@ -48,44 +48,120 @@
     <main class="page-main">
         <div class="container narrow">
 
-            <ol class="stepper" id="stepper" aria-label="Order progress">
+            <section class="container narrow order-gate" id="order-gate" aria-labelledby="order-gate-title" hidden>
+                <header class="order-gate-heading">
+                    <span class="order-step-kicker">Sign in to order</span>
+                    <h2 class="card-title" id="order-gate-title">Sign in or create an account to continue</h2>
+                    <p class="field-hint">Your order is saved to your account, so you can track its progress in the customer portal. The product you selected will stay selected after you sign in.</p>
+                    <p id="account-message" class="field-error" role="status" aria-live="polite" hidden></p>
+                </header>
+                <section id="account-forms" class="account-auth-grid">
+                    <form id="customer-login-form" class="card portal-auth-card">
+                        <span class="order-step-kicker">Welcome back</span>
+                        <h3 class="card-title">Sign in</h3>
+                        <label for="login-email">Email address<input id="login-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
+                        <label for="login-password">Password<input id="login-password" name="password" type="password" class="input" autocomplete="current-password" maxlength="256" required></label>
+                        <button class="btn btn-dark" type="submit">Sign in</button>
+                        <button class="text-button auth-forgot-link" type="button" id="open-forgot-password">Forgot Password?</button>
+                    </form>
+                    <form id="customer-register-form" class="card portal-auth-card">
+                        <span class="order-step-kicker">New customer</span>
+                        <h3 class="card-title">Create an account</h3>
+                        <label for="register-name">Full name<input id="register-name" name="name" type="text" class="input" autocomplete="name" maxlength="120" required></label>
+                        <label for="register-email">Email address<input id="register-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
+                        <label for="register-phone">Contact number<input id="register-phone" name="phone" type="tel" class="input" autocomplete="tel" minlength="7" maxlength="40" required></label>
+                        <label for="register-messenger">Messenger name <span class="optional">(optional)</span><input id="register-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
+                        <label for="register-password">Password <span class="optional">(at least 12 characters)</span><input id="register-password" name="password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <label for="register-confirm-password">Confirm password<input id="register-confirm-password" name="confirm_password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <button class="btn btn-dark" type="submit">Create account</button>
+                        <p class="field-hint">Email verification is not configured. Use an email address you control.</p>
+                    </form>
+                </section>
+                <section id="forgot-password" class="card portal-auth-card forgot-password-card" aria-labelledby="forgot-title" hidden>
+                    <span class="order-step-kicker">Account recovery</span>
+                    <h3 class="card-title" id="forgot-title">Reset your password</h3>
+                    <p id="forgot-message" class="field-error" role="status" aria-live="polite" hidden></p>
+                    <form id="forgot-email-form" data-forgot-step="email" novalidate>
+                        <p class="field-hint">Enter the email address on your account. We will send a 6-digit verification code.</p>
+                        <label for="forgot-email">Email address<input id="forgot-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
+                        <button class="btn btn-dark" type="submit">Send verification code</button>
+                    </form>
+                    <form id="forgot-code-form" data-forgot-step="code" hidden novalidate>
+                        <p class="field-hint">Enter the code sent to <strong id="forgot-sent-to"></strong>. It expires in 10 minutes.</p>
+                        <label for="forgot-code">Verification code<input id="forgot-code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" class="input" required></label>
+                        <button class="btn btn-dark" type="submit">Verify code</button>
+                        <button class="btn btn-ghost-dark" type="button" id="forgot-resend">Resend code</button>
+                        <button class="text-button" type="button" id="forgot-back">Use a different email</button>
+                    </form>
+                    <form id="forgot-password-form" data-forgot-step="password" hidden novalidate>
+                        <p class="field-hint">Code verified. Choose a new password of at least 12 characters.</p>
+                        <label for="forgot-new-password">New password<input id="forgot-new-password" name="new_password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <label for="forgot-confirm-password">Confirm new password<input id="forgot-confirm-password" name="confirm_password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <button class="btn btn-dark" type="submit">Change password</button>
+                    </form>
+                    <button class="text-button" type="button" id="back-to-sign-in">Back to sign in</button>
+                </section>
+            </section>
+
+            <ol class="stepper" id="stepper" hidden aria-label="Order progress">
                 <li class="stepper-item active" data-step-indicator="1"><span class="stepper-num">1</span><span class="stepper-label">Product</span></li>
                 <li class="stepper-item" data-step-indicator="2"><span class="stepper-num">2</span><span class="stepper-label">Customize</span></li>
                 <li class="stepper-item" data-step-indicator="3"><span class="stepper-num">3</span><span class="stepper-label">Contact</span></li>
                 <li class="stepper-item" data-step-indicator="4"><span class="stepper-num">4</span><span class="stepper-label">Review</span></li>
             </ol>
 
-            <form id="order-form" class="card order-card" novalidate>
+            <form id="order-form" class="card order-card" novalidate hidden>
                 <div class="order-error" id="order-error" role="alert" hidden></div>
                 <section class="wizard-step active" data-step="1" aria-labelledby="step1-title">
                     <p class="order-step-kicker">01 · Start with a product</p>
                     <h2 id="step1-title" class="step-title">What would you like printed?</h2>
-                    <p class="order-step-lead">Choose a product to see its sample image and details. Your selection stays with you from Services or Sample Work.</p>
-                    <div class="form-grid">
-                        <div class="field"><label for="category" class="field-label">Product category</label><select id="category" class="input" required></select></div>
-                        <div class="field"><label for="item" class="field-label">Product</label><select id="item" class="input" required></select></div>
+                    <p class="order-step-lead">Choose a service and product. The next step shows the options for that exact product. Your selection stays with you from Services or Sample Work.</p>
+                    <div class="field">
+                        <label for="category" class="field-label">Service category</label>
+                        <select id="category" class="input" required></select>
                     </div>
-                    <article class="selected-product" id="selected-product" aria-live="polite"></article>
-                    <div class="quote-banner"><span aria-hidden="true">₱</span><div><strong>Request a quote</strong><p>Prices depend on your final size, material, and design. An administrator will confirm the total before payment is requested.</p></div></div>
+                    <fieldset class="field product-picker-field">
+                        <legend class="field-label">Product</legend>
+                        <div class="product-picker" id="product-picker" role="radiogroup" aria-label="Product"></div>
+                        <p class="field-error" id="product-error" role="alert"></p>
+                    </fieldset>
+                    <article class="selected-product" id="selected-product" aria-live="polite" hidden></article>
+                    <div class="quote-banner" id="pricing-note"><span aria-hidden="true">₱</span><div><strong>Loading prices…</strong><p></p></div></div>
                 </section>
 
                 <section class="wizard-step" data-step="2" aria-labelledby="step2-title">
                     <p class="order-step-kicker">02 · Make it yours</p>
-                    <h2 id="step2-title" class="step-title">Product details &amp; artwork</h2>
-                    <div class="form-grid">
-                        <div class="field"><label for="size" class="field-label">Size or dimensions</label><input id="size" class="input" maxlength="120" placeholder="e.g. 5 × 7 in, or custom size" required></div>
-                        <div class="field"><label for="material" class="field-label">Material or variant</label><select id="material" class="input" required><option value="">Choose a material / variant</option><option>Standard paper</option><option>Matte finish</option><option>Gloss finish</option><option>Vinyl</option><option>Sintra board</option><option>Acrylic</option><option>Fabric</option><option>Custom / discuss with shop</option></select></div>
-                        <div class="field"><label for="quantity" class="field-label">Quantity</label><input id="quantity" class="input" type="number" min="1" max="50000" value="1" inputmode="numeric" required></div>
+                    <h2 id="step2-title" class="step-title">Customize your <span id="step2-product">product</span></h2>
+                    <p class="order-step-lead">Only the options for this product are shown. Fields marked “optional” can be left blank.</p>
+                    <div class="field quantity-field">
+                        <label for="quantity" class="field-label">Quantity</label>
+                        <div class="quantity-control">
+                            <button type="button" class="quantity-step" data-quantity-step="-1" aria-label="Decrease quantity">−</button>
+                            <input id="quantity" class="input" type="number" inputmode="numeric" step="1" min="1" value="1" required>
+                            <button type="button" class="quantity-step" data-quantity-step="1" aria-label="Increase quantity">+</button>
+                        </div>
+                        <p class="field-hint" id="quantity-hint"></p>
                     </div>
-                    <div class="field"><label for="customization" class="field-label">Customization details</label><textarea id="customization" class="input" rows="4" maxlength="2000" placeholder="Colors, wording, names, layout preferences, and any design ideas…"></textarea></div>
-                    <div class="field"><label for="instructions" class="field-label">Special instructions <span class="optional">(optional)</span></label><textarea id="instructions" class="input" rows="3" maxlength="2000" placeholder="Anything else our team should know?"></textarea></div>
+                    <div id="dynamic-fields" aria-live="polite"></div>
                     <div class="field">
-                        <label for="artwork" class="field-label">Reference images or files <span class="optional">(optional · up to 3 files)</span></label>
-                        <label class="upload-zone" for="artwork"><span class="upload-icon" aria-hidden="true">↥</span><strong>Choose JPG, PNG, or PDF files</strong><small>5 MB maximum per file. JPG/JPEG, PNG, and PDF only.</small></label>
+                        <label for="notes" class="field-label">Special instructions <span class="optional">(optional)</span></label>
+                        <textarea id="notes" class="input" rows="3" maxlength="2000" placeholder="Anything else our team should know?"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="artwork" class="field-label">Other reference images or files <span class="optional">(optional · up to 3 files)</span></label>
+                        <label class="upload-zone upload-zone-compact" for="artwork"><span class="upload-icon" aria-hidden="true">↥</span><strong>Choose JPG, PNG, or PDF files</strong><small>5 MB maximum per file.</small></label>
                         <input id="artwork" class="visually-hidden" type="file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" multiple>
                         <div class="upload-previews" id="upload-previews"></div>
-                        <p class="field-hint">For the best print quality, please email your original, high-resolution image to <strong>[Official shop email to be provided]</strong>. The order form stores only the files attached here.</p>
+                        <p class="field-hint">For the best print quality, you may also email your original, high-resolution images to the shop.</p>
                     </div>
+                    <aside class="estimate-panel" id="estimate-panel" aria-live="polite" aria-labelledby="estimate-title">
+                        <div class="estimate-head">
+                            <span class="order-step-kicker" id="estimate-title">Price estimate</span>
+                            <strong class="estimate-total" id="estimate-total">—</strong>
+                        </div>
+                        <p class="estimate-status" id="estimate-status"></p>
+                        <ul class="estimate-lines" id="estimate-lines"></ul>
+                    </aside>
                 </section>
 
                 <section class="wizard-step" data-step="3" aria-labelledby="step3-title">
@@ -97,30 +173,32 @@
                         <div class="field"><label for="phone" class="field-label">Contact number</label><input id="phone" class="input" type="tel" autocomplete="tel" maxlength="40" placeholder="09XX XXX XXXX" required></div>
                         <div class="field"><label for="messenger" class="field-label">Messenger name <span class="optional">(optional)</span></label><input id="messenger" class="input" maxlength="120" placeholder="Name we can search in Messenger"></div>
                     </div>
+                    <label class="order-acknowledgement event-toggle" id="event-toggle" hidden><input id="has-event" type="checkbox"><span>This order is for an event — add the event details</span></label>
                     <fieldset class="event-fields" id="event-fields" hidden>
-                        <legend>Event information</legend>
-                        <p class="field-hint">This product is commonly used for an event. Share the details that apply.</p>
+                        <legend>Event details</legend>
+                        <p class="field-hint" id="event-hint">Share the details that should appear on, or guide, your design.</p>
                         <div class="form-grid">
-                            <div class="field"><label for="celebrant" class="field-label">Name of celebrant</label><input id="celebrant" class="input" maxlength="120"></div>
-                            <div class="field"><label for="event-type" class="field-label">Event type</label><input id="event-type" class="input" maxlength="120" placeholder="Birthday, wedding, graduation…" ></div>
+                            <div class="field"><label for="celebrant" class="field-label">Celebrant or honoree name(s)</label><input id="celebrant" class="input" maxlength="120" placeholder="e.g. Mia Santos, or Jose &amp; Ana"></div>
+                            <div class="field"><label for="event-type" class="field-label">Event type</label><input id="event-type" class="input" maxlength="120" placeholder="Birthday, wedding, christening…"></div>
                             <div class="field"><label for="event-date" class="field-label">Event date</label><input id="event-date" class="input" type="date"></div>
-                            <div class="field"><label for="event-time" class="field-label">Event time</label><input id="event-time" class="input" type="time"></div>
+                            <div class="field"><label for="event-time" class="field-label">Event time <span class="optional">(optional)</span></label><input id="event-time" class="input" type="time"></div>
                         </div>
-                        <div class="field"><label for="event-location" class="field-label">Event location</label><input id="event-location" class="input" maxlength="240" placeholder="Venue, city, or full address"></div>
+                        <div class="field"><label for="event-location" class="field-label">Event venue <span class="optional">(optional)</span></label><input id="event-location" class="input" maxlength="240" placeholder="Venue, city, or full address"></div>
                     </fieldset>
                 </section>
 
                 <section class="wizard-step" data-step="4" aria-labelledby="step4-title">
                     <p class="order-step-kicker">04 · Check before you send</p>
                     <h2 id="step4-title" class="step-title">Review your order request</h2>
-                    <button class="text-button" type="button" id="edit-order">← Edit order details</button>
-                    <dl class="summary order-summary" id="summary"></dl>
+                    <button class="text-button" type="button" id="edit-order">← Edit product options</button>
+                    <div class="order-summary-groups" id="summary"></div>
                     <section class="order-instructions" aria-labelledby="instructions-title">
                         <h3 id="instructions-title">Before you place your order</h3>
                         <ol>
                             <li>Send your original, high-quality picture to <strong>[Official shop email to be provided]</strong> for better print quality.</li>
                             <li>Provide the celebrant’s name and any applicable event details.</li>
                             <li>Include the event date, time, and location when applicable.</li>
+                            <li>Any price shown is an estimate from the shop's published prices. The administrator confirms the final amount before payment is requested.</li>
                             <li>A 50% down payment is required after the administrator confirms the final amount. Payment instructions will come from the shop administrator.</li>
                             <li>We will send a draft layout via chat for you to check and approve.</li>
                             <li class="approval-rule">NO APPROVAL, NO PRINT.</li>
@@ -172,6 +250,8 @@
     </footer>
 
     <script src="/assets/index.js"></script>
+    <script src="/assets/account.js"></script>
+    <script src="/assets/dynamic-form.js"></script>
     <script src="/assets/order.js"></script>
 </body>
 

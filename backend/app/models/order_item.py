@@ -1,18 +1,38 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 class OrderItem(TypedDict):
+    id: NotRequired[str]
+    category_id: NotRequired[str]
     name: str
     category: str
     description: str
     image: str
 
 
+class OrderSpecification(TypedDict):
+    key: str
+    label: str
+    value: str
+    type: str
+
+
 class OrderCustomization(TypedDict):
-    size: str
+    """Product configuration saved with an order.
+
+    Orders placed through the catalog form store ``options`` (validated raw values keyed by field),
+    ``specifications`` (the readable label/value list shown to staff and customers) and ``notes``.
+    Orders placed before the catalog form existed store the older ``size``/``material``/``details``/
+    ``instructions`` keys instead; both shapes are displayed.
+    """
+
     quantity: int
-    material: str
-    details: str
-    instructions: str
+    options: NotRequired[dict[str, Any]]
+    specifications: NotRequired[list[OrderSpecification]]
+    notes: NotRequired[str]
+    size: NotRequired[str]
+    material: NotRequired[str]
+    details: NotRequired[str]
+    instructions: NotRequired[str]

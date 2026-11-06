@@ -19,6 +19,16 @@ class Settings:
     admin_password_hash: str
     allowed_hosts: tuple[str, ...]
     cors_origins: tuple[str, ...]
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_from: str
+    smtp_starttls: bool
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from)
 
     @property
     def production(self) -> bool:
@@ -69,4 +79,10 @@ settings = Settings(
     admin_password_hash=os.environ.get("PRINTSHOP_ADMIN_PASSWORD_HASH", ""),
     allowed_hosts=_csv_setting("PRINTSHOP_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver"),
     cors_origins=_csv_setting("PRINTSHOP_CORS_ORIGINS"),
+    smtp_host=os.environ.get("PRINTSHOP_SMTP_HOST", "").strip(),
+    smtp_port=int(os.environ.get("PRINTSHOP_SMTP_PORT", "587") or "587"),
+    smtp_username=os.environ.get("PRINTSHOP_SMTP_USERNAME", "").strip(),
+    smtp_password=os.environ.get("PRINTSHOP_SMTP_PASSWORD", ""),
+    smtp_from=os.environ.get("PRINTSHOP_SMTP_FROM", "").strip(),
+    smtp_starttls=os.environ.get("PRINTSHOP_SMTP_STARTTLS", "true").strip().lower() not in {"0", "false", "no"},
 )

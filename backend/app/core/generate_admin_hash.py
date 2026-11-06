@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from getpass import getpass
 
-from backend.app.code.security import hash_password
+from backend.app.core.security import hash_password
 
 
 def main() -> None:

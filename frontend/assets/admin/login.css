@@ -20,8 +20,6 @@
             min-width: 320px;
             min-height: 100vh;
             margin: 0;
-            background: var(--page);
-            color: var(--ink);
             font-family: var(--sans);
             -webkit-font-smoothing: antialiased;
         }
@@ -50,9 +48,6 @@
             justify-content: space-between;
             overflow: hidden;
             padding: clamp(32px, 5vw, 72px);
-            background:
-                radial-gradient(ellipse at 18% 84%, rgba(179, 179, 179, 0.19), transparent 38%),
-                linear-gradient(145deg, #2b2b2b 0%, #2b2b2b 58%, #2b2b2b 100%);
         }
 
         .brand-panel::before,
@@ -253,9 +248,6 @@
             min-height: 100vh;
             place-items: center;
             padding: clamp(28px, 6vw, 88px);
-            background:
-                radial-gradient(ellipse at 90% 8%, rgba(179, 179, 179, 0.11), transparent 35%),
-                var(--page);
         }
 
         .login-card {
@@ -293,14 +285,10 @@
 
         .field {
             display: grid;
-            gap: 9px;
-            margin-bottom: 21px;
         }
 
         .field label {
             color: #d4d4d4;
-            font-size: 0.8rem;
-            font-weight: 600;
         }
 
         .field input {
@@ -308,68 +296,24 @@
             height: 52px;
             padding: 0 15px;
             border: 1px solid var(--line);
-            border-radius: 10px;
             outline: none;
-            background: rgba(255, 255, 255, 0.035);
-            color: var(--ink);
-            font-size: 0.9rem;
             transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
         }
 
-        .field input::placeholder {
-            color: #b3b3b3;
-        }
-
         .field input:focus {
-            border-color: var(--green);
-            background: rgba(255, 255, 255, 0.055);
             box-shadow: 0 0 0 3px rgba(179, 179, 179, 0.12);
-        }
-
-        .form-options {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin: 5px 0 27px;
-            color: var(--muted);
-            font-size: 0.78rem;
-        }
-
-        .remember-option {
-            display: inline-flex;
-            align-items: center;
-            gap: 9px;
-        }
-
-        .remember-option input {
-            width: 15px;
-            height: 15px;
-            accent-color: var(--green);
-        }
-
-        .form-options a,
-        .signup-note a {
-            color: var(--green);
-            font-weight: 600;
         }
 
         .sign-in-button {
             width: 100%;
-            min-height: 52px;
-            border: 0;
             border-radius: 10px;
-            background: var(--green);
-            color: #2b2b2b;
             cursor: pointer;
-            font-size: 0.9rem;
             font-weight: 750;
             transition: background 180ms ease, transform 180ms ease;
         }
 
         .sign-in-button:hover {
             transform: translateY(-1px);
-            background: #d4d4d4;
         }
 
         .sign-in-button:focus-visible,
@@ -379,69 +323,9 @@
             outline-offset: 3px;
         }
 
-        .form-divider {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            margin: 26px 0;
-            color: #b3b3b3;
-            font-size: 0.72rem;
-        }
-
-        .form-divider::before,
-        .form-divider::after {
-            height: 1px;
-            flex: 1;
-            background: var(--line);
-            content: "";
-        }
-
-        .google-button {
-            display: flex;
-            width: 100%;
-            min-height: 50px;
-            align-items: center;
-            justify-content: center;
-            gap: 11px;
-            border: 1px solid var(--line);
-            border-radius: 10px;
-            background: transparent;
-            color: var(--ink);
-            cursor: pointer;
-            font-size: 0.84rem;
-            font-weight: 600;
-            transition: background 180ms ease, border-color 180ms ease;
-        }
-
-        .google-button:hover {
-            border-color: rgba(255, 255, 255, 0.27);
-            background: rgba(255, 255, 255, 0.04);
-        }
-
-        .google-mark {
-            display: grid;
-            width: 19px;
-            height: 19px;
-            place-items: center;
-            border-radius: 50%;
-            background: #ffffff;
-            color: #b3b3b3;
-            font-size: 0.75rem;
-            font-weight: 800;
-        }
-
-        .signup-note {
-            margin: 30px 0 0;
-            color: var(--muted);
-            font-size: 0.8rem;
-            text-align: center;
-        }
-
         .prototype-note {
             margin-top: 23px;
             color: #b3b3b3;
-            font-size: 0.68rem;
-            line-height: 1.5;
             text-align: center;
         }
 
@@ -461,7 +345,6 @@
             transform: translateY(-50%);
             border: 0;
             background: transparent;
-            color: var(--green);
             cursor: pointer;
             font-size: 0.75rem;
             font-weight: 700;
@@ -469,8 +352,6 @@
 
         .login-error {
             margin: -4px 0 16px;
-            color: #d4d4d4;
-            font-size: 0.8rem;
         }
 
         @media (max-width: 860px) {
@@ -518,11 +399,6 @@
         @media (max-width: 380px) {
             .form-panel {
                 padding: 26px 19px;
-            }
-
-            .form-options {
-                align-items: flex-start;
-                font-size: 0.72rem;
             }
         }
 

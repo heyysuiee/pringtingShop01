@@ -256,6 +256,38 @@ function initImageFallbacks() {
         }
     };
 
+    /* ---------- Live catalog (administrator-managed) ----------
+       The list above is only a fallback for when the API cannot be reached. Normally the pages show the
+       categories and products from /api/catalog, so admin changes appear here without code edits. */
+
+    const presentation = Object.fromEntries(Object.entries(services).map(([id, service]) => [
+        id, { title: service.title, kicker: service.kicker, palette: service.palette }
+    ]));
+    const defaultPresentation = { kicker: "Made to order", palette: ["#e8e7dc", "#3e5147", "#b87968"] };
+    const peso = (value) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value);
+
+    function priceLabel(product) {
+        if (product.pricing_mode === "quote" || product.base_price === null) return "Pricing by quote";
+        return product.pricing_mode === "area" ? `${peso(product.base_price)} per sq ft` : `From ${peso(product.base_price)} each`;
+    }
+
+    function applyCatalog(categories) {
+        Object.keys(services).forEach((key) => delete services[key]);
+        categories.forEach((category) => {
+            const look = presentation[category.id] || defaultPresentation;
+            services[category.id] = {
+                label: category.label,
+                title: look.title || category.label,
+                kicker: look.kicker,
+                description: category.description || "",
+                palette: look.palette,
+                samples: category.products.map((product) => [
+                    product.id, product.name, product.description, product.image || undefined, priceLabel(product)
+                ])
+            };
+        });
+    }
+
     /* ---------- Elements ---------- */
 
     const serviceCategories = document.querySelector("#service-categories");
@@ -267,6 +299,8 @@ function initImageFallbacks() {
     const dialogTitle = document.querySelector("#sample-dialog-title");
     const dialogDescription = document.querySelector("#sample-dialog-description");
     const dialogRequest = document.querySelector("#sample-dialog-request");
+    const dialogPrice = sampleDialog?.querySelector(".demo-label");
+    let portfolioFilter = "all";
 
     /* ---------- Helpers ---------- */
 
@@ -326,10 +360,11 @@ function initImageFallbacks() {
     }
 
     function getSamples(serviceId) {
-        return services[serviceId].samples.map(([id, name, description, imagePath], index) => ({
+        return services[serviceId].samples.map(([id, name, description, imagePath, price], index) => ({
             id,
             name,
             description,
+            price: price || "Pricing by quote",
             image: imagePath || artFor(serviceId, { name }, index),
             isProvidedImage: Boolean(imagePath)
         }));
@@ -372,6 +407,10 @@ function initImageFallbacks() {
         copy.append(category, title, description);
 
         if (showActions) {
+            const price = document.createElement("p");
+            price.className = "sample-card-price";
+            price.textContent = sample.price;
+            copy.append(price);
             const actions = document.createElement("div");
             actions.className = "sample-card-actions";
 
@@ -450,6 +489,7 @@ function initImageFallbacks() {
         dialogCategory.textContent = services[serviceId].label;
         dialogTitle.textContent = sample.name;
         dialogDescription.textContent = sample.description;
+        if (dialogPrice) dialogPrice.textContent = `${sample.price} · final amount confirmed by the shop`;
         dialogRequest.href = orderUrl(serviceId, sample.id);
         sampleDialog.showModal();
     }
@@ -483,12 +523,25 @@ function initImageFallbacks() {
                 filterButton.classList.toggle("active", selected);
                 filterButton.setAttribute("aria-pressed", String(selected));
             });
-            renderPortfolio(button.dataset.portfolioFilter);
+            portfolioFilter = button.dataset.portfolioFilter;
+            renderPortfolio(portfolioFilter);
         });
     });
 
     /* ---------- Start ---------- */
 
-    renderServiceCategories();
-    renderPortfolio();
+    async function start() {
+        if (serviceCategories || portfolioGrid) {
+            try {
+                const response = await fetch("/api/catalog", { cache: "no-store" });
+                if (response.ok) applyCatalog((await response.json()).categories);
+            } catch (error) {
+                console.warn("The live catalog could not be loaded; showing the built-in list.", error);
+            }
+        }
+        renderServiceCategories();
+        renderPortfolio(portfolioFilter);
+    }
+
+    void start();
 })();

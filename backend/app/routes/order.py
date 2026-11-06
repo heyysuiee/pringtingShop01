@@ -5,8 +5,8 @@ from typing import Any
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import FileResponse
 
-from backend.app.code.dependencies import require_local_admin
-from backend.app.code.security import require_same_origin, require_session
+from backend.app.core.dependencies import require_admin
+from backend.app.core.security import require_same_origin, require_session
 from backend.app.schemas.order import (
     AdminDraft,
     AdminOrderStatus,
@@ -45,6 +45,12 @@ def customer_orders(email: str, reference: str) -> dict[str, Any]:
 def account_orders(request: Request) -> dict[str, Any]:
     claims = require_session(request, "customer")
     return order_services.account_orders(claims["sub"])
+
+
+@router.get("/api/account/orders/{reference}")
+def account_order(reference: str, request: Request) -> dict[str, Any]:
+    claims = require_session(request, "customer")
+    return order_services.account_order(claims["sub"], reference)
 
 
 @router.get("/api/orders/{reference}")
@@ -89,13 +95,19 @@ def cancel_customer_order(
 
 @router.get("/api/admin/orders")
 def admin_orders(request: Request) -> dict[str, Any]:
-    require_local_admin(request)
+    require_admin(request)
     return order_services.admin_orders()
+
+
+@router.get("/api/admin/dashboard")
+def admin_dashboard(request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return order_services.admin_dashboard()
 
 
 @router.get("/api/admin/orders/{reference}/files/{file_id}")
 def admin_order_file(reference: str, file_id: str, request: Request) -> FileResponse:
-    require_local_admin(request)
+    require_admin(request)
     return order_services.get_admin_order_file(reference, file_id)
 
 
@@ -105,7 +117,7 @@ def admin_quote(
     payload: AdminQuotation,
     request: Request,
 ) -> dict[str, Any]:
-    require_local_admin(request)
+    require_admin(request)
     return order_services.set_quotation(reference, payload.model_dump())
 
 
@@ -115,7 +127,7 @@ def admin_record_payment(
     payload: AdminPayment,
     request: Request,
 ) -> dict[str, Any]:
-    require_local_admin(request)
+    require_admin(request)
     return order_services.record_payment(reference, payload.model_dump())
 
 
@@ -125,7 +137,7 @@ def admin_upload_draft(
     payload: AdminDraft,
     request: Request,
 ) -> dict[str, Any]:
-    require_local_admin(request)
+    require_admin(request)
     return order_services.upload_draft(reference, payload.model_dump())
 
 
@@ -135,5 +147,5 @@ def admin_update_status(
     payload: AdminOrderStatus,
     request: Request,
 ) -> dict[str, Any]:
-    require_local_admin(request)
+    require_admin(request)
     return order_services.update_order_status(reference, payload.status)

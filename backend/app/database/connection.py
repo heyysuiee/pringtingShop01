@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Generator
 
-from backend.app.code.config import settings
+from backend.app.core.config import settings
 
 
 DATABASE_PATH = settings.database_path

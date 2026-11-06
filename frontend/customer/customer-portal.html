@@ -63,6 +63,7 @@
                         <label for="login-email">Email address<input id="login-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
                         <label for="login-password">Password<input id="login-password" name="password" type="password" class="input" autocomplete="current-password" maxlength="256" required></label>
                         <button class="btn btn-dark" type="submit">Sign in</button>
+                        <button class="text-button auth-forgot-link" type="button" id="open-forgot-password">Forgot Password?</button>
                     </form>
                     <form id="customer-register-form" class="card portal-auth-card">
                         <span class="order-step-kicker">New customer</span>
@@ -72,9 +73,34 @@
                         <label for="register-phone">Contact number<input id="register-phone" name="phone" type="tel" class="input" autocomplete="tel" minlength="7" maxlength="40" required></label>
                         <label for="register-messenger">Messenger name <span class="optional">(optional)</span><input id="register-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
                         <label for="register-password">Password <span class="optional">(at least 12 characters)</span><input id="register-password" name="password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <label for="register-confirm-password">Confirm password<input id="register-confirm-password" name="confirm_password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
                         <button class="btn btn-dark" type="submit">Create account</button>
                         <p class="field-hint">Email verification is not configured. Use an email address you control.</p>
                     </form>
+                </section>
+                <section id="forgot-password" class="card portal-auth-card forgot-password-card" aria-labelledby="forgot-title" hidden>
+                    <span class="order-step-kicker">Account recovery</span>
+                    <h3 class="card-title" id="forgot-title">Reset your password</h3>
+                    <p id="forgot-message" class="field-error" role="status" aria-live="polite" hidden></p>
+                    <form id="forgot-email-form" data-forgot-step="email" novalidate>
+                        <p class="field-hint">Enter the email address on your account. We will send a 6-digit verification code.</p>
+                        <label for="forgot-email">Email address<input id="forgot-email" name="email" type="email" class="input" autocomplete="email" maxlength="254" required></label>
+                        <button class="btn btn-dark" type="submit">Send verification code</button>
+                    </form>
+                    <form id="forgot-code-form" data-forgot-step="code" hidden novalidate>
+                        <p class="field-hint">Enter the code sent to <strong id="forgot-sent-to"></strong>. It expires in 10 minutes.</p>
+                        <label for="forgot-code">Verification code<input id="forgot-code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" class="input" required></label>
+                        <button class="btn btn-dark" type="submit">Verify code</button>
+                        <button class="btn btn-ghost-dark" type="button" id="forgot-resend">Resend code</button>
+                        <button class="text-button" type="button" id="forgot-back">Use a different email</button>
+                    </form>
+                    <form id="forgot-password-form" data-forgot-step="password" hidden novalidate>
+                        <p class="field-hint">Code verified. Choose a new password of at least 12 characters.</p>
+                        <label for="forgot-new-password">New password<input id="forgot-new-password" name="new_password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <label for="forgot-confirm-password">Confirm new password<input id="forgot-confirm-password" name="confirm_password" type="password" class="input" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+                        <button class="btn btn-dark" type="submit">Change password</button>
+                    </form>
+                    <button class="text-button" type="button" id="back-to-sign-in">Back to sign in</button>
                 </section>
                 <section id="account-panel" class="card portal-account-panel" hidden>
                     <div class="panel-heading">

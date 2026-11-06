@@ -33,26 +33,9 @@
         ]
     };
 
-    const categoryImages = {
-        "Invitation": "/frontend/image/invitation/weddinginvitationj.png",
-        "Souvenir": "/frontend/image/souvenir/keychain.jpg",
-        "Sticker": "/frontend/image/Sticker/sticker.png",
-        "Sintra Board": "/frontend/image/SintraBoard/welcomeBoard.jpg",
-        "Party Needs": "/frontend/image/partyNeeds/partyNeeds.jpg",
-        "Tarpaulins & Large Format Printing": "/frontend/image/tarpaulin/event.png"
-    };
-    const services = Object.entries(serviceCatalog).flatMap(([category, products]) =>
-        products.map((name, index) => ({
-            id: `${category.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${index + 1}`,
-            category,
-            name,
-            description: `${name} printing and customization.`,
-            image: categoryImages[category],
-            pricingMode: "quote",
-            price: null,
-            available: true
-        }))
-    );
+    // The real product catalog, its order-form fields, and prices are managed by catalog-admin.js
+    // (Services & Products and Pricing Management). serviceCatalog above only labels the sample records.
+    const catalogAdmin = () => window.PrintShopCatalogAdmin;
 
     const customers = [
         { id: "C-1001", name: "Mia Santos", email: "mia.santos@example.com", phone: "+63 917 555 0142", joined: "2026-08-12" },
@@ -124,9 +107,7 @@
         reports: { from: "", to: "", category: "", period: "" }
     };
     let activeView = "dashboard";
-    let chartPeriod = "week";
     let filterTimer;
-    let serviceImageDraftUrl = "";
     let bannerDismissed = false;
     let dialogTemplatesPromise;
     const dialogTemplates = new Map();
@@ -168,16 +149,6 @@
         tableBody.replaceChildren(row);
     }
 
-    function appendTextPair(container, primary, secondary) {
-        const main = document.createElement("span");
-        main.className = "table-primary";
-        main.textContent = primary;
-        const sub = document.createElement("span");
-        sub.className = "table-secondary";
-        sub.textContent = secondary;
-        container.replaceChildren(main, sub);
-    }
-
     function setTextPair(primaryElement, secondaryElement, primary, secondary) {
         primaryElement.textContent = primary;
         secondaryElement.textContent = secondary;
@@ -194,12 +165,6 @@
     function logActivity(message) {
         activity.unshift({ text: message, time: "Just now" });
         activity.splice(8);
-    }
-
-    function revokeUnusedImage(url) {
-        if (url?.startsWith("blob:") && !services.some((service) => service.image === url)) {
-            URL.revokeObjectURL(url);
-        }
     }
 
     function viewFromLocation() {
@@ -300,112 +265,74 @@
         container.append(element);
     }
 
+    // Dashboard figures come from /api/admin/dashboard (database queries only). No sample values are shown.
+    let dashboardData = null;
+    let dashboardError = "";
+
+    const dashboardStatCards = [
+        ["total-customers", (data) => String(data.total_customers)],
+        ["total-orders", (data) => String(data.total_orders)],
+        ["pending-orders", (data) => String(data.pending_orders)],
+        ["processing-orders", (data) => String(data.processing_orders)],
+        ["completed-orders", (data) => String(data.completed_orders)],
+        ["cancelled-orders", (data) => String(data.cancelled_orders)],
+        ["total-revenue", (data) => money(data.total_revenue)],
+    ];
+
     function renderDashboard() {
-        const pending = orders.filter((order) => order.status === "Pending Confirmation").length;
-        const underReview = orders.filter((order) => order.status === "Under Review").length;
-        const awaitingPayment = orders.filter((order) => order.status === "Awaiting Down Payment").length;
-        const production = orders.filter((order) => order.status === "In Production").length;
-        const ready = orders.filter((order) => order.status === "Ready for Pickup").length;
-        const completed = orders.filter((order) => order.status === "Completed").length;
-        const sales = payments.reduce((sum, payment) => sum + payment.amount, 0);
-        const stats = {
-            "total-orders": orders.length,
-            "pending-orders": pending,
-            "under-review-note": underReview,
-            "awaiting-payment": awaitingPayment,
-            "ready-orders": ready,
-            "completed-note": completed,
-            "review-orders": underReview,
-            "production-orders": production,
-            "completed-orders": completed,
-            "recorded-payments": money(sales)
-        };
-        Object.entries(stats).forEach(([name, value]) => {
-            document.querySelector(`[data-stat="${name}"]`).textContent = String(value);
-        });
+        const errorBox = document.querySelector("[data-dashboard-error]");
+        if (errorBox) {
+            errorBox.textContent = dashboardError;
+            errorBox.hidden = !dashboardError;
+        }
+        if (!dashboardData) {
+            for (const [name] of dashboardStatCards) {
+                const element = document.querySelector(`[data-stat="${name}"]`);
+                if (element) element.textContent = dashboardError ? "—" : "…";
+            }
+            return;
+        }
+        for (const [name, format] of dashboardStatCards) {
+            const element = document.querySelector(`[data-stat="${name}"]`);
+            if (element) element.textContent = format(dashboardData);
+        }
 
-        const tableBody = document.querySelector("[data-dashboard-order-rows]");
-        tableBody.replaceChildren();
-        [...orders].slice(0, 5).forEach((order) => {
-            const customer = customerFor(order);
-            const row = document.querySelector("#dashboard-order-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="id"]').textContent = order.id;
-            setTextPair(
-                row.querySelector('[data-field="customer"]'),
-                row.querySelector('[data-field="email"]'),
-                customer?.name || "Unknown",
-                customer?.email || ""
-            );
-            row.querySelector('[data-field="product"]').textContent = order.product;
-            row.querySelector('[data-field="date"]').textContent = dateLabel(order.date);
-            row.querySelector('[data-field="amount"]').textContent = order.agreedAmount ? money(order.agreedAmount) : "Quote";
-            setStatusBadge(row.querySelector('[data-field="status"]'), order.status);
-            row.querySelector("[data-action='order-detail']").dataset.id = order.id;
-            tableBody.append(row);
-        });
+        const breakdown = document.querySelector("[data-status-breakdown]");
+        if (breakdown) {
+            breakdown.replaceChildren();
+            const entries = Object.entries(dashboardData.status_counts).filter(([, count]) => count > 0);
+            if (!entries.length) {
+                const empty = document.createElement("p");
+                empty.className = "empty-state";
+                empty.textContent = "No orders available yet.";
+                breakdown.append(empty);
+            }
+            for (const [status, count] of entries) {
+                const row = document.createElement("div");
+                row.className = "status-row";
+                const label = document.createElement("span");
+                label.textContent = status;
+                const value = document.createElement("strong");
+                value.textContent = String(count);
+                row.append(label, value);
+                breakdown.append(row);
+            }
+        }
+        const statusTotal = document.querySelector("[data-status-order-count]");
+        if (statusTotal) statusTotal.textContent = String(dashboardData.total_orders);
+    }
 
-        const statusRows = [
-            ["Pending confirmation", pending, ""],
-            ["Under review", underReview, "blue"],
-            ["Awaiting down payment", awaitingPayment, "pink"],
-            ["In production", production, "pink"],
-            ["Ready for pickup", ready, "green"],
-            ["Completed", completed, "gray"]
-        ];
-        const statusBreakdown = document.querySelector("[data-status-breakdown]");
-        statusBreakdown.replaceChildren();
-        statusRows.forEach(([label, count, color]) => {
-            const row = document.querySelector("#dashboard-status-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="label"]').textContent = label;
-            row.querySelector('[data-field="count"]').textContent = String(count);
-            if (color) row.querySelector('[data-field="dot"]').classList.add(color);
-            statusBreakdown.append(row);
-        });
-        document.querySelector("[data-status-order-count]").textContent = String(orders.length);
-
-        const configs = {
-            day: { labels: ["8a", "10a", "12p", "2p", "4p", "6p"], values: [18, 30, 45, 28, 62, 37] },
-            week: { labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], values: [30, 55, 42, 72, 54, 88, 63] },
-            month: { labels: ["Wk 1", "Wk 2", "Wk 3", "Wk 4"], values: [54, 70, 46, 90] }
-        };
-        const chart = configs[chartPeriod];
-        document.querySelector("#chart-period").value = chartPeriod;
-        const chartRoot = document.querySelector("[data-sales-chart]");
-        chartRoot.replaceChildren();
-        chart.values.forEach((value, index) => {
-            const column = document.querySelector("#dashboard-chart-column-template").content.firstElementChild.cloneNode(true);
-            const bar = column.querySelector('[data-field="bar"]');
-            bar.value = value;
-            column.querySelector('[data-field="label"]').textContent = chart.labels[index];
-            chartRoot.append(column);
-        });
-
-        const popular = Object.keys(serviceCatalog).map((category) => ({
-            category,
-            count: orders.filter((order) => order.category === category).length
-        })).sort((a, b) => b.count - a.count).slice(0, 4);
-        const max = Math.max(1, ...popular.map((item) => item.count));
-        const serviceList = document.querySelector("[data-popular-services]");
-        serviceList.replaceChildren();
-        popular.forEach((item) => {
-            const row = document.querySelector("#dashboard-service-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="label"]').textContent = item.category;
-            row.querySelector('[data-field="count"]').textContent = String(item.count);
-            const bar = row.querySelector('[data-field="bar"]');
-            bar.max = max;
-            bar.value = item.count;
-            serviceList.append(row);
-        });
-
-        const activityList = document.querySelector("[data-dashboard-activity]");
-        activityList.replaceChildren();
-        activity.slice(0, 4).forEach((item) => {
-            const row = document.querySelector("#dashboard-activity-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="text"]').textContent = item.text;
-            row.querySelector('[data-field="time"]').textContent = item.time;
-            activityList.append(row);
-        });
-        renderLiveOrdersTable();
+    async function refreshDashboard() {
+        try {
+            const response = await fetch("/api/admin/dashboard");
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.detail || "Dashboard figures could not be loaded.");
+            dashboardData = result;
+            dashboardError = "";
+        } catch (error) {
+            dashboardError = error instanceof Error ? error.message : "Dashboard figures could not be loaded.";
+        }
+        if (activeView === "dashboard") renderView();
     }
 
     function renderLiveOrdersTable() {
@@ -418,8 +345,7 @@
             setTextPair(row.querySelector('[data-field="customer"]'), row.querySelector('[data-field="email"]'), order.customer.name, order.customer.email);
             setTextPair(row.querySelector('[data-field="product"]'), row.querySelector('[data-field="category"]'), order.product.name, order.product.category);
             row.querySelector('[data-field="submitted"]').textContent = dateLabel(order.created_at.slice(0, 10));
-            row.querySelector('[data-field="total"]').textContent =
-                order.total_amount === null ? "Waiting for quotation" : money(order.total_amount);
+            row.querySelector('[data-field="total"]').textContent = liveTotalLabel(order);
             setStatusBadge(row.querySelector('[data-field="status"]'), order.status);
             row.querySelector("[data-action='live-order-detail']").dataset.id = order.reference;
             tableBody.append(row);
@@ -473,6 +399,62 @@
         });
     }
 
+    function liveTotalLabel(order) {
+        if (order.total_amount !== null) return money(order.total_amount);
+        const estimate = liveEstimate(order);
+        return estimate === null ? "Waiting for quotation" : `Est. ${money(estimate)} · unconfirmed`;
+    }
+
+    function liveEstimate(order) {
+        const estimate = order.pricing?.estimated_total;
+        return typeof estimate === "number" ? estimate : null;
+    }
+
+    /** Label/value rows for the options saved with an order (older orders used fixed fields). */
+    function liveSpecifications(order) {
+        const customization = order.customization || {};
+        if (Array.isArray(customization.specifications)) {
+            return customization.specifications.map((spec) => [spec.label, spec.value]);
+        }
+        return [
+            ["Size", customization.size],
+            ["Material / variant", customization.material],
+            ["Customization", customization.details],
+        ].filter(([, value]) => value);
+    }
+
+    function renderLivePricing(container, pricing) {
+        container.replaceChildren();
+        container.hidden = !pricing || !Object.keys(pricing).length;
+        if (container.hidden) return;
+        const title = document.createElement("strong");
+        title.textContent = "Price estimate from catalog prices";
+        const list = document.createElement("ul");
+        if (pricing.requires_quote) {
+            (pricing.quote_reasons || []).forEach((reason) => {
+                const item = document.createElement("li");
+                item.textContent = reason;
+                list.append(item);
+            });
+        } else {
+            (pricing.lines || []).forEach((line) => {
+                const item = document.createElement("li");
+                item.textContent = `${line.label}: ${money(line.amount)} (${line.detail})`;
+                list.append(item);
+            });
+            if (pricing.area_sqft) {
+                const item = document.createElement("li");
+                item.textContent = `Print area: ${pricing.area_sqft} sq ft per piece`;
+                list.append(item);
+            }
+            const total = document.createElement("li");
+            total.className = "live-pricing-total";
+            total.textContent = pricing.estimated_total === null ? "No total calculated." : `Estimated total: ${money(pricing.estimated_total)}`;
+            list.append(total);
+        }
+        container.append(title, list);
+    }
+
     async function openLiveOrder(reference) {
         const order = liveOrderFor(reference);
         if (!order) return;
@@ -484,6 +466,7 @@
         if (!content) return;
         content.querySelector("[data-live-title]").textContent = `Customer request ${reference}`;
         const details = content.querySelector("[data-live-details]");
+        const estimate = liveEstimate(order);
         [
             ["Customer", order.customer.name],
             ["Email", order.customer.email],
@@ -491,13 +474,19 @@
             ["Messenger", order.customer.messenger],
             ["Product", order.product.name],
             ["Category", order.product.category],
-            ["Size", order.customization.size],
             ["Quantity", String(order.customization.quantity)],
-            ["Material / variant", order.customization.material],
+            ["Catalog estimate", estimate === null ? "Quotation required" : money(estimate)],
             ["Confirmed total", order.total_amount === null ? "Waiting for Admin Quotation" : money(order.total_amount)],
             ["Payment received", money(paid)],
             ["Order status", order.status],
         ].forEach(([label, value]) => appendDetailItem(details, label, value));
+
+        // Every option the customer chose for this product, as saved with the order.
+        const specs = content.querySelector("[data-live-specs]");
+        specs.replaceChildren();
+        liveSpecifications(order).forEach(([label, value]) => appendDetailItem(specs, label, value));
+        content.querySelector("[data-live-specs-section]").hidden = !specs.childElementCount;
+        renderLivePricing(content.querySelector("[data-live-pricing]"), order.pricing);
         if (order.has_event) {
             [
                 ["Celebrant", order.event_details.celebrant],
@@ -507,8 +496,8 @@
                 ["Event location", order.event_details.event_location],
             ].forEach(([label, value]) => appendDetailItem(details, label, value));
         }
-        content.querySelector("[data-live-customization]").textContent = order.customization.details || "Not specified";
-        content.querySelector("[data-live-instructions]").textContent = order.customization.instructions || "None";
+        content.querySelector("[data-live-instructions]").textContent =
+            order.customization.notes || order.customization.instructions || order.customization.details || "None";
         const productImage = content.querySelector("[data-live-product-image]");
         if (order.product.image) {
             productImage.hidden = false;
@@ -529,7 +518,9 @@
             link.target = "_blank";
             link.rel = "noopener";
             link.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
-            item.append(link);
+            const source = document.createElement("strong");
+            source.textContent = `${file.field_label || "Reference file"}: `;
+            item.append(source, link);
             attachmentList.append(item);
         });
         attachments.hidden = order.attachments.length === 0;
@@ -565,7 +556,11 @@
         const quoteForm = content.querySelector("[data-live-quote-form]");
         quoteForm.hidden = !["Under Review", "Awaiting Quotation"].includes(order.status);
         quoteForm.dataset.id = reference;
-        quoteForm.elements.total_amount.value = order.total_amount ?? "";
+        // Prefill with the estimate from the shop's own catalog prices; the administrator still confirms it.
+        quoteForm.elements.total_amount.value = order.total_amount ?? estimate ?? "";
+        content.querySelector("[data-live-quote-estimate]").textContent = estimate === null
+            ? "No catalog estimate: this request needs a custom quotation."
+            : `Prefilled with the catalog estimate of ${money(estimate)}. Adjust it if needed before saving.`;
         quoteForm.elements.payment_instructions.value = order.payment_instructions || "";
 
         const paymentForm = content.querySelector("[data-live-payment-form]");
@@ -606,6 +601,7 @@
             liveOrdersError = error instanceof Error ? error.message : "Could not load customer orders.";
             liveOrdersLoaded = true;
         }
+        void refreshDashboard();
         if (!dialog.open) renderView();
     }
 
@@ -633,32 +629,7 @@
         document.querySelector("#order-date-from").value = filter.from;
         document.querySelector("#order-date-to").value = filter.to;
 
-        const liveRows = document.querySelector("[data-live-order-rows]");
-        liveRows.replaceChildren();
-        liveOrders.forEach((order) => {
-            const row = document.querySelector("#live-order-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="reference"]').textContent = order.reference;
-            setTextPair(row.querySelector('[data-field="customer"]'), row.querySelector('[data-field="email"]'), order.customer.name, order.customer.email);
-            setTextPair(row.querySelector('[data-field="product"]'), row.querySelector('[data-field="category"]'), order.product.name, order.product.category);
-            row.querySelector('[data-field="submitted"]').textContent = dateLabel(order.created_at.slice(0, 10));
-            row.querySelector('[data-field="total"]').textContent =
-                order.total_amount === null ? "Waiting for quotation" : money(order.total_amount);
-            setStatusBadge(row.querySelector('[data-field="status"]'), order.status);
-            row.querySelector("[data-action='live-order-detail']").dataset.id = order.reference;
-            liveRows.append(row);
-        });
-        const liveOrderError = document.querySelector("[data-live-order-error]");
-        liveOrderError.hidden = !liveOrdersError;
-        liveOrderError.textContent = liveOrdersError ? `Customer requests could not be loaded. ${liveOrdersError}` : "";
-        document.querySelector("[data-live-order-count]").textContent = `${liveOrders.length} saved requests`;
-        if (!liveRows.childElementCount) {
-            const message = liveOrdersError
-                ? "Customer requests could not be loaded."
-                : liveOrdersLoaded
-                    ? "No customer requests have been submitted yet."
-                    : "Loading customer requests…";
-            showTableEmpty(liveRows, 7, message);
-        }
+        renderLiveOrdersTable();
 
         const sampleRows = document.querySelector("[data-sample-order-rows]");
         sampleRows.replaceChildren();
@@ -704,49 +675,11 @@
     }
 
     function renderServices() {
-        const filter = filters.services;
-        const needle = filter.search.toLowerCase();
-        const filtered = services.filter((service) =>
-            (!needle || `${service.name} ${service.category}`.toLowerCase().includes(needle)) &&
-            (!filter.category || service.category === filter.category)
-        );
-        const categoryFilter = document.querySelector("#service-category-filter");
-        categoryFilter.replaceChildren(new Option("All categories", ""));
-        Object.keys(serviceCatalog).forEach((category) => categoryFilter.add(new Option(category, category)));
-        categoryFilter.value = filter.category;
-        const tableBody = document.querySelector("[data-service-rows]");
-        tableBody.replaceChildren();
-        filtered.forEach((service) => {
-            const row = document.querySelector("#service-row-template").content.firstElementChild.cloneNode(true);
-            const image = row.querySelector('[data-field="image"]');
-            image.src = service.image;
-            image.alt = "";
-            appendTextPair(row.querySelector(".product-cell > span"), service.name, service.description);
-            row.querySelector('[data-field="category"]').textContent = service.category;
-            row.querySelector('[data-field="pricing"]').textContent =
-                service.pricingMode === "fixed" ? money(service.price) : "Request a quote";
-            setStatusBadge(row.querySelector('[data-field="availability"]'), service.available ? "Available" : "Unavailable");
-            row.querySelector("[data-action='edit-service']").dataset.id = service.id;
-            tableBody.append(row);
-        });
-        document.querySelector("[data-service-count]").textContent = `${filtered.length} items`;
-        if (!filtered.length) showTableEmpty(tableBody, 5, "No products match these filters.");
+        catalogAdmin()?.renderServices(filters.services);
     }
 
     function renderPricing() {
-        const tableBody = document.querySelector("[data-pricing-rows]");
-        tableBody.replaceChildren();
-        services.forEach((service) => {
-            const row = document.querySelector("#pricing-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="name"]').textContent = service.name;
-            row.querySelector('[data-field="category"]').textContent = service.category;
-            row.querySelector('[data-field="price"]').textContent =
-                service.pricingMode === "fixed" ? money(service.price) : "Request a quote";
-            setStatusBadge(row.querySelector('[data-field="mode"]'), service.pricingMode === "fixed" ? "Fixed price" : "Quote");
-            row.querySelector("[data-action='edit-price']").dataset.id = service.id;
-            tableBody.append(row);
-        });
-        document.querySelector("[data-pricing-count]").textContent = `${services.length} catalog items`;
+        catalogAdmin()?.renderPricing();
     }
 
     function renderPayments() {
@@ -872,15 +805,7 @@
             row.querySelector('[data-field="amount"]').textContent = money(payment.amount);
             tableBody.append(row);
         });
-        if (!tableBody.childElementCount) {
-            const row = document.createElement("tr");
-            const cell = document.createElement("td");
-            cell.className = "empty-state";
-            cell.colSpan = 5;
-            cell.textContent = "No payments match these filters.";
-            row.append(cell);
-            tableBody.append(row);
-        }
+        if (!tableBody.childElementCount) showTableEmpty(tableBody, 5, "No payments match these filters.");
     }
 
     function renderNotifications() {
@@ -1006,50 +931,6 @@
             tableBody.append(row);
         });
         if (!tableBody.childElementCount) showTableEmpty(tableBody, 4, "No orders found for this customer.");
-    }
-
-    async function openServiceForm(service) {
-        const editing = Boolean(service);
-        revokeUnusedImage(serviceImageDraftUrl);
-        serviceImageDraftUrl = service?.image || "";
-        const content = await showDialog("dialog-service-form");
-        if (!content) return;
-        content.querySelector("[data-service-form-title]").textContent = editing ? "Edit service" : "Add a service";
-        const form = content.querySelector('[data-form="service-save"]');
-        form.dataset.id = service?.id || "";
-        form.elements.name.value = service?.name || "";
-        form.elements.description.value = service?.description || "";
-        form.elements.pricingMode.value = service?.pricingMode || "quote";
-        form.elements.price.value = service?.price ?? "";
-        form.elements.available.value = service?.available === false ? "false" : "true";
-        const category = form.elements.category;
-        Object.keys(serviceCatalog).forEach((item) => category.add(new Option(item, item)));
-        category.value = service?.category || Object.keys(serviceCatalog)[0];
-        const preview = content.querySelector("#service-image-preview");
-        preview.hidden = !serviceImageDraftUrl;
-        if (serviceImageDraftUrl) preview.src = serviceImageDraftUrl;
-    }
-
-    async function openPriceForm(service) {
-        if (!service) return;
-        const content = await showDialog("dialog-price-form");
-        if (!content) return;
-        content.querySelector("[data-price-description]").textContent =
-            `${service.name} · ${service.category}. Enter only a price approved by the shop administrator.`;
-        const form = content.querySelector('[data-form="price-save"]');
-        form.dataset.id = service.id;
-        form.elements.pricingMode.value = service.pricingMode;
-        form.elements.price.value = service.price ?? "";
-    }
-
-    async function openCalculator() {
-        const content = await showDialog("dialog-calculator");
-        if (!content) return;
-        const select = content.querySelector("#estimate-service");
-        services.forEach((service) => {
-            const price = service.pricingMode === "fixed" ? ` · ${money(service.price)}` : " · Quote";
-            select.add(new Option(`${service.name} · ${service.category}${price}`, service.id));
-        });
     }
 
     async function openPaymentForm() {
@@ -1216,59 +1097,6 @@
             toast("Order details updated for this demo session.");
         }
 
-        if (type === "service-save") {
-            const id = form.dataset.id;
-            const service = id ? services.find((item) => item.id === id) : null;
-            const pricingMode = String(formData.get("pricingMode"));
-            const priceText = String(formData.get("price") || "").trim();
-            const price = priceText ? Number(priceText) : null;
-            if (pricingMode === "fixed" && (price === null || !Number.isFinite(price) || price < 0)) {
-                toast("Enter an administrator-defined price or select Request a quote.");
-                return;
-            }
-            const item = {
-                id: service?.id || `custom-${Date.now()}`,
-                name: String(formData.get("name")).trim(),
-                category: String(formData.get("category")),
-                description: String(formData.get("description")).trim(),
-                image: serviceImageDraftUrl || service?.image || categoryImages[String(formData.get("category"))],
-                pricingMode,
-                price: pricingMode === "fixed" ? price : null,
-                available: formData.get("available") === "true"
-            };
-            if (!item.name || !item.description) {
-                toast("Enter a product name and description.");
-                return;
-            }
-            const previousImage = service?.image;
-            if (service) Object.assign(service, item);
-            else services.push(item);
-            if (previousImage !== item.image) revokeUnusedImage(previousImage);
-            serviceImageDraftUrl = "";
-            logActivity(`${service ? "Service updated" : "Service added"}: ${item.name}.`);
-            dialog.close();
-            renderView();
-            toast("Service catalog updated for this demo session.");
-        }
-
-        if (type === "price-save") {
-            const service = services.find((item) => item.id === form.dataset.id);
-            if (!service) return;
-            const pricingMode = String(formData.get("pricingMode"));
-            const priceText = String(formData.get("price") || "").trim();
-            const price = priceText ? Number(priceText) : null;
-            if (pricingMode === "fixed" && (price === null || !Number.isFinite(price) || price < 0)) {
-                toast("A fixed-price rule needs a valid administrator-defined price.");
-                return;
-            }
-            service.pricingMode = pricingMode;
-            service.price = pricingMode === "fixed" ? price : null;
-            logActivity(`Pricing rule updated for ${service.name}.`);
-            dialog.close();
-            renderView();
-            toast("Pricing rule updated for this demo session.");
-        }
-
         if (type === "payment-save") {
             const order = orderFor(String(formData.get("orderId")));
             const amount = Number(formData.get("amount"));
@@ -1368,32 +1196,6 @@
                 if (order) confirmAndUpdateStatus(order, "Rejected");
                 break;
             }
-            case "add-service":
-                await openServiceForm(null);
-                break;
-            case "edit-service":
-                await openServiceForm(services.find((service) => service.id === id));
-                break;
-            case "edit-price":
-                await openPriceForm(services.find((service) => service.id === id));
-                break;
-            case "show-calculator":
-                await openCalculator();
-                break;
-            case "calculate-estimate": {
-                const form = action.closest("form");
-                const service = services.find((item) => item.id === form.elements.serviceId.value);
-                const quantity = Number(form.elements.quantity.value);
-                const output = form.querySelector("#estimate-total");
-                if (!service || !Number.isInteger(quantity) || quantity < 1) {
-                    output.textContent = "Enter a valid quantity.";
-                } else if (service.pricingMode !== "fixed" || service.price === null) {
-                    output.textContent = "Request a quote";
-                } else {
-                    output.textContent = money(service.price * quantity);
-                }
-                break;
-            }
             case "record-payment":
                 await openPaymentForm();
                 break;
@@ -1452,27 +1254,8 @@
     });
 
     document.addEventListener("change", (event) => {
-        if (event.target.id !== "service-image") return;
-        const file = event.target.files?.[0];
-        if (!file) return;
-        if (!file.type.startsWith("image/")) {
-            event.target.value = "";
-            toast("Choose an image file for the product preview.");
-            return;
-        }
-        revokeUnusedImage(serviceImageDraftUrl);
-        serviceImageDraftUrl = URL.createObjectURL(file);
-        const preview = document.querySelector("#service-image-preview");
-        preview.src = serviceImageDraftUrl;
-        preview.hidden = false;
-    });
-
-    document.addEventListener("change", (event) => {
         const target = event.target;
-        if (target.id === "chart-period") {
-            chartPeriod = target.value;
-            renderView();
-        } else if (target.id === "order-category-filter") {
+        if (target.id === "order-category-filter") {
             filters.orders.category = target.value;
             renderView();
         } else if (target.id === "order-status-filter") {
@@ -1522,16 +1305,6 @@
             const order = orderFor(target.value);
             const amount = form?.querySelector("#payment-amount");
             if (order && amount) amount.max = String(balanceFor(order));
-        } else if (target.id === "estimate-service" || target.id === "estimate-quantity") {
-            const form = target.closest("form");
-            const service = services.find((item) => item.id === form?.elements.serviceId.value);
-            const quantity = Number(form?.elements.quantity.value);
-            const output = form?.querySelector("#estimate-total");
-            if (output && service) {
-                output.textContent = service.pricingMode === "fixed" && service.price !== null && quantity > 0
-                    ? money(service.price * quantity)
-                    : "Request a quote";
-            }
         }
     });
 

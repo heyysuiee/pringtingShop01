@@ -11,6 +11,9 @@ class OrderAttachment(TypedDict):
     filename: str
     mime_type: str
     size: int
+    # Set when the file was uploaded through a product-specific upload field (e.g. "Photo upload").
+    field_key: NotRequired[str]
+    field_label: NotRequired[str]
 
 
 class OrderHistoryEntry(TypedDict):
@@ -48,3 +51,5 @@ class OrderRecord(TypedDict):
     admin_notes: str
     customer_id: NotRequired[str | None]
     idempotency_key: NotRequired[str | None]
+    # Estimate from administrator-configured catalog prices. The confirmed price is total_amount.
+    pricing: NotRequired[dict[str, Any]]

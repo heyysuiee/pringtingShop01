@@ -6,7 +6,7 @@ import re
 import secrets
 import sqlite3
 from collections.abc import Mapping
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -14,14 +14,19 @@ from urllib.parse import quote
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 
-from backend.app.code.security import session_claims
+from backend.app.core.security import session_claims
 from backend.app.models.order import OrderAttachment, OrderHistoryEntry, OrderRecord, OrderUpdates
-from backend.app.repositories import order_repository
-from backend.app.services import auth_services
+from backend.app.repositories import customer_repository, order_repository
+from backend.app.schemas.user import normalize_email, validate_phone
+from backend.app.services import auth_services, catalog_services
+from backend.app.utils.clock import now_iso
 
 
 UPLOAD_DIR = order_repository.UPLOAD_DIR
 MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_REFERENCE_FILES = 3
+MAX_ORDER_FILES = 15
+MAX_ORDER_UPLOAD_BYTES = 30 * 1024 * 1024
 ALLOWED_UPLOADS = {
     ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
     ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
@@ -42,6 +47,12 @@ ORDER_STATUSES = {
     "Rejected",
     "Cancelled",
 }
+# Groups used by the customer portal rules and the admin dashboard.
+PENDING_STATUSES = {"Pending Confirmation", "Under Review", "Awaiting Quotation", "Awaiting Down Payment"}
+PROCESSING_STATUSES = {"Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup"}
+CANCELLED_STATUSES = {"Cancelled", "Rejected"}
+# Payments can be recorded once a quotation is accepted and until the order is picked up.
+PAYABLE_STATUSES = {"Awaiting Down Payment"} | PROCESSING_STATUSES
 
 
 def _text(value: Any, label: str, limit: int, required: bool = False) -> str:
@@ -85,16 +96,40 @@ def _decode_upload(upload: Any) -> tuple[OrderAttachment, bytes]:
     return metadata, contents
 
 
-def _save_uploads(uploads: Any) -> list[OrderAttachment]:
-    if uploads is None:
-        return []
-    if not isinstance(uploads, list) or len(uploads) > 3:
-        raise HTTPException(status_code=422, detail="Upload up to 3 reference files.")
-    decoded = [_decode_upload(upload) for upload in uploads]
-    if sum(len(contents) for _, contents in decoded) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Combined reference files must be no larger than 10 MB.")
+def _decode_order_uploads(product: Any, reference_uploads: Any, field_uploads: Any) -> list[tuple[OrderAttachment, bytes]]:
+    """Decode and check every uploaded file before anything is written to disk."""
+    if reference_uploads is None:
+        reference_uploads = []
+    if not isinstance(reference_uploads, list) or len(reference_uploads) > MAX_REFERENCE_FILES:
+        raise HTTPException(status_code=422, detail=f"Upload up to {MAX_REFERENCE_FILES} reference files.")
+    decoded = [_decode_upload(upload) for upload in reference_uploads]
+    if field_uploads is None:
+        field_uploads = {}
+    if not isinstance(field_uploads, dict):
+        raise HTTPException(status_code=422, detail="Invalid product upload fields.")
+    for key, uploads in field_uploads.items():
+        field = catalog_services.file_field(product, key) if isinstance(key, str) else None
+        if field is None:
+            raise HTTPException(status_code=422, detail="A file was attached to an upload field this product does not have.")
+        if not isinstance(uploads, list):
+            raise HTTPException(status_code=422, detail=f"{field['label']}: invalid files.")
+        if len(uploads) > field["max_files"]:
+            raise HTTPException(status_code=422, detail=f"{field['label']}: attach up to {field['max_files']} file(s).")
+        for upload in uploads:
+            metadata, contents = _decode_upload(upload)
+            metadata["field_key"] = field["field_key"]
+            metadata["field_label"] = field["label"]
+            decoded.append((metadata, contents))
+    if len(decoded) > MAX_ORDER_FILES:
+        raise HTTPException(status_code=422, detail=f"Attach up to {MAX_ORDER_FILES} files per order.")
+    if sum(len(contents) for _, contents in decoded) > MAX_ORDER_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Combined uploads must be no larger than 30 MB. Email any extra originals to the shop.")
+    return decoded
+
+
+def _write_uploads(decoded: list[tuple[OrderAttachment, bytes]]) -> list[OrderAttachment]:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    saved = []
+    saved: list[OrderAttachment] = []
     try:
         for metadata, contents in decoded:
             (UPLOAD_DIR / metadata["filename"]).write_bytes(contents)
@@ -102,22 +137,30 @@ def _save_uploads(uploads: Any) -> list[OrderAttachment]:
     except OSError as error:
         for metadata in saved:
             (UPLOAD_DIR / metadata["filename"]).unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail="The reference files could not be saved.") from error
+        raise HTTPException(status_code=500, detail="The uploaded files could not be saved.") from error
     return saved
 
 
 def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     result = dict(order)
     result.pop("customer_id", None)
-    email = order["customer"]["email"]
     prefix = f"/api/admin/orders/{order['reference']}/files" if admin else f"/api/orders/{order['reference']}/files"
+    # Customers prove access to files with the order's email address; admins use their session.
+    access = "" if admin else f"?email={quote(order['customer']['email'], safe='')}"
+
+    def url(file_id: str) -> str:
+        return f"{prefix}/{file_id}{access}"
+
+    result.setdefault("pricing", {})
     result["attachments"] = [
         {
             "id": attachment["id"],
             "name": attachment["name"],
             "mime_type": attachment["mime_type"],
             "size": attachment["size"],
-            "url": f"{prefix}/{attachment['id']}" if admin else f"{prefix}/{attachment['id']}?email={quote(email, safe='')}",
+            "field_key": attachment.get("field_key", ""),
+            "field_label": attachment.get("field_label", "Reference file"),
+            "url": url(attachment["id"]),
         }
         for attachment in order["attachments"]
     ]
@@ -128,7 +171,7 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
             "name": draft["name"],
             "mime_type": draft["mime_type"],
             "size": draft["size"],
-            "url": f"{prefix}/{draft['id']}" if admin else f"{prefix}/{draft['id']}?email={quote(email, safe='')}",
+            "url": url(draft["id"]),
         }
     return result
 
@@ -177,33 +220,47 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         raise HTTPException(status_code=422, detail="Customization details are required.")
     if not isinstance(event_payload, dict):
         raise HTTPException(status_code=422, detail="Customer, product, customization, and event details are required.")
-    email = _text(customer_payload.get("email"), "Email", 254, True).lower()
-    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-        raise HTTPException(status_code=422, detail="Enter a valid email address.")
-    phone = _text(customer_payload.get("phone"), "Contact number", 40, True)
-    if len(re.sub(r"\D", "", phone)) < 7:
-        raise HTTPException(status_code=422, detail="Enter a valid contact number.")
-    customer_id = None
+    try:
+        email = normalize_email(_text(customer_payload.get("email"), "Email", 254, True))
+        phone = validate_phone(_text(customer_payload.get("phone"), "Contact number", 40, True))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    # Orders are only accepted from signed-in customers so every order belongs to an account.
     claims = session_claims(request, "customer")
-    if claims:
-        account = auth_services.get_customer(claims["sub"])
-        if account is None:
-            raise HTTPException(status_code=401, detail="The signed-in customer account is unavailable.")
-        if email != account["email"]:
-            raise HTTPException(status_code=403, detail="Use the email address from your signed-in account.")
-        customer_id = account["id"]
-        customer_payload = {
-            "name": account["name"],
-            "email": account["email"],
-            "phone": account["phone"],
-            "messenger": account["messenger"],
-        }
-    quantity = customization_payload.get("quantity")
-    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1 or quantity > 50000:
-        raise HTTPException(status_code=422, detail="Quantity must be between 1 and 50,000.")
-    has_event = payload.get("has_event") is True
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Sign in or create an account before submitting an order.")
+    account = auth_services.get_customer(claims["sub"])
+    if account is None:
+        raise HTTPException(status_code=401, detail="The signed-in customer account is unavailable.")
+    if email != account["email"]:
+        raise HTTPException(status_code=403, detail="Use the email address from your signed-in account.")
+    customer_id = account["id"]
+    customer_payload = {
+        "name": account["name"],
+        "email": account["email"],
+        "phone": phone,
+        "messenger": account["messenger"],
+    }
     if payload.get("acknowledged") is not True:
         raise HTTPException(status_code=422, detail="Acknowledge the order instructions before submitting.")
+
+    # The product, its form fields, and its prices come from the database, never from the client.
+    product = catalog_services.orderable_product(product_payload.get("id"))
+    decoded_uploads = _decode_order_uploads(product, payload.get("files", []), payload.get("field_files"))
+    field_file_names: dict[str, list[str]] = {}
+    for metadata, _ in decoded_uploads:
+        if metadata.get("field_key"):
+            field_file_names.setdefault(metadata["field_key"], []).append(metadata["name"])
+    quantity, selections, specifications, pricing = catalog_services.evaluate_order(
+        product,
+        customization_payload.get("quantity"),
+        customization_payload.get("options"),
+        field_file_names,
+    )
+    notes = _text(customization_payload.get("notes", ""), "Special instructions", 2000)
+
+    event_mode = product["event_mode"]
+    has_event = event_mode == "required" or (event_mode == "optional" and payload.get("has_event") is True)
     event_details = {
         "celebrant": _text(event_payload.get("celebrant", ""), "Celebrant name", 120),
         "event_type": _text(event_payload.get("event_type", ""), "Event type", 120),
@@ -212,21 +269,35 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         "event_location": _text(event_payload.get("event_location", ""), "Event location", 240),
     }
     if has_event and (not event_details["celebrant"] or not event_details["event_type"]):
-        raise HTTPException(status_code=422, detail="Celebrant name and event type are required for event products.")
-    if event_details["event_date"]:
+        raise HTTPException(status_code=422, detail="Celebrant name and event type are required for event orders.")
+    if event_mode == "required" and not event_details["event_date"]:
+        raise HTTPException(status_code=422, detail=f"Enter the event date for this {product['name']}.")
+    if has_event and event_details["event_date"]:
         try:
             date.fromisoformat(event_details["event_date"])
         except ValueError as error:
             raise HTTPException(status_code=422, detail="Enter a valid event date.") from error
-    files = _save_uploads(payload.get("files", []))
-    now = order_repository.now_iso()
-    reference = f"IPS-{datetime.now(timezone.utc):%y%m%d}-{secrets.token_hex(16).upper()}"
+    files = _write_uploads(decoded_uploads)
+
+    customization: dict[str, Any] = {
+        "quantity": quantity,
+        "options": selections,
+        "specifications": specifications,
+        "notes": notes,
+    }
+    now = now_iso()
+    estimate = pricing.get("estimated_total")
     history_entry: OrderHistoryEntry = {
         "at": now,
-        "text": "Customer submitted an order request. Awaiting administrator confirmation.",
+        "text": (
+            f"Customer submitted an order request. Catalog estimate PHP {estimate:,.2f}; awaiting administrator confirmation."
+            if estimate is not None
+            else "Customer submitted an order request. Awaiting administrator quotation."
+        ),
     }
     order: OrderRecord = {
-        "reference": reference,
+        # Assigned by order_repository.create_order (XXX-MM-DD-YY), never by the client.
+        "reference": "",
         "created_at": now,
         "updated_at": now,
         "customer": {
@@ -236,23 +307,21 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
             "messenger": _text(customer_payload.get("messenger", ""), "Messenger name", 120),
         },
         "product": {
-            "name": _text(product_payload.get("name"), "Product name", 160, True),
-            "category": _text(product_payload.get("category"), "Product category", 120, True),
-            "description": _text(product_payload.get("description", ""), "Product description", 600),
-            "image": _text(product_payload.get("image", ""), "Product image", 200000),
+            "id": product["id"],
+            "category_id": product["category_id"],
+            "name": product["name"],
+            "category": product["category_label"],
+            "description": product["description"],
+            "image": product["image"],
         },
-        "customization": {
-            "size": _text(customization_payload.get("size"), "Size", 120, True),
-            "quantity": quantity,
-            "material": _text(customization_payload.get("material"), "Material or variant", 120, True),
-            "details": _text(customization_payload.get("details", ""), "Customization details", 2000),
-            "instructions": _text(customization_payload.get("instructions", ""), "Special instructions", 2000),
-        },
+        "customization": customization,
         "event_details": event_details if has_event else {},
         "has_event": has_event,
         "acknowledged": True,
         "status": "Pending Confirmation",
+        # The confirmed amount is set by the administrator's quotation; the catalog estimate is in pricing.
         "total_amount": None,
+        "pricing": pricing,
         "payment_instructions": "",
         "payments": [],
         "attachments": files,
@@ -285,6 +354,14 @@ def customer_orders(email: str, reference: str) -> dict[str, Any]:
 
 def account_orders(customer_id: str) -> dict[str, Any]:
     return {"orders": [order_view(order) for order in order_repository.list_orders_for_customer(customer_id)]}
+
+
+def account_order(customer_id: str, reference: str) -> dict[str, Any]:
+    order = order_repository.get_order(reference)
+    # Ownership is checked against the signed-in account; other customers' references look like missing orders.
+    if order is None or order.get("customer_id") != customer_id:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    return order_view(order)
 
 
 def get_customer_order(reference: str, email: str) -> dict[str, Any]:
@@ -325,7 +402,7 @@ def request_draft_changes(reference: str, email: Any, requested_changes: Any) ->
 
 def cancel_customer_order(reference: str, email: Any) -> dict[str, Any]:
     order = owned_order(reference, _text(email, "Email", 254, True))
-    if order["status"] not in {"Pending Confirmation", "Under Review", "Awaiting Quotation", "Awaiting Down Payment"}:
+    if order["status"] not in PENDING_STATUSES:
         raise HTTPException(status_code=409, detail="This order can no longer be cancelled from the customer portal.")
     if order["payments"]:
         raise HTTPException(status_code=409, detail="Contact the shop administrator to review an order with recorded payments.")
@@ -336,6 +413,32 @@ def cancel_customer_order(reference: str, email: Any) -> dict[str, Any]:
             "Customer cancelled the order request before any payment was recorded.",
         )
     )
+
+
+def admin_dashboard() -> dict[str, Any]:
+    orders = order_repository.list_orders()
+    status_counts: dict[str, int] = {status: 0 for status in sorted(ORDER_STATUSES)}
+    revenue = 0.0
+    for order in orders:
+        status_counts[order["status"]] = status_counts.get(order["status"], 0) + 1
+        if order["status"] not in CANCELLED_STATUSES:
+            # Only payments the administrator actually recorded count as revenue, never quotations.
+            revenue += sum(float(payment["amount"]) for payment in order["payments"])
+    groups = {
+        "total_orders": len(orders),
+        "pending_orders": sum(1 for order in orders if order["status"] in PENDING_STATUSES),
+        "processing_orders": sum(1 for order in orders if order["status"] in PROCESSING_STATUSES),
+        "completed_orders": status_counts.get("Completed", 0),
+        "cancelled_orders": sum(1 for order in orders if order["status"] in CANCELLED_STATUSES),
+    }
+    recent = [order_view(order, admin=True) for order in orders[:8]]
+    return {
+        "total_customers": len(customer_repository.list_customers()),
+        **groups,
+        "total_revenue": round(revenue, 2),
+        "status_counts": status_counts,
+        "recent_orders": recent,
+    }
 
 
 def admin_orders() -> dict[str, Any]:
@@ -373,14 +476,7 @@ def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
     order = order_repository.get_order(reference)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    if order["status"] not in {
-        "Awaiting Down Payment",
-        "Draft Preparation",
-        "Awaiting Customer Approval",
-        "Approved for Printing",
-        "In Production",
-        "Ready for Pickup",
-    }:
+    if order["status"] not in PAYABLE_STATUSES:
         raise HTTPException(status_code=409, detail="Payment cannot be recorded at this order stage.")
     amount = payload.get("amount")
     if order["total_amount"] is None:
@@ -396,7 +492,7 @@ def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
         "amount": round(float(amount), 2),
         "method": _text(payload.get("method"), "Payment method", 60, True),
         "reference": _text(payload.get("reference", ""), "Payment reference", 120),
-        "received_at": order_repository.now_iso(),
+        "received_at": now_iso(),
     }
     payments = order["payments"] + [payment]
     updates: OrderUpdates = {"payments": payments}
