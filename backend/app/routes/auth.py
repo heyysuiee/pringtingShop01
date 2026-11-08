@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from backend.app.core.config import settings
-from backend.app.core.dependencies import require_admin
 from backend.app.core.rate_limit import (
     LOGIN_LIMIT,
     OTP_REQUEST_LIMIT,
@@ -29,6 +28,7 @@ from backend.app.schemas.user import (
     PasswordResetRequest,
     PasswordResetVerify,
 )
+from backend.app.repositories import auth_throttle_repository as otp_store
 from backend.app.services import auth_services
 
 
@@ -39,9 +39,10 @@ def _client_address(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _throttle(bucket: str, key: str, limit: tuple[int, int], detail: str) -> None:
+def _throttle(bucket: str, key: str, limit: tuple[int, int], detail: str, store: Any = limiter) -> None:
+    """Raise 429 when the limit is reached. `store` is the in-memory limiter (default) or otp_store."""
     max_requests, window = limit
-    if not limiter.allow(bucket, key, max_requests, window):
+    if not store.allow(bucket, key, max_requests, window):
         raise HTTPException(status_code=429, detail=detail)
 
 
@@ -65,7 +66,7 @@ def login_customer(payload: CustomerLogin, request: Request, response: Response)
     customer = auth_services.authenticate_customer(payload.email, payload.password)
     if customer is None:
         raise HTTPException(status_code=401, detail="Email address or password is incorrect.")
-    create_session_cookie(response, request, customer["id"], "customer")
+    create_session_cookie(response, request, customer["id"], "customer", remember=payload.remember)
     return {"customer": customer}
 
 
@@ -91,13 +92,29 @@ def logout_customer(request: Request, response: Response) -> Response:
 @router.post("/api/customer/password-reset/request")
 def request_password_reset(payload: PasswordResetRequest, request: Request) -> dict[str, Any]:
     require_same_origin(request)
-    _throttle("otp-request-ip", _client_address(request), OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.")
+    if not settings.smtp_configured:
+        # Checked before looking up the account, so every address gets the same answer.
+        auth_services.log_missing_smtp_settings()
+        raise HTTPException(status_code=503, detail="Password reset emails are not available right now. Please contact the shop.")
+    _throttle("otp-request-ip", _client_address(request), OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.", otp_store)
     # Cooldown is keyed by the submitted email, so the same response is returned for known and unknown addresses.
-    cooled_down = not limiter.allow("otp-cooldown", payload.email, 1, OTP_RESEND_COOLDOWN_SECONDS)
-    _throttle("otp-request-email", payload.email, OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.")
+    # These OTP limits live in the database, so restarting the server does not reset them.
+    cooled_down = not otp_store.allow("otp-cooldown", payload.email, 1, OTP_RESEND_COOLDOWN_SECONDS)
+    _throttle("otp-request-email", payload.email, OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.", otp_store)
     if cooled_down:
-        return {"message": auth_services.GENERIC_REQUEST_MESSAGE, "resend_after": OTP_RESEND_COOLDOWN_SECONDS}
-    result = auth_services.request_password_reset(payload.email)
+        # No new code is sent; the code from the previous request stays valid until it expires.
+        return {
+            "message": "A code was requested for this address less than a minute ago. Use the code from that email, or wait to request a new one.",
+            "resend_after": OTP_RESEND_COOLDOWN_SECONDS,
+            "cooldown": True,
+        }
+    try:
+        result = auth_services.request_password_reset(payload.email)
+    except HTTPException:
+        # No email went out, so give the cooldown back: the customer may retry straight away
+        # instead of being told to use a code that was never sent.
+        otp_store.reset("otp-cooldown", payload.email)
+        raise
     result["resend_after"] = OTP_RESEND_COOLDOWN_SECONDS
     return result
 
@@ -105,7 +122,7 @@ def request_password_reset(payload: PasswordResetRequest, request: Request) -> d
 @router.post("/api/customer/password-reset/verify")
 def verify_password_reset(payload: PasswordResetVerify, request: Request) -> dict[str, str]:
     require_same_origin(request)
-    _throttle("otp-verify-ip", _client_address(request), OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.")
+    _throttle("otp-verify-ip", _client_address(request), OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.", otp_store)
     token = auth_services.verify_password_reset_code(payload.email, payload.code)
     return {"reset_token": token, "message": "Code verified. Choose your new password."}
 
@@ -113,7 +130,7 @@ def verify_password_reset(payload: PasswordResetVerify, request: Request) -> dic
 @router.post("/api/customer/password-reset/confirm")
 def confirm_password_reset(payload: PasswordResetConfirm, request: Request) -> dict[str, str]:
     require_same_origin(request)
-    _throttle("reset-confirm-ip", _client_address(request), RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.")
+    _throttle("reset-confirm-ip", _client_address(request), RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.", otp_store)
     auth_services.complete_password_reset(payload.email, payload.reset_token, payload.new_password)
     return {"message": "Your password has been changed. You can now sign in with your new password."}
 
@@ -165,9 +182,3 @@ def delete_admin_session(request: Request, response: Response) -> Response:
     clear_session_cookie(response)
     response.status_code = 204
     return response
-
-
-@router.get("/api/admin/customers")
-def admin_customers(request: Request) -> dict[str, object]:
-    require_admin(request)
-    return {"customers": auth_services.list_customers()}

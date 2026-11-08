@@ -1,0 +1,592 @@
+/* Customer authentication pages: Sign In, Create an Account, Forgot Password.
+   Uses the storefront's look (charcoal, white, soft grays, serif headings) from style.css.
+   Sizes are set explicitly here so these pages render the same whatever global link/button
+   font sizes style.css defines. */
+
+.auth-page {
+    --auth-ink: #2b2b2b;
+    --auth-muted: #5c5c5c;
+    --auth-line: #d4d4d4;
+    --auth-line-strong: #b3b3b3;
+    --auth-surface: #ffffff;
+    --auth-subtle: #f4f4f4;
+    --auth-error: #a12424;
+    --auth-error-bg: #fbeaea;
+    --auth-success: #1d6b2c;
+    --auth-success-bg: #e8f4ea;
+    --auth-radius: 16px;
+    --auth-control-radius: 10px;
+    background: #ececec;
+}
+
+.auth-main {
+    display: grid;
+    min-height: calc(100vh - 220px);
+    place-items: start center;
+    padding: clamp(28px, 6vw, 72px) 16px;
+}
+
+.auth-card {
+    width: min(100%, 460px);
+    padding: clamp(24px, 5vw, 40px);
+    border: 1px solid var(--auth-line);
+    border-radius: var(--auth-radius);
+    background: var(--auth-surface);
+    box-shadow: 0 18px 48px rgba(43, 43, 43, 0.1);
+    color: var(--auth-ink);
+    font-family: "DM Sans", "Segoe UI", Arial, sans-serif;
+    font-size: 15px;
+}
+
+.auth-card-wide {
+    width: min(100%, 560px);
+}
+
+.auth-page .auth-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 26px;
+    color: var(--auth-ink);
+    font-size: 15px;
+    text-decoration: none;
+}
+
+.auth-brand-mark {
+    display: grid;
+    width: 38px;
+    height: 38px;
+    place-items: center;
+    border-radius: 10px;
+    background: var(--auth-ink);
+    color: #ffffff;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.auth-brand-name {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 19px;
+    line-height: 1.1;
+}
+
+.auth-brand-name small {
+    display: block;
+    margin-top: 2px;
+    color: var(--auth-muted);
+    font-family: "DM Sans", "Segoe UI", Arial, sans-serif;
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.auth-card h1 {
+    margin: 0 0 8px;
+    color: var(--auth-ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(26px, 4vw, 32px);
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+.auth-lead {
+    margin: 0 0 22px;
+    color: var(--auth-muted);
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------- alerts */
+
+.auth-alert {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border: 1px solid var(--auth-line-strong);
+    border-radius: var(--auth-control-radius);
+    background: var(--auth-subtle);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.auth-alert[hidden] {
+    display: none;
+}
+
+.auth-alert::before {
+    flex: 0 0 auto;
+    display: grid;
+    width: 20px;
+    height: 20px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--auth-ink);
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    content: "i";
+}
+
+.auth-alert-error {
+    border-color: var(--auth-error);
+    background: var(--auth-error-bg);
+    color: var(--auth-error);
+}
+
+.auth-alert-error::before {
+    background: var(--auth-error);
+    content: "!";
+}
+
+.auth-alert-success {
+    border-color: var(--auth-success);
+    background: var(--auth-success-bg);
+    color: var(--auth-success);
+}
+
+.auth-alert-success::before {
+    background: var(--auth-success);
+    content: "✓";
+}
+
+/* ---------------------------------------------------------------- form fields */
+
+.auth-form {
+    display: grid;
+    gap: 16px;
+}
+
+.auth-form[hidden],
+.auth-step[hidden] {
+    display: none;
+}
+
+.auth-field {
+    display: grid;
+    gap: 7px;
+}
+
+.auth-field-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.auth-field > label,
+.auth-label {
+    color: var(--auth-ink);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.auth-optional {
+    color: var(--auth-muted);
+    font-weight: 400;
+}
+
+.auth-input {
+    width: 100%;
+    min-height: 48px;
+    padding: 0 14px;
+    border: 1px solid var(--auth-line-strong);
+    border-radius: var(--auth-control-radius);
+    background: #ffffff;
+    color: var(--auth-ink);
+    font: inherit;
+    font-size: 16px; /* 16px avoids the iOS zoom on focus */
+    box-sizing: border-box;
+}
+
+.auth-input::placeholder {
+    color: #8a8a8a;
+}
+
+.auth-input:focus {
+    border-color: var(--auth-ink);
+    outline: 3px solid rgba(43, 43, 43, 0.15);
+    outline-offset: 1px;
+}
+
+.auth-input[aria-invalid="true"] {
+    border-color: var(--auth-error);
+}
+
+.auth-input[readonly] {
+    background: var(--auth-subtle);
+}
+
+.auth-field-error {
+    margin: 0;
+    color: var(--auth-error);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.auth-field-error:empty {
+    display: none;
+}
+
+.auth-hint {
+    margin: 0;
+    color: var(--auth-muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.auth-password {
+    position: relative;
+}
+
+.auth-password .auth-input {
+    padding-right: 74px;
+}
+
+.auth-page .auth-toggle-password {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    min-width: 58px;
+    height: 36px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--auth-ink);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transform: translateY(-50%);
+}
+
+.auth-page .auth-toggle-password:hover,
+.auth-page .auth-toggle-password:focus-visible {
+    background: var(--auth-subtle);
+}
+
+.auth-options {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.auth-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--auth-ink);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.auth-check input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--auth-ink);
+}
+
+.auth-page .auth-link {
+    color: var(--auth-ink);
+    font-size: 14px;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.auth-page .auth-link:hover {
+    text-decoration-thickness: 2px;
+}
+
+.auth-page button.auth-link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.auth-page button.auth-link:disabled {
+    color: var(--auth-muted);
+    text-decoration: none;
+    cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.auth-page .auth-button {
+    display: inline-flex;
+    width: 100%;
+    min-height: 50px;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 20px;
+    border: 1px solid var(--auth-ink);
+    border-radius: var(--auth-control-radius);
+    background: var(--auth-ink);
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.15s;
+}
+
+.auth-page .auth-button:hover:not(:disabled) {
+    background: #111111;
+}
+
+.auth-page .auth-button:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.auth-page .auth-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.auth-page .auth-button-secondary {
+    background: #ffffff;
+    color: var(--auth-ink);
+}
+
+.auth-page .auth-button-secondary:hover:not(:disabled) {
+    background: var(--auth-subtle);
+}
+
+.auth-page .auth-button[aria-busy="true"]::before {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: auth-spin 0.8s linear infinite;
+    content: "";
+}
+
+@keyframes auth-spin {
+    to { transform: rotate(360deg); }
+}
+
+.auth-switch {
+    margin: 22px 0 0;
+    padding-top: 18px;
+    border-top: 1px solid var(--auth-line);
+    color: var(--auth-muted);
+    font-size: 14px;
+    text-align: center;
+}
+
+.auth-back {
+    margin: 18px 0 0;
+    text-align: center;
+}
+
+/* ---------------------------------------------------------------- password rules */
+
+.auth-rules {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+}
+
+.auth-rules li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--auth-muted);
+}
+
+.auth-rules li::before {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    border: 1px solid var(--auth-line-strong);
+    border-radius: 50%;
+    font-size: 10px;
+    content: "";
+}
+
+.auth-rules li.met {
+    color: var(--auth-success);
+}
+
+.auth-rules li.met::before {
+    border-color: var(--auth-success);
+    background: var(--auth-success);
+    color: #ffffff;
+    content: "✓";
+}
+
+/* ---------------------------------------------------------------- forgot password steps */
+
+.auth-steps {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 22px;
+    padding: 0;
+    list-style: none;
+}
+
+.auth-steps li {
+    flex: 1;
+    display: grid;
+    gap: 6px;
+    color: var(--auth-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.auth-steps li::before {
+    height: 4px;
+    border-radius: 4px;
+    background: var(--auth-line);
+    content: "";
+}
+
+.auth-steps li.done,
+.auth-steps li.current {
+    color: var(--auth-ink);
+}
+
+.auth-steps li.done::before,
+.auth-steps li.current::before {
+    background: var(--auth-ink);
+}
+
+.auth-steps[hidden] {
+    display: none;
+}
+
+.auth-code-input {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 0.5em;
+    text-align: center;
+    padding-left: calc(14px + 0.5em);
+}
+
+.auth-code-meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--auth-muted);
+    font-size: 13px;
+}
+
+.auth-code-meta strong {
+    color: var(--auth-ink);
+}
+
+.auth-code-meta .expired {
+    color: var(--auth-error);
+}
+
+.auth-sent-to {
+    overflow-wrap: anywhere;
+}
+
+.auth-success {
+    text-align: center;
+}
+
+.auth-success-icon {
+    display: grid;
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 16px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--auth-success-bg);
+    color: var(--auth-success);
+    font-size: 30px;
+    font-weight: 700;
+}
+
+.auth-success .auth-lead {
+    margin-bottom: 18px;
+}
+
+.auth-actions {
+    display: grid;
+    gap: 10px;
+}
+
+/* ---------------------------------------------------------------- responsive */
+
+@media (max-width: 520px) {
+    .auth-main {
+        padding: 20px 12px 40px;
+    }
+
+    .auth-card {
+        border-radius: 14px;
+        box-shadow: 0 8px 24px rgba(43, 43, 43, 0.08);
+    }
+
+    .auth-field-row {
+        grid-template-columns: 1fr;
+    }
+
+    .auth-steps li {
+        font-size: 11px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .auth-page .auth-button[aria-busy="true"]::before {
+        animation-duration: 2s;
+    }
+}
+
+/* ---------------------------------------------------------------- sign-in prompt
+   Shown on the customer portal and the order page when nobody is signed in. */
+
+.portal-signin-prompt {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px 28px;
+}
+
+.portal-signin-prompt .card-title {
+    margin: 0 0 6px;
+}
+
+.portal-signin-actions {
+    display: grid;
+    gap: 10px;
+    justify-items: start;
+}
+
+.portal-signin-prompt .btn {
+    min-width: 200px;
+    font-size: 13px;
+}
+
+.portal-signin-prompt .portal-signin-link {
+    color: #2b2b2b;
+    font-size: 14px;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.portal-signin-prompt .field-hint {
+    font-size: 14px;
+}

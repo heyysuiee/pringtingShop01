@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2b2b2b">
+    <meta name="description" content="Sign in to your ImPRESSion PrintShop customer account.">
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/auth.css">
+    <title>Sign In — ImPRESSion PrintShop</title>
+</head>
+
+<body class="inner-page auth-page" data-auth-page="sign-in">
+    <div class="top-bar">
+        <div class="top-bar-content">
+            <p>(555) 123-4567 • (0949) 157-4778</p>
+            <p>Official email: shop email to be provided • Mon–Sat 8AM–6PM</p>
+        </div>
+    </div>
+
+    <nav class="nav" aria-label="Main navigation">
+        <div class="nav-brand">
+            <a href="/home">printing shop</a>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="nav-menu">
+            <a href="/home">Home</a>
+            <a href="/services">Services</a>
+            <a href="/order">Order</a>
+            <a href="/sample-work">Sample Work</a>
+            <a href="/customer-portal">Customer Portal</a>
+        </div>
+    </nav>
+
+    <main class="auth-main" id="main">
+        <section class="auth-card" aria-labelledby="auth-title">
+            <a class="auth-brand" href="/home" aria-label="ImPRESSion PrintShop home">
+                <span class="auth-brand-mark" aria-hidden="true">iP</span>
+                <span class="auth-brand-name">ImPRESSion PrintShop<small>Customer account</small></span>
+            </a>
+            <h1 id="auth-title">Welcome back</h1>
+            <p class="auth-lead">Sign in to place orders and follow their progress in your customer portal.</p>
+            <div class="auth-alert" id="auth-alert" role="status" aria-live="polite" hidden></div>
+            <form class="auth-form" id="sign-in-form" novalidate>
+                <div class="auth-field">
+                    <label for="sign-in-email">Email address</label>
+                    <input id="sign-in-email" name="email" type="email" class="auth-input" autocomplete="email" maxlength="254" inputmode="email" required aria-describedby="sign-in-email-error">
+                    <p class="auth-field-error" id="sign-in-email-error"></p>
+                </div>
+                <div class="auth-field">
+                    <label for="sign-in-password">Password</label>
+                    <div class="auth-password">
+                        <input id="sign-in-password" name="password" type="password" class="auth-input" autocomplete="current-password" maxlength="256" required aria-describedby="sign-in-password-error">
+                        <button class="auth-toggle-password" type="button" data-toggle-password="sign-in-password" aria-controls="sign-in-password" aria-pressed="false" aria-label="Show password">Show</button>
+                    </div>
+                    <p class="auth-field-error" id="sign-in-password-error"></p>
+                </div>
+                <div class="auth-options">
+                    <label class="auth-check"><input type="checkbox" name="remember" id="sign-in-remember"> Remember me for 30 days</label>
+                    <a class="auth-link" href="/forgot-password" data-keep-next>Forgot password?</a>
+                </div>
+                <button class="auth-button" type="submit">Sign In</button>
+            </form>
+            <p class="auth-switch">Don't have an account? <a class="auth-link" href="/create-account" data-keep-next>Create an Account</a></p>
+        </section>
+    </main>
+
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/shop.js"></script>
+    <script src="/assets/auth.js"></script>
+</body>
+
+</html>

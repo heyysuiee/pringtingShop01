@@ -34,6 +34,7 @@ class AdminQuotation(BaseModel):
 
     total_amount: Any = None
     payment_instructions: Any = ""
+    expected_version: Any = None
 
 
 class AdminPayment(BaseModel):
@@ -43,15 +44,20 @@ class AdminPayment(BaseModel):
     received: Any = None
     method: Any = None
     reference: Any = ""
+    expected_version: Any = None
 
 
 class AdminDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     file: Any = None
+    expected_version: Any = None
 
 
 class AdminOrderStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     status: Any = None
+    # Optional reason recorded in the order history (e.g. why a request was rejected).
+    note: Any = ""
+    expected_version: Any = None

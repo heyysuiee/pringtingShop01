@@ -13,7 +13,7 @@
  * Fields and options come from /api/catalog, so administrator changes appear here without code changes.
  */
 (() => {
-    const ALLOWED_UPLOADS = new Set(["image/jpeg", "image/png", "application/pdf"]);
+    const ALLOWED_UPLOADS = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
     const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
     const OPTION_TYPES = new Set(["select", "radio", "checkboxes"]);
     const CHARGE_LABELS = { per_unit: "each", per_order: "per order", per_sqft: "per sq ft" };
@@ -183,7 +183,7 @@
                 id,
                 className: "visually-hidden",
                 type: "file",
-                accept: ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf",
+                accept: ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf",
                 multiple: field.max_files > 1,
             });
             const zone = el(
@@ -191,7 +191,7 @@
                 { className: "upload-zone upload-zone-compact", for: id },
                 el("span", { className: "upload-icon", "aria-hidden": "true", text: "↥" }),
                 el("strong", { text: field.max_files > 1 ? `Choose up to ${field.max_files} files` : "Choose a file" }),
-                el("small", { text: "JPG, PNG, or PDF · 5 MB maximum each" }),
+                el("small", { text: "JPG, PNG, WebP, or PDF · 5 MB maximum each" }),
             );
             const previews = el("div", { className: "upload-previews" });
 
@@ -225,9 +225,9 @@
             input.addEventListener("change", () => {
                 const chosen = [...input.files];
                 input.value = "";
-                const invalid = chosen.find((file) => !ALLOWED_UPLOADS.has(file.type) || !/\.(jpe?g|png|pdf)$/i.test(file.name));
+                const invalid = chosen.find((file) => !ALLOWED_UPLOADS.has(file.type) || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name));
                 const oversized = chosen.find((file) => file.size > MAX_UPLOAD_BYTES);
-                if (invalid) return setError(field, `${invalid.name}: choose a JPG, PNG, or PDF file.`);
+                if (invalid) return setError(field, `${invalid.name}: choose a JPG, PNG, WebP, or PDF file.`);
                 if (oversized) return setError(field, `${oversized.name}: each file must be 5 MB or smaller.`);
                 if (files.length + chosen.length > field.max_files) {
                     return setError(field, `Attach up to ${field.max_files} file${field.max_files === 1 ? "" : "s"} here.`);

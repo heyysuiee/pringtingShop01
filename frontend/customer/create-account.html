@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2b2b2b">
+    <meta name="description" content="Create an ImPRESSion PrintShop customer account.">
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/auth.css">
+    <title>Create an Account — ImPRESSion PrintShop</title>
+</head>
+
+<body class="inner-page auth-page" data-auth-page="create-account">
+    <div class="top-bar">
+        <div class="top-bar-content">
+            <p>(555) 123-4567 • (0949) 157-4778</p>
+            <p>Official email: shop email to be provided • Mon–Sat 8AM–6PM</p>
+        </div>
+    </div>
+
+    <nav class="nav" aria-label="Main navigation">
+        <div class="nav-brand">
+            <a href="/home">printing shop</a>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="nav-menu">
+            <a href="/home">Home</a>
+            <a href="/services">Services</a>
+            <a href="/order">Order</a>
+            <a href="/sample-work">Sample Work</a>
+            <a href="/customer-portal">Customer Portal</a>
+        </div>
+    </nav>
+
+    <main class="auth-main" id="main">
+        <section class="auth-card auth-card-wide" aria-labelledby="auth-title">
+            <a class="auth-brand" href="/home" aria-label="ImPRESSion PrintShop home">
+                <span class="auth-brand-mark" aria-hidden="true">iP</span>
+                <span class="auth-brand-name">ImPRESSion PrintShop<small>Customer account</small></span>
+            </a>
+            <h1 id="auth-title">Create an account</h1>
+            <p class="auth-lead">An account keeps your orders together so you can track quotes, payments, drafts, and pickup.</p>
+            <div class="auth-alert" id="auth-alert" role="status" aria-live="polite" hidden></div>
+            <form class="auth-form" id="create-account-form" novalidate>
+                <div class="auth-field">
+                    <label for="register-name">Full name</label>
+                    <input id="register-name" name="name" type="text" class="auth-input" autocomplete="name" maxlength="120" required aria-describedby="register-name-error">
+                    <p class="auth-field-error" id="register-name-error"></p>
+                </div>
+                <div class="auth-field">
+                    <label for="register-email">Email address</label>
+                    <input id="register-email" name="email" type="email" class="auth-input" autocomplete="email" maxlength="254" inputmode="email" required aria-describedby="register-email-error register-email-hint">
+                    <p class="auth-hint" id="register-email-hint">Password reset codes are sent to this address, so use one you can open.</p>
+                    <p class="auth-field-error" id="register-email-error"></p>
+                </div>
+                <div class="auth-field-row">
+                    <div class="auth-field">
+                    <label for="register-phone">Contact number</label>
+                    <input id="register-phone" name="phone" type="tel" class="auth-input" autocomplete="tel" minlength="7" maxlength="40" inputmode="tel" required aria-describedby="register-phone-error">
+                    <p class="auth-field-error" id="register-phone-error"></p>
+                </div>
+                    <div class="auth-field">
+                    <label for="register-messenger">Messenger name <span class="auth-optional">(optional)</span></label>
+                    <input id="register-messenger" name="messenger" type="text" class="auth-input" autocomplete="off" maxlength="120" aria-describedby="register-messenger-error">
+                    <p class="auth-field-error" id="register-messenger-error"></p>
+                </div>
+                </div>
+                <div class="auth-field">
+                    <label for="register-password">Password</label>
+                    <div class="auth-password">
+                        <input id="register-password" name="password" type="password" class="auth-input" autocomplete="new-password" minlength="12" maxlength="256" required aria-describedby="register-password-error register-rules">
+                        <button class="auth-toggle-password" type="button" data-toggle-password="register-password" aria-controls="register-password" aria-pressed="false" aria-label="Show password">Show</button>
+                    </div>
+                    <p class="auth-field-error" id="register-password-error"></p>
+                </div>
+                <div class="auth-field">
+                    <label for="register-confirm">Confirm password</label>
+                    <div class="auth-password">
+                        <input id="register-confirm" name="confirm_password" type="password" class="auth-input" autocomplete="new-password" minlength="12" maxlength="256" required aria-describedby="register-confirm-error register-rules">
+                        <button class="auth-toggle-password" type="button" data-toggle-password="register-confirm" aria-controls="register-confirm" aria-pressed="false" aria-label="Show password">Show</button>
+                    </div>
+                    <p class="auth-field-error" id="register-confirm-error"></p>
+                </div>
+                <ul class="auth-rules" id="register-rules" aria-live="polite">
+                    <li data-rule="length">At least 12 characters</li>
+                    <li data-rule="match">Both passwords match</li>
+                </ul>
+                <button class="auth-button" type="submit">Create Account</button>
+            </form>
+            <p class="auth-switch">Already have an account? <a class="auth-link" href="/sign-in" data-keep-next>Sign In</a></p>
+        </section>
+    </main>
+
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/shop.js"></script>
+    <script src="/assets/auth.js"></script>
+</body>
+
+</html>

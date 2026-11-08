@@ -19,6 +19,7 @@ from backend.app.database.catalog_seed import CATALOG_SEED, slug
 from backend.app.database.connection import connection_scope
 from backend.app.models.catalog import CatalogCategory, CatalogField, CatalogProduct, FieldOption
 from backend.app.utils.clock import now_iso
+from backend.app.utils.images import optimized_image
 
 
 SEED_MARKER = "catalog_seed_v1"
@@ -182,7 +183,7 @@ def _product_from_row(row: sqlite3.Row, category_label: str) -> CatalogProduct:
         "category_label": category_label,
         "name": row["name"],
         "description": row["description"],
-        "image": row["image"],
+        "image": optimized_image(row["image"]),
         "pricing_mode": row["pricing_mode"],
         "base_price": None if row["base_price"] is None else float(row["base_price"]),
         "min_quantity": int(row["min_quantity"]),
@@ -240,6 +241,13 @@ def load_catalog(active_only: bool) -> list[CatalogCategory]:
         if owner_field is not None:
             owner_field["options"].append(_option_from_row(row))
     return categories
+
+
+def list_categories() -> list[dict[str, Any]]:
+    """Every service category (shown or hidden) in display order, without products."""
+    with connection_scope() as connection:
+        rows = connection.execute("SELECT id, label, active FROM catalog_categories ORDER BY sort_order, label").fetchall()
+    return [{"id": row["id"], "label": row["label"], "active": bool(row["active"])} for row in rows]
 
 
 def get_product(product_id: str, active_only: bool) -> CatalogProduct | None:

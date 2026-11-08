@@ -95,8 +95,15 @@ def cancel_customer_order(
 
 @router.get("/api/admin/orders")
 def admin_orders(request: Request) -> dict[str, Any]:
+    """Orders with server-side search, filters (status, service, payment status, dates), sorting, and pages."""
     require_admin(request)
-    return order_services.admin_orders()
+    return order_services.admin_orders(dict(request.query_params))
+
+
+@router.get("/api/admin/orders/{reference}")
+def admin_order(reference: str, request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return order_services.admin_order(reference)
 
 
 @router.get("/api/admin/dashboard")
@@ -148,4 +155,4 @@ def admin_update_status(
     request: Request,
 ) -> dict[str, Any]:
     require_admin(request)
-    return order_services.update_order_status(reference, payload.status)
+    return order_services.update_order_status(reference, payload.status, payload.model_dump())

@@ -172,8 +172,8 @@ function initImageFallbacks() {
             palette: ["#f1e5d7", "#60483a", "#b87968"],
             samples: [
                 ["birthday-invitation", "Birthday Invitation", "A cheerful invitation sample for birthdays and milestones.", "/frontend/image/invitation/Bdayinvitation.jpg"],
-                ["wedding-invitation", "Wedding Invitation", "An elegant stationery sample for wedding celebrations.", "/frontend/image/invitation/weddinginvitationj.png"],
-                ["christening-invitation", "Christening Invitation", "A gentle invitation sample for a christening day.", "/frontend/image/invitation/christening.png"]
+                ["wedding-invitation", "Wedding Invitation", "An elegant stationery sample for wedding celebrations.", "/frontend/image/invitation/weddinginvitationj.jpg"],
+                ["christening-invitation", "Christening Invitation", "A gentle invitation sample for a christening day.", "/frontend/image/invitation/christening.jpg"]
             ]
         },
         souvenir: {
@@ -183,13 +183,13 @@ function initImageFallbacks() {
             description: "Personalize useful keepsakes for celebrations, gifts, and everyday moments.",
             palette: ["#eee2d2", "#4f4035", "#c6a15b"],
             samples: [
-                ["refrigerator-magnet", "Refrigerator Magnet", "A personalized refrigerator magnet sample for a special occasion.", "/frontend/image/souvenir/refmagnet.png"],
+                ["refrigerator-magnet", "Refrigerator Magnet", "A personalized refrigerator magnet sample for a special occasion.", "/frontend/image/souvenir/refmagnet.jpg"],
                 ["acrylic-keychain", "Acrylic Keychain", "A custom acrylic keychain sample with a personal design.", "/frontend/image/souvenir/keychain.jpg"],
                 ["personalized-nail-cutter", "Personalized Nail Cutter", "A small personalized keepsake concept."],
-                ["white-mug", "White Mug", "A custom print concept for a classic white mug.", "/frontend/image/souvenir/whitemug.png"],
+                ["white-mug", "White Mug", "A custom print concept for a classic white mug.", "/frontend/image/souvenir/whitemug.jpg"],
                 ["glass-mug", "Glass Mug", "A custom print sample for a personalized glass mug.", "/frontend/image/souvenir/glassmug.jpg"],
                 ["nordic-mug", "Nordic Mug", "A personalized print concept for a Nordic-style mug."],
-                ["personalized-tote-bag", "Personalized Tote Bag", "A custom tote concept for gifts or everyday use.", "/frontend/image/souvenir/totebag.png"],
+                ["personalized-tote-bag", "Personalized Tote Bag", "A custom tote concept for gifts or everyday use.", "/frontend/image/souvenir/totebag.jpg"],
                 ["coloring-book", "Coloring Book", "A custom cover concept for a personalized coloring book."]
             ]
         },
@@ -215,10 +215,10 @@ function initImageFallbacks() {
             samples: [
                 ["birthday-welcome-signs", "Birthday / Welcome Signs", "A welcome sign sample for parties and celebrations.", "/frontend/image/SintraBoard/welcomeBoard.jpg"],
                 ["wedding-signs", "Wedding Signs", "A coordinated sign sample for wedding venues and receptions.", "/frontend/image/SintraBoard/welcomeBoard.jpg"],
-                ["menu-board", "Menu Board", "A clear, custom menu board sample for an event or business.", "/frontend/image/SintraBoard/menuBoard.png"],
-                ["photo-mounting-boards", "Photo Mounting Boards", "A mounted photo presentation sample.", "/frontend/image/SintraBoard/customizePhotoDesign.png"],
-                ["customized-photo-displays", "Customized Photo Displays", "A personalized photo display sample.", "/frontend/image/SintraBoard/customizePhotoDesign.png"],
-                ["photo-collages", "Photo Collages", "A composed collage sample for memories and milestones.", "/frontend/image/SintraBoard/photocollage.png"]
+                ["menu-board", "Menu Board", "A clear, custom menu board sample for an event or business.", "/frontend/image/SintraBoard/menuBoard.jpg"],
+                ["photo-mounting-boards", "Photo Mounting Boards", "A mounted photo presentation sample.", "/frontend/image/SintraBoard/customizePhotoDesign.jpg"],
+                ["customized-photo-displays", "Customized Photo Displays", "A personalized photo display sample.", "/frontend/image/SintraBoard/customizePhotoDesign.jpg"],
+                ["photo-collages", "Photo Collages", "A composed collage sample for memories and milestones.", "/frontend/image/SintraBoard/photocollage.jpg"]
             ]
         },
         "party-needs": {
@@ -241,7 +241,7 @@ function initImageFallbacks() {
             description: "Large-format concepts for events, storefronts, announcements, and wayfinding.",
             palette: ["#e2e8e6", "#344b4c", "#c6a15b"],
             samples: [
-                ["birthday-wedding-graduation-banners", "Birthday, Wedding & Graduation Banners", "A large-format event banner sample; final dimensions and material require a quote.", "/frontend/image/tarpaulin/event.png"],
+                ["birthday-wedding-graduation-banners", "Birthday, Wedding & Graduation Banners", "A large-format event banner sample; final dimensions and material require a quote.", "/frontend/image/tarpaulin/event.jpg"],
                 ["store-banners-promotions", "Store Banners & Promotions", "Promotional banner concept for a store or small business."],
                 ["product-advertisements", "Product Advertisements", "Large-format product advertising concept."],
                 ["stage-backdrops", "Stage Backdrops", "Backdrop concept for a stage, event, or photo area."],

@@ -16,7 +16,9 @@ from backend.app.services import email_service
 from backend.app.utils.clock import now_iso, now_utc
 
 
-OTP_LIFETIME = timedelta(minutes=10)
+# Codes are valid for 5 minutes; the verified reset session then has 10 minutes to choose a password.
+OTP_LIFETIME = timedelta(minutes=5)
+OTP_LIFETIME_SECONDS = int(OTP_LIFETIME.total_seconds())
 RESET_TOKEN_LIFETIME = timedelta(minutes=10)
 OTP_MAX_ATTEMPTS = 5
 PASSWORD_MIN_LENGTH = 12
@@ -78,11 +80,20 @@ def _keyed_digest(purpose: str, customer_id: str, value: str) -> str:
     return hmac.new(settings.secret_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
+def log_missing_smtp_settings() -> None:
+    email_service.logger.error(
+        "Password reset requested but SMTP is not configured. Set PRINTSHOP_SMTP_HOST and PRINTSHOP_SMTP_FROM "
+        "(plus PRINTSHOP_SMTP_USERNAME / PRINTSHOP_SMTP_PASSWORD) in the project-root .env file."
+    )
+
+
 def request_password_reset(email: str) -> dict[str, Any]:
     """Send a one-time code if the account can receive one. The response never reveals whether it exists."""
+    # The same response is returned for unknown addresses, so it cannot reveal whether an account exists.
+    response = {"message": GENERIC_REQUEST_MESSAGE, "expires_in": OTP_LIFETIME_SECONDS}
     customer = customer_repository.get_by_email(email)
     if customer is None:
-        return {"message": GENERIC_REQUEST_MESSAGE}
+        return response
 
     code = f"{secrets.randbelow(1_000_000):06d}"
     expires_at = (now_utc() + OTP_LIFETIME).isoformat(timespec="seconds")
@@ -102,7 +113,7 @@ def request_password_reset(email: str) -> dict[str, Any]:
     except email_service.EmailDeliveryError as error:
         customer_repository.delete_reset(customer["id"])
         raise HTTPException(status_code=503, detail=str(error)) from error
-    return {"message": GENERIC_REQUEST_MESSAGE}
+    return response
 
 
 def verify_password_reset_code(email: str, code: str) -> str:
@@ -112,7 +123,11 @@ def verify_password_reset_code(email: str, code: str) -> str:
     if customer is None:
         raise invalid
     record = customer_repository.get_reset(customer["id"])
-    if record is None or not record["code_hash"] or _parse_time(record["code_expires_at"]) <= now_utc():
+    if record is None or not record["code_hash"]:
+        # No code, or it was already used. Leave any verified reset session alone so a repeated
+        # submit (double click, or someone else posting this email) cannot cancel it.
+        raise invalid
+    if _parse_time(record["code_expires_at"]) <= now_utc():
         customer_repository.delete_reset(customer["id"])
         raise invalid
     if record["attempts"] >= OTP_MAX_ATTEMPTS:
@@ -153,7 +168,8 @@ def complete_password_reset(email: str, reset_token: str, new_password: str) -> 
     supplied = _keyed_digest("reset", customer["id"], reset_token)
     if not hmac.compare_digest(record["reset_token_hash"], supplied):
         raise invalid
+    if verify_password(new_password, customer["password_hash"]):
+        raise HTTPException(status_code=422, detail="Choose a new password that is different from your current one.")
 
-    customer_repository.set_password_hash(customer["id"], hash_password(new_password), now_iso())
-    # Single use: removing the record invalidates the OTP and the reset token together.
-    customer_repository.delete_reset(customer["id"])
+    # Single use: the password is saved and the code and reset token are removed together.
+    customer_repository.apply_password_reset(customer["id"], hash_password(new_password), now_iso())

@@ -12,10 +12,13 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException, Request, Response
 
 from backend.app.core.config import settings
+from backend.app.repositories import customer_repository
 
 
 SESSION_COOKIE = "impress_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
+# "Remember me" on the customer sign-in page keeps the session for 30 days.
+REMEMBER_TTL_SECONDS = 30 * 24 * 60 * 60
 PASSWORD_ITERATIONS = 600_000
 
 
@@ -45,13 +48,21 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def create_session_token(subject: str, role: str) -> str:
-    claims = {
+def create_session_token(
+    subject: str,
+    role: str,
+    ttl_seconds: int = SESSION_TTL_SECONDS,
+    session_version: int | None = None,
+) -> str:
+    claims: dict[str, Any] = {
         "sub": subject,
         "role": role,
-        "exp": int(time.time()) + SESSION_TTL_SECONDS,
+        "exp": int(time.time()) + ttl_seconds,
         "nonce": secrets.token_urlsafe(12),
     }
+    if session_version is not None:
+        # Customer sessions record the account's session version; see session_claims().
+        claims["ver"] = session_version
     encoded = base64.urlsafe_b64encode(json.dumps(claims, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(settings.secret_key.encode(), encoded.encode(), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
@@ -82,11 +93,25 @@ def secure_cookie(request: Request) -> bool:
     return settings.production or request.url.scheme == "https"
 
 
-def create_session_cookie(response: Response, request: Request, subject: str, role: str) -> None:
+def create_session_cookie(
+    response: Response,
+    request: Request,
+    subject: str,
+    role: str,
+    remember: bool | None = None,
+) -> None:
+    """Set the signed session cookie.
+
+    ``remember=True`` keeps the customer signed in for 30 days. ``remember=False`` uses a browser
+    session cookie (removed when the browser closes, and never valid for more than 12 hours).
+    ``None`` keeps the standard 12-hour cookie (administrators and new registrations).
+    """
+    ttl = REMEMBER_TTL_SECONDS if remember else SESSION_TTL_SECONDS
+    version = customer_repository.get_session_version(subject) if role == "customer" else None
     response.set_cookie(
         SESSION_COOKIE,
-        create_session_token(subject, role),
-        max_age=SESSION_TTL_SECONDS,
+        create_session_token(subject, role, ttl, version),
+        max_age=None if remember is False else ttl,
         httponly=True,
         secure=secure_cookie(request),
         samesite="strict",
@@ -101,9 +126,15 @@ def clear_session_cookie(response: Response) -> None:
 
 def session_claims(request: Request, role: str | None = None) -> dict[str, Any] | None:
     claims = read_session_token(request.cookies.get(SESSION_COOKIE))
-    if claims and (role is None or claims["role"] == role):
-        return claims
-    return None
+    if not claims or (role is not None and claims["role"] != role):
+        return None
+    if claims["role"] == "customer":
+        # A password reset raises the account's session version, so every cookie issued before it
+        # (on this or any other device) stops working. Cookies from before versioning count as 0.
+        current = customer_repository.get_session_version(claims["sub"])
+        if current is None or claims.get("ver", 0) != current:
+            return None
+    return claims
 
 
 def require_session(request: Request, role: str) -> dict[str, Any]:

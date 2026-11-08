@@ -20,6 +20,7 @@ from backend.app.repositories import customer_repository, order_repository
 from backend.app.schemas.user import normalize_email, validate_phone
 from backend.app.services import auth_services, catalog_services
 from backend.app.utils.clock import now_iso
+from backend.app.utils.images import optimized_image
 
 
 UPLOAD_DIR = order_repository.UPLOAD_DIR
@@ -31,6 +32,7 @@ ALLOWED_UPLOADS = {
     ".jpg": ("image/jpeg", b"\xff\xd8\xff"),
     ".jpeg": ("image/jpeg", b"\xff\xd8\xff"),
     ".png": ("image/png", b"\x89PNG\r\n\x1a\n"),
+    ".webp": ("image/webp", b"RIFF"),
     ".pdf": ("application/pdf", b"%PDF-"),
 }
 ORDER_STATUSES = {
@@ -51,8 +53,9 @@ ORDER_STATUSES = {
 PENDING_STATUSES = {"Pending Confirmation", "Under Review", "Awaiting Quotation", "Awaiting Down Payment"}
 PROCESSING_STATUSES = {"Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup"}
 CANCELLED_STATUSES = {"Cancelled", "Rejected"}
-# Payments can be recorded once a quotation is accepted and until the order is picked up.
-PAYABLE_STATUSES = {"Awaiting Down Payment"} | PROCESSING_STATUSES
+# Payments can be recorded once a quotation is accepted. Completed is included only so a balance left on an
+# order completed before full payment was required can still be recorded (the balance check prevents overpaying).
+PAYABLE_STATUSES = {"Awaiting Down Payment", "Completed"} | PROCESSING_STATUSES
 
 
 def _text(value: Any, label: str, limit: int, required: bool = False) -> str:
@@ -73,7 +76,7 @@ def _decode_upload(upload: Any) -> tuple[OrderAttachment, bytes]:
     extension = Path(name).suffix.lower()
     allowed = ALLOWED_UPLOADS.get(extension)
     if not allowed:
-        raise HTTPException(status_code=422, detail="Reference files must be JPG, JPEG, PNG, or PDF.")
+        raise HTTPException(status_code=422, detail="Reference files must be JPG, JPEG, PNG, WebP, or PDF.")
     mime_type, signature = allowed
     data_url = upload.get("dataUrl")
     if not isinstance(data_url, str) or not data_url.startswith(f"data:{mime_type};base64,"):
@@ -84,7 +87,7 @@ def _decode_upload(upload: Any) -> tuple[OrderAttachment, bytes]:
         raise HTTPException(status_code=422, detail=f"{name} could not be decoded.") from error
     if not contents or len(contents) > MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail=f"{name} must be no larger than 5 MB.")
-    if not contents.startswith(signature):
+    if not contents.startswith(signature) or (extension == ".webp" and contents[8:12] != b"WEBP"):
         raise HTTPException(status_code=422, detail=f"{name} is not a valid {extension[1:].upper()} file.")
     metadata: OrderAttachment = {
         "id": secrets.token_hex(12),
@@ -144,6 +147,12 @@ def _write_uploads(decoded: list[tuple[OrderAttachment, bytes]]) -> list[OrderAt
 def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     result = dict(order)
     result.pop("customer_id", None)
+    result.pop("idempotency_key", None)
+    # Sent back with admin actions so an out-of-date screen cannot apply the same action twice.
+    result["version"] = len(order["history"])
+    product = dict(order["product"])
+    product["image"] = optimized_image(product.get("image", ""))
+    result["product"] = product
     prefix = f"/api/admin/orders/{order['reference']}/files" if admin else f"/api/orders/{order['reference']}/files"
     # Customers prove access to files with the order's email address; admins use their session.
     access = "" if admin else f"?email={quote(order['customer']['email'], safe='')}"
@@ -189,7 +198,7 @@ def owned_order(reference: str, email: str) -> OrderRecord:
     return order
 
 
-def attachment_response(order: Mapping[str, Any], file_id: str) -> FileResponse:
+def attachment_response(order: Mapping[str, Any], file_id: str, inline: bool = False) -> FileResponse:
     attachments = order["attachments"] + ([order["draft_attachment"]] if order["draft_attachment"] else [])
     attachment = next((item for item in attachments if item["id"] == file_id), None)
     if not attachment:
@@ -197,7 +206,12 @@ def attachment_response(order: Mapping[str, Any], file_id: str) -> FileResponse:
     file_path = UPLOAD_DIR / attachment["filename"]
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="The stored file is unavailable.")
-    return FileResponse(file_path, media_type=attachment["mime_type"], filename=attachment["name"])
+    return FileResponse(
+        file_path,
+        media_type=attachment["mime_type"],
+        filename=attachment["name"],
+        content_disposition_type="inline" if inline else "attachment",
+    )
 
 
 def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str) -> tuple[dict[str, Any], bool]:
@@ -372,17 +386,38 @@ def get_customer_order_file(reference: str, file_id: str, email: str) -> FileRes
     return attachment_response(owned_order(reference, email), file_id)
 
 
+def _save(
+    order: OrderRecord,
+    updates: OrderUpdates,
+    event: str,
+    expected_version: Any = None,
+    admin: bool = False,
+) -> dict[str, Any]:
+    """Save an order change only if nobody changed the order since it was read.
+
+    ``expected_version`` is the version the administrator's screen showed. When it is missing,
+    the version read by this request is used, so concurrent duplicate actions are still refused.
+    """
+    version = order_repository.order_version(order)
+    if expected_version is not None:
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+            raise HTTPException(status_code=422, detail="Invalid order version.")
+        version = expected_version
+    try:
+        updated = order_repository.update_order(order["reference"], updates, event, expected_version=version)
+    except order_repository.StaleOrderError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This order was changed by another action. Reload the order and try again.",
+        ) from error
+    return order_after_update(updated, admin=admin)
+
+
 def approve_customer_draft(reference: str, email: Any) -> dict[str, Any]:
     order = owned_order(reference, _text(email, "Email", 254, True))
     if order["status"] != "Awaiting Customer Approval" or not order["draft_attachment"]:
         raise HTTPException(status_code=409, detail="There is no draft waiting for approval.")
-    return order_after_update(
-        order_repository.update_order(
-            reference,
-            {"status": "Approved for Printing"},
-            "Customer approved the draft. The order may now move to production.",
-        )
-    )
+    return _save(order, {"status": "Approved for Printing"}, "Customer approved the draft. The order may now move to production.")
 
 
 def request_draft_changes(reference: str, email: Any, requested_changes: Any) -> dict[str, Any]:
@@ -391,13 +426,7 @@ def request_draft_changes(reference: str, email: Any, requested_changes: Any) ->
     order = owned_order(reference, email)
     if order["status"] != "Awaiting Customer Approval":
         raise HTTPException(status_code=409, detail="There is no draft waiting for review.")
-    return order_after_update(
-        order_repository.update_order(
-            reference,
-            {"status": "Draft Preparation", "admin_notes": note},
-            f"Customer requested draft changes: {note}",
-        )
-    )
+    return _save(order, {"status": "Draft Preparation", "admin_notes": note}, f"Customer requested draft changes: {note}")
 
 
 def cancel_customer_order(reference: str, email: Any) -> dict[str, Any]:
@@ -406,76 +435,77 @@ def cancel_customer_order(reference: str, email: Any) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="This order can no longer be cancelled from the customer portal.")
     if order["payments"]:
         raise HTTPException(status_code=409, detail="Contact the shop administrator to review an order with recorded payments.")
-    return order_after_update(
-        order_repository.update_order(
-            reference,
-            {"status": "Cancelled"},
-            "Customer cancelled the order request before any payment was recorded.",
-        )
-    )
+    return _save(order, {"status": "Cancelled"}, "Customer cancelled the order request before any payment was recorded.")
 
 
 def admin_dashboard() -> dict[str, Any]:
-    orders = order_repository.list_orders()
-    status_counts: dict[str, int] = {status: 0 for status in sorted(ORDER_STATUSES)}
-    revenue = 0.0
-    for order in orders:
-        status_counts[order["status"]] = status_counts.get(order["status"], 0) + 1
-        if order["status"] not in CANCELLED_STATUSES:
-            # Only payments the administrator actually recorded count as revenue, never quotations.
-            revenue += sum(float(payment["amount"]) for payment in order["payments"])
-    groups = {
-        "total_orders": len(orders),
-        "pending_orders": sum(1 for order in orders if order["status"] in PENDING_STATUSES),
-        "processing_orders": sum(1 for order in orders if order["status"] in PROCESSING_STATUSES),
-        "completed_orders": status_counts.get("Completed", 0),
-        "cancelled_orders": sum(1 for order in orders if order["status"] in CANCELLED_STATUSES),
-    }
-    recent = [order_view(order, admin=True) for order in orders[:8]]
-    return {
-        "total_customers": len(customer_repository.list_customers()),
-        **groups,
-        "total_revenue": round(revenue, 2),
-        "status_counts": status_counts,
-        "recent_orders": recent,
-    }
+    # Imported here: report_services imports this module for the shared status groups.
+    from backend.app.services import report_services
+
+    return report_services.dashboard()
 
 
-def admin_orders() -> dict[str, Any]:
-    return {"orders": [order_view(order, admin=True) for order in order_repository.list_orders()]}
+def admin_orders(params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    from backend.app.services import report_services
+
+    return report_services.order_list(dict(params or {}))
+
+
+def admin_order(reference: str) -> dict[str, Any]:
+    from backend.app.services import report_services
+
+    order = order_repository.get_order(reference)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    return report_services.admin_order_view(order)
 
 
 def get_admin_order_file(reference: str, file_id: str) -> FileResponse:
     order = order_repository.get_order(reference)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
-    return attachment_response(order, file_id)
+    # Shown inside the admin image preview instead of being downloaded; never cached by shared caches.
+    response = attachment_response(order, file_id, inline=True)
+    response.headers["Cache-Control"] = "private, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
-def set_quotation(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _admin_order(reference: str) -> OrderRecord:
     order = order_repository.get_order(reference)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
+    return order
+
+
+def paid_amount(order: Mapping[str, Any]) -> float:
+    return round(sum(float(payment["amount"]) for payment in order["payments"]), 2)
+
+
+def is_fully_paid(order: Mapping[str, Any]) -> bool:
+    total = order["total_amount"]
+    return total is not None and total > 0 and paid_amount(order) >= round(float(total), 2) - 0.005
+
+
+def set_quotation(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
+    order = _admin_order(reference)
     if order["status"] not in {"Under Review", "Awaiting Quotation"}:
         raise HTTPException(status_code=409, detail="A quotation can only be set while the request is under review.")
     amount = payload.get("total_amount")
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not 0 < amount <= 100000000:
         raise HTTPException(status_code=422, detail="Enter a valid total quotation amount.")
     instructions = _text(payload.get("payment_instructions", ""), "Payment instructions", 1000)
-    return order_after_update(
-        order_repository.update_order(
-            reference,
-            {"total_amount": round(float(amount), 2), "payment_instructions": instructions, "status": "Awaiting Down Payment"},
-            f"Administrator provided a quotation of PHP {float(amount):,.2f}. Payment instructions were {'provided' if instructions else 'not included'}.",
-        ),
+    return _save(
+        order,
+        {"total_amount": round(float(amount), 2), "payment_instructions": instructions, "status": "Awaiting Down Payment"},
+        f"Administrator provided a quotation of PHP {float(amount):,.2f}. Payment instructions were {'provided' if instructions else 'not included'}.",
+        payload.get("expected_version"),
         admin=True,
     )
 
 
 def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
-    order = order_repository.get_order(reference)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found.")
+    order = _admin_order(reference)
     if order["status"] not in PAYABLE_STATUSES:
         raise HTTPException(status_code=409, detail="Payment cannot be recorded at this order stage.")
     amount = payload.get("amount")
@@ -483,13 +513,16 @@ def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="Set the confirmed quotation before recording payment.")
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
         raise HTTPException(status_code=422, detail="Enter the amount actually received.")
-    received = sum(payment["amount"] for payment in order["payments"])
-    if amount > order["total_amount"] - received:
+    amount = round(float(amount), 2)
+    balance = round(order["total_amount"] - paid_amount(order), 2)
+    if balance <= 0:
+        raise HTTPException(status_code=409, detail="This order is already fully paid.")
+    if amount > balance + 0.005:
         raise HTTPException(status_code=422, detail="Payment cannot exceed the remaining balance.")
     if payload.get("received") is not True:
         raise HTTPException(status_code=422, detail="Confirm that the payment was actually received.")
     payment = {
-        "amount": round(float(amount), 2),
+        "amount": amount,
         "method": _text(payload.get("method"), "Payment method", 60, True),
         "reference": _text(payload.get("reference", ""), "Payment reference", 120),
         "received_at": now_iso(),
@@ -498,23 +531,20 @@ def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
     updates: OrderUpdates = {"payments": payments}
     if order["status"] == "Awaiting Down Payment" and sum(item["amount"] for item in payments) >= order["total_amount"] * 0.5:
         updates["status"] = "Draft Preparation"
-    return order_after_update(
-        order_repository.update_order(
-            reference,
-            updates,
-            f"Administrator recorded PHP {payment['amount']:,.2f} received via {payment['method']}.",
-        ),
+    return _save(
+        order,
+        updates,
+        f"Administrator recorded PHP {payment['amount']:,.2f} received via {payment['method']}.",
+        payload.get("expected_version"),
         admin=True,
     )
 
 
 def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
-    order = order_repository.get_order(reference)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found.")
+    order = _admin_order(reference)
     if order["status"] not in {"Draft Preparation", "Awaiting Customer Approval"}:
         raise HTTPException(status_code=409, detail="A draft can only be sent after preparation begins.")
-    if order["total_amount"] is None or sum(item["amount"] for item in order["payments"]) < order["total_amount"] * 0.5:
+    if order["total_amount"] is None or paid_amount(order) < order["total_amount"] * 0.5:
         raise HTTPException(status_code=409, detail="Record the required 50% down payment before sending a draft.")
     metadata, contents = _decode_upload(payload.get("file"))
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -522,37 +552,52 @@ def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
         (UPLOAD_DIR / metadata["filename"]).write_bytes(contents)
     except OSError as error:
         raise HTTPException(status_code=500, detail="The draft file could not be saved.") from error
-    return order_after_update(
-        order_repository.update_order(
-            reference,
+    try:
+        return _save(
+            order,
             {"draft_attachment": metadata, "status": "Awaiting Customer Approval"},
             f"Administrator attached draft '{metadata['name']}' for customer review. Printing is not approved.",
-        ),
-        admin=True,
-    )
+            payload.get("expected_version"),
+            admin=True,
+        )
+    except HTTPException:
+        (UPLOAD_DIR / metadata["filename"]).unlink(missing_ok=True)
+        raise
 
 
-def update_order_status(reference: str, next_status: Any) -> dict[str, Any]:
-    order = order_repository.get_order(reference)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found.")
+# Status changes the administrator may make directly. Other moves happen through their own actions
+# (quotation, payment, draft, customer approval).
+ADMIN_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "Pending Confirmation": {"Under Review", "Rejected", "Cancelled"},
+    "Under Review": {"Awaiting Quotation", "Rejected", "Cancelled"},
+    "Awaiting Quotation": {"Rejected", "Cancelled"},
+    "Awaiting Down Payment": {"Rejected", "Cancelled"},
+    "Approved for Printing": {"In Production"},
+    "In Production": {"Ready for Pickup"},
+    "Ready for Pickup": {"Completed"},
+}
+
+
+def update_order_status(reference: str, next_status: Any, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    order = _admin_order(reference)
     next_status = _text(next_status, "Order status", 60, True)
     if next_status not in ORDER_STATUSES:
         raise HTTPException(status_code=422, detail="Select a valid order status.")
-    allowed = {
-        "Pending Confirmation": {"Under Review", "Rejected", "Cancelled"},
-        "Under Review": {"Awaiting Quotation", "Rejected", "Cancelled"},
-        "Awaiting Quotation": {"Rejected", "Cancelled"},
-        "Awaiting Down Payment": {"Rejected", "Cancelled"},
-        "Approved for Printing": {"In Production"},
-        "In Production": {"Ready for Pickup"},
-        "Ready for Pickup": {"Completed"},
-    }
-    if next_status not in allowed.get(order["status"], set()):
+    if next_status not in ADMIN_STATUS_TRANSITIONS.get(order["status"], set()):
         raise HTTPException(status_code=409, detail=f"Cannot move an order from {order['status']} to {next_status}.")
-    if next_status in {"Rejected", "Cancelled"} and order["payments"]:
+    if next_status in CANCELLED_STATUSES and order["payments"]:
         raise HTTPException(status_code=409, detail="Orders with recorded payments need administrator review before rejection or cancellation.")
-    return order_after_update(
-        order_repository.update_order(reference, {"status": next_status}, f"Administrator updated the order status to {next_status}."),
-        admin=True,
-    )
+    if next_status == "Completed" and not is_fully_paid(order):
+        raise HTTPException(
+            status_code=409,
+            detail="Record the remaining balance before marking this order as completed. Only fully paid orders can be completed.",
+        )
+    note = _text(payload.get("note", "") or "", "Reason", 500)
+    updates: OrderUpdates = {"status": next_status}
+    event = f"Administrator updated the order status to {next_status}."
+    if note:
+        event = f"{event} Reason: {note}"
+        if next_status in CANCELLED_STATUSES:
+            updates["admin_notes"] = note
+    return _save(order, updates, event, payload.get("expected_version"), admin=True)

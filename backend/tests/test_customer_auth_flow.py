@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -14,11 +15,20 @@ from unittest.mock import patch
 _test_directory = tempfile.TemporaryDirectory(prefix="impress-auth-tests-")
 os.environ.setdefault("PRINTSHOP_DATABASE_PATH", str(Path(_test_directory.name) / "test.sqlite3"))
 os.environ.setdefault("PRINTSHOP_UPLOAD_DIR", str(Path(_test_directory.name) / "uploads"))
+# Never read the developer's .env file (SMTP credentials, production mode) during tests.
+os.environ.setdefault("PRINTSHOP_ENV_FILE", "")
+
+from dataclasses import replace  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from backend.app.core.config import settings  # noqa: E402
+from backend.app.routes import auth as auth_routes  # noqa: E402
+
 from backend.app.core.rate_limit import limiter  # noqa: E402
-from backend.app.repositories import customer_repository  # noqa: E402
+from backend.app.core.security import SESSION_COOKIE, create_session_token  # noqa: E402
+from backend.app.database import connection as connection_module  # noqa: E402
+from backend.app.repositories import auth_throttle_repository, customer_repository  # noqa: E402
 from backend.app.database.connection import connection_scope  # noqa: E402
 from backend.app.main import app  # noqa: E402
 from backend.app.repositories import order_repository  # noqa: E402
@@ -72,15 +82,22 @@ class AuthFlowTestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         limiter.clear()
+        auth_throttle_repository.clear()
         self.sent: list[tuple[str, str]] = []
 
-        def capture(recipient: str, subject: str, body: str) -> None:
-            del subject  # Same signature as email_service.send_message; the tests only read the body.
+        def capture(recipient: str, subject: str, body: str, html_body: str | None = None) -> None:
+            del subject, html_body  # Same signature as email_service.send_message; the tests only read the body.
             self.sent.append((recipient, body))
 
         patcher = patch.object(email_service, "send_message", side_effect=capture)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Pretend SMTP is configured; the route refuses reset requests when it is not.
+        smtp_patcher = patch.object(
+            auth_routes, "settings", replace(settings, smtp_host="smtp.example.test", smtp_from="shop@example.test")
+        )
+        smtp_patcher.start()
+        self.addCleanup(smtp_patcher.stop)
 
     def new_client(self) -> TestClient:
         return TestClient(app)
@@ -164,6 +181,29 @@ class OrderReferenceTests(AuthFlowTestCase):
         self.assertEqual(len(set(references)), 12, "Duplicate order references were issued.")
         for reference in references:
             self.assertRegex(reference, REFERENCE_PATTERN)
+
+
+class OrderUpdateTests(AuthFlowTestCase):
+    def test_update_changes_allowed_fields_and_never_identity_fields(self) -> None:
+        shopper = self.new_client()
+        account = self.register(shopper)
+        reference = shopper.post(
+            "/api/orders",
+            json=order_payload(account["email"]),
+            headers={"Idempotency-Key": uuid.uuid4().hex + uuid.uuid4().hex[:8]},
+        ).json()["reference"]
+        before = order_repository.get_order(reference)
+        # A stray key (only possible by bypassing the types) must not overwrite order identity or customer data.
+        updates = {"status": "Under Review", "admin_notes": "Checked", "reference": "HACKED", "customer": {"email": "x@y.z"}}
+        updated = order_repository.update_order(reference, updates, "Test update")  # type: ignore[arg-type]
+        self.assertEqual(updated["status"], "Under Review")
+        self.assertEqual(updated["admin_notes"], "Checked")
+        self.assertEqual(updated["reference"], reference)
+        self.assertEqual(updated["customer"], before["customer"])
+        stored = order_repository.get_order(reference)
+        self.assertEqual(stored["status"], "Under Review")
+        self.assertEqual(stored["customer"]["email"], account["email"])
+        self.assertEqual(len(stored["history"]), len(before["history"]) + 1)
 
 
 class OrderGatingTests(AuthFlowTestCase):
@@ -290,6 +330,43 @@ class ForgotPasswordTests(AuthFlowTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIsNone(customer_repository.get_reset(customer["id"]))
 
+    def test_failed_send_does_not_start_the_resend_cooldown(self) -> None:
+        customer = self.register()
+        with patch.object(email_service, "send_message", side_effect=email_service.EmailDeliveryError("down")):
+            failed = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        self.assertEqual(failed.status_code, 503)
+        # The retry must really send a code, not answer "use the code from the earlier email".
+        retry = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        self.assertEqual(retry.status_code, 200)
+        self.assertNotIn("cooldown", retry.json())
+        self.assertEqual(len(self.sent), 1)
+        self.assertRegex(self.last_code(), r"^\d{6}$")
+
+    def test_missing_smtp_settings_give_the_same_503_for_every_address(self) -> None:
+        customer = self.register()
+        with patch.object(auth_routes, "settings", replace(settings, smtp_host="", smtp_from="")):
+            known = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+            unknown = self.client.post("/api/customer/password-reset/request", json={"email": unique_email()})
+        self.assertEqual(known.status_code, 503)
+        self.assertEqual(known.json(), unknown.json())
+        self.assertEqual(self.sent, [])
+        self.assertIsNone(customer_repository.get_reset(customer["id"]))
+
+    def test_resubmitting_a_used_code_does_not_cancel_the_reset_session(self) -> None:
+        customer = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        code = self.last_code()
+        token = self.client.post(
+            "/api/customer/password-reset/verify", json={"email": customer["email"], "code": code}
+        ).json()["reset_token"]
+        repeat = self.client.post("/api/customer/password-reset/verify", json={"email": customer["email"], "code": code})
+        self.assertEqual(repeat.status_code, 422)
+        confirmed = self.client.post(
+            "/api/customer/password-reset/confirm",
+            json={"email": customer["email"], "reset_token": token, "new_password": NEW_PASSWORD},
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+
     def test_short_new_password_is_rejected(self) -> None:
         customer = self.register()
         response = self.client.post(
@@ -297,6 +374,242 @@ class ForgotPasswordTests(AuthFlowTestCase):
             json={"email": customer["email"], "reset_token": "x" * 30, "new_password": "short"},
         )
         self.assertEqual(response.status_code, 422)
+
+
+class PasswordResetRulesTests(AuthFlowTestCase):
+    def test_code_expires_after_five_minutes_and_response_says_so(self) -> None:
+        customer = self.register()
+        response = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        self.assertEqual(response.json()["expires_in"], 300)
+        record = customer_repository.get_reset(customer["id"])
+        lifetime = datetime.fromisoformat(record["code_expires_at"]) - datetime.fromisoformat(record["created_at"])
+        self.assertLessEqual(lifetime, timedelta(minutes=5))
+        self.assertGreater(lifetime, timedelta(minutes=4))
+
+    def test_unknown_and_known_emails_get_identical_responses(self) -> None:
+        customer = self.register()
+        known = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]}).json()
+        unknown = self.client.post("/api/customer/password-reset/request", json={"email": unique_email()}).json()
+        self.assertEqual(known, unknown)
+        self.assertNotIn("code", json.dumps(known).lower().replace("verification code has been sent", ""))
+
+    def test_cooldown_response_does_not_claim_a_new_code(self) -> None:
+        customer = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        second = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]}).json()
+        self.assertTrue(second["cooldown"])
+        self.assertEqual(len(self.sent), 1)
+
+    def test_new_password_must_differ_from_current(self) -> None:
+        customer = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        token = self.client.post(
+            "/api/customer/password-reset/verify", json={"email": customer["email"], "code": self.last_code()}
+        ).json()["reset_token"]
+        same = self.client.post(
+            "/api/customer/password-reset/confirm",
+            json={"email": customer["email"], "reset_token": token, "new_password": PASSWORD},
+        )
+        self.assertEqual(same.status_code, 422)
+        self.assertIn("different", same.json()["detail"])
+        # The session is still usable for a different password.
+        changed = self.client.post(
+            "/api/customer/password-reset/confirm",
+            json={"email": customer["email"], "reset_token": token, "new_password": NEW_PASSWORD},
+        )
+        self.assertEqual(changed.status_code, 200)
+
+    def test_reset_token_cannot_change_another_customers_password(self) -> None:
+        victim = self.register()
+        attacker = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": attacker["email"]})
+        token = self.client.post(
+            "/api/customer/password-reset/verify", json={"email": attacker["email"], "code": self.last_code()}
+        ).json()["reset_token"]
+        hijack = self.client.post(
+            "/api/customer/password-reset/confirm",
+            json={"email": victim["email"], "reset_token": token, "new_password": NEW_PASSWORD},
+        )
+        self.assertEqual(hijack.status_code, 422)
+        self.assertIsNotNone(auth_services.authenticate_customer(victim["email"], PASSWORD))
+
+    def test_sign_in_with_new_password_over_http_after_reset(self) -> None:
+        customer = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        token = self.client.post(
+            "/api/customer/password-reset/verify", json={"email": customer["email"], "code": self.last_code()}
+        ).json()["reset_token"]
+        self.client.post(
+            "/api/customer/password-reset/confirm",
+            json={"email": customer["email"], "reset_token": token, "new_password": NEW_PASSWORD},
+        )
+        browser = self.new_client()
+        old = browser.post("/api/customer/session", json={"email": customer["email"], "password": PASSWORD})
+        self.assertEqual(old.status_code, 401)
+        new = browser.post("/api/customer/session", json={"email": customer["email"], "password": NEW_PASSWORD})
+        self.assertEqual(new.status_code, 200)
+        self.assertEqual(browser.get("/api/customer/session").json()["customer"]["email"], customer["email"])
+
+
+class SessionInvalidationTests(AuthFlowTestCase):
+    def reset_password(self, email: str, new_password: str = NEW_PASSWORD) -> None:
+        self.client.post("/api/customer/password-reset/request", json={"email": email})
+        token = self.client.post(
+            "/api/customer/password-reset/verify", json={"email": email, "code": self.last_code()}
+        ).json()["reset_token"]
+        confirmed = self.client.post(
+            "/api/customer/password-reset/confirm",
+            json={"email": email, "reset_token": token, "new_password": new_password},
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+
+    def test_password_reset_signs_out_every_device(self) -> None:
+        laptop = self.new_client()
+        customer = self.register(laptop)
+        phone = self.new_client()
+        signed_in = phone.post(
+            "/api/customer/session", json={"email": customer["email"], "password": PASSWORD, "remember": True}
+        )
+        self.assertEqual(signed_in.status_code, 200)
+        for device in (laptop, phone):
+            self.assertEqual(device.get("/api/customer/session").status_code, 200)
+
+        self.reset_password(customer["email"])
+
+        for device in (laptop, phone):
+            self.assertEqual(device.get("/api/customer/session").status_code, 401)
+            self.assertEqual(device.get("/api/account/profile").status_code, 401)
+            self.assertEqual(device.get("/api/account/orders").status_code, 401)
+        # Signing in again with the new password gives a working session.
+        again = self.new_client()
+        self.assertEqual(
+            again.post("/api/customer/session", json={"email": customer["email"], "password": NEW_PASSWORD}).status_code, 200
+        )
+        self.assertEqual(again.get("/api/customer/session").status_code, 200)
+
+    def test_reset_of_one_account_leaves_other_accounts_signed_in(self) -> None:
+        other_device = self.new_client()
+        self.register(other_device)
+        target = self.register(self.new_client())
+        self.reset_password(target["email"])
+        self.assertEqual(other_device.get("/api/customer/session").status_code, 200)
+
+    def test_cookie_issued_before_session_versions_existed_still_works_until_a_reset(self) -> None:
+        customer = self.register(self.new_client())
+        legacy = self.new_client()
+        legacy.cookies.set(SESSION_COOKIE, create_session_token(customer["id"], "customer"))  # no "ver" claim
+        self.assertEqual(legacy.get("/api/customer/session").status_code, 200)
+        self.reset_password(customer["email"])
+        self.assertEqual(legacy.get("/api/customer/session").status_code, 401)
+
+    def test_existing_accounts_are_kept_when_the_column_is_added(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            legacy_db = Path(folder) / "legacy.sqlite3"
+            with patch.object(connection_module, "DATABASE_PATH", legacy_db):
+                with connection_scope() as connection:
+                    connection.execute(
+                        """CREATE TABLE customer_accounts (id TEXT PRIMARY KEY, email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                        name TEXT NOT NULL, phone TEXT NOT NULL, messenger TEXT NOT NULL DEFAULT '',
+                        password_hash TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"""
+                    )
+                    connection.execute(
+                        "INSERT INTO customer_accounts VALUES ('old-1', 'old@example.test', 'Old', '1234567', '', 'hash', 't', 't')"
+                    )
+                customer_repository.initialize()
+                customer_repository.initialize()  # running it twice is harmless
+                self.assertEqual(customer_repository.get_session_version("old-1"), 0)
+                self.assertEqual(customer_repository.get_by_id("old-1")["email"], "old@example.test")
+
+
+class PersistentOtpLimitTests(AuthFlowTestCase):
+    def test_resend_cooldown_survives_a_restart(self) -> None:
+        customer = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        limiter.clear()  # what a restart does to the in-memory limiter
+        again = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        self.assertTrue(again.json().get("cooldown"))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_hourly_request_limit_survives_a_restart(self) -> None:
+        email = unique_email()
+        for _ in range(5):
+            auth_throttle_repository.reset("otp-cooldown", email)  # skip the 60-second wait between requests
+            self.assertEqual(self.client.post("/api/customer/password-reset/request", json={"email": email}).status_code, 200)
+        limiter.clear()
+        auth_throttle_repository.reset("otp-cooldown", email)
+        sixth = self.client.post("/api/customer/password-reset/request", json={"email": email})
+        self.assertEqual(sixth.status_code, 429)
+
+    def test_wrong_attempt_count_survives_a_restart(self) -> None:
+        customer = self.register()
+        self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
+        real_code = self.last_code()
+        wrong = "000000" if real_code != "000000" else "111111"
+        for _ in range(4):
+            self.client.post("/api/customer/password-reset/verify", json={"email": customer["email"], "code": wrong})
+        limiter.clear()
+        fifth = self.client.post("/api/customer/password-reset/verify", json={"email": customer["email"], "code": wrong})
+        self.assertEqual(fifth.status_code, 429)
+
+    def test_stored_keys_are_hashed_not_plain_email_addresses(self) -> None:
+        email = unique_email()
+        self.client.post("/api/customer/password-reset/request", json={"email": email})
+        with connection_scope() as connection:
+            rows = connection.execute("SELECT bucket, key_hash FROM auth_throttle_events").fetchall()
+        self.assertTrue(rows)
+        self.assertFalse(any(email in row["key_hash"] for row in rows))
+        self.assertEqual({len(row["key_hash"]) for row in rows}, {64})
+
+
+class RememberMeTests(AuthFlowTestCase):
+    def test_remember_me_sets_a_30_day_cookie_and_default_is_browser_session(self) -> None:
+        customer = self.register()
+        remembered = self.new_client().post(
+            "/api/customer/session", json={"email": customer["email"], "password": PASSWORD, "remember": True}
+        )
+        self.assertIn(f"Max-Age={30 * 24 * 60 * 60}", remembered.headers["set-cookie"])
+        session_only = self.new_client().post(
+            "/api/customer/session", json={"email": customer["email"], "password": PASSWORD}
+        )
+        self.assertNotIn("Max-Age", session_only.headers["set-cookie"])
+        self.assertIn("HttpOnly", session_only.headers["set-cookie"])
+
+
+class AuthPageTests(AuthFlowTestCase):
+    def test_auth_pages_are_served(self) -> None:
+        for path, marker in (
+            ("/sign-in", 'data-auth-page="sign-in"'),
+            ("/create-account", 'data-auth-page="create-account"'),
+            ("/forgot-password", 'data-auth-page="forgot-password"'),
+        ):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertIn(marker, response.text)
+        self.assertEqual(self.client.get("/register", follow_redirects=False).headers["location"], "/create-account")
+
+    def test_sign_in_page_does_not_contain_the_registration_form(self) -> None:
+        html = self.client.get("/sign-in").text
+        self.assertNotIn("create-account-form", html)
+        self.assertIn('href="/create-account"', html)
+        self.assertIn("Forgot password?", html)
+
+
+class CacheHeaderTests(AuthFlowTestCase):
+    def test_pages_scripts_and_styles_are_revalidated_on_every_load(self) -> None:
+        for path in ("/customer-portal", "/assets/portal.js", "/assets/account.js", "/assets/style.css"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.headers.get("cache-control"), "no-cache", path)
+        # Unchanged files are answered with 304, so revalidating stays cheap.
+        first = self.client.get("/assets/portal.js")
+        again = self.client.get("/assets/portal.js", headers={"If-None-Match": first.headers["etag"]})
+        self.assertEqual(again.status_code, 304)
+
+    def test_images_and_api_responses_are_not_changed(self) -> None:
+        self.assertNotIn("cache-control", self.client.get("/assets/image/image.jpg").headers)
+        self.assertNotIn("cache-control", self.client.get("/api/health").headers)
+        # A header an endpoint sets itself is kept.
+        self.assertEqual(self.client.get("/api/catalog").headers.get("cache-control"), "no-store")
 
 
 class RateLimitTests(AuthFlowTestCase):

@@ -5,6 +5,8 @@
     const emailInput = document.querySelector("#lookup-email");
     const referenceInput = document.querySelector("#lookup-ref");
     const error = document.querySelector("#lookup-error");
+    // Errors while an order is open go here: the lookup form (and its error line) is hidden for account orders.
+    const detailError = document.querySelector("#detail-error");
     const list = document.querySelector("#orders-list");
     const detail = document.querySelector("#order-detail");
     const accountSection = document.querySelector("#customer-account");
@@ -51,13 +53,17 @@
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             const detail = Array.isArray(result.detail) ? result.detail.map((item) => item.msg).join(" ") : result.detail;
-            throw new Error(detail || "The order information could not be loaded.");
+            const failure = new Error(detail || "The order information could not be loaded.");
+            failure.status = response.status;
+            throw failure;
         }
         return result;
     }
 
     /** POST a customer action (approve / request-changes / cancel) for the open order and show the result. */
-    async function orderAction(action, body, failure) {
+    async function orderAction(action, body, failure, button) {
+        detailError.textContent = "";
+        button.disabled = true;
         try {
             const order = await request(`/api/orders/${encodeURIComponent(currentOrder.reference)}/${action}`, {
                 method: "POST",
@@ -66,7 +72,16 @@
             });
             renderDetail(order);
         } catch (issue) {
-            error.textContent = issue instanceof Error ? issue.message : failure;
+            const message = issue instanceof Error ? issue.message : failure;
+            if (issue.status === 409) {
+                // The order changed meanwhile (for example in another tab): show its current state, then the reason.
+                // renderDetail sets which actions are still available.
+                await loadOrder(currentOrder.reference, detailSource);
+            } else {
+                button.disabled = false;  // nothing changed on the server: let the customer try again
+            }
+            detailError.textContent = message;
+            detailError.scrollIntoView({ block: "center", behavior: "instant" });
         }
     }
 
@@ -172,6 +187,7 @@
 
     function renderDetail(order) {
         currentOrder = order;
+        detailError.textContent = "";
         list.hidden = true;
         detail.hidden = false;
         document.querySelector("#detail-service").textContent = order.product.category;
@@ -228,7 +244,9 @@
         document.querySelector("#approve-draft").disabled = !awaitingApproval;
         document.querySelector("#request-draft-changes").disabled = !awaitingApproval;
         const canCancel = ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Awaiting Down Payment"].includes(order.status) && order.payments.length === 0;
-        document.querySelector("#cancel-order").hidden = !canCancel;
+        const cancelButton = document.querySelector("#cancel-order");
+        cancelButton.hidden = !canCancel;
+        cancelButton.disabled = false;
         detail.scrollIntoView({ block: "start", behavior: "instant" });
     }
 
@@ -248,6 +266,11 @@
             }
             renderDetail(order);
         } catch (issue) {
+            if (source === "account" && issue.status === 401) {
+                // The sign-in ended (expired, or the password was reset on another device).
+                document.dispatchEvent(new CustomEvent("customer-session-ended"));
+                return;
+            }
             error.textContent = issue instanceof Error ? issue.message : "The order could not be loaded.";
         }
     }
@@ -289,6 +312,8 @@
             lookupPanel.hidden = false;
             list.hidden = true;
             error.textContent = "";
+            // The order may have changed while it was open (approved, cancelled): reload the account's list.
+            document.dispatchEvent(new CustomEvent("customer-orders-changed"));
             accountPanel.scrollIntoView({ block: "start", behavior: "instant" });
             return;
         }
@@ -300,19 +325,19 @@
         }
     });
 
-    document.querySelector("#approve-draft").addEventListener("click", () => {
+    document.querySelector("#approve-draft").addEventListener("click", (event) => {
         if (!currentOrder || !window.confirm("Approve this draft? The administrator may then move the order to printing.")) return;
-        void orderAction("approve", {}, "The draft approval could not be recorded.");
+        void orderAction("approve", {}, "The draft approval could not be recorded.", event.currentTarget);
     });
 
-    document.querySelector("#request-draft-changes").addEventListener("click", () => {
+    document.querySelector("#request-draft-changes").addEventListener("click", (event) => {
         if (!currentOrder || !window.confirm("Ask the shop to revise this draft?")) return;
-        void orderAction("request-changes", { note: "Customer requested changes to the draft layout." }, "The change request could not be recorded.");
+        void orderAction("request-changes", { note: "Customer requested changes to the draft layout." }, "The change request could not be recorded.", event.currentTarget);
     });
 
-    document.querySelector("#cancel-order").addEventListener("click", () => {
+    document.querySelector("#cancel-order").addEventListener("click", (event) => {
         if (!currentOrder || !window.confirm("Cancel this request? This cannot be undone.")) return;
-        void orderAction("cancel", {}, "The request could not be cancelled.");
+        void orderAction("cancel", {}, "The request could not be cancelled.", event.currentTarget);
     });
 
     const parameters = new URLSearchParams(window.location.search);

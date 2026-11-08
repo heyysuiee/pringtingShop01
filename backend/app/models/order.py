@@ -22,6 +22,11 @@ class OrderHistoryEntry(TypedDict):
 
 
 class OrderUpdates(TypedDict):
+    """Fields that may change after an order is created.
+
+    order_repository._apply_updates copies exactly these fields; add a new field there as well.
+    """
+
     status: NotRequired[str]
     total_amount: NotRequired[float | None]
     payment_instructions: NotRequired[str]
@@ -53,3 +58,5 @@ class OrderRecord(TypedDict):
     idempotency_key: NotRequired[str | None]
     # Estimate from administrator-configured catalog prices. The confirmed price is total_amount.
     pricing: NotRequired[dict[str, Any]]
+    # Set when the order moved to Completed (UTC ISO 8601). Never entered by hand.
+    completed_at: NotRequired[str | None]

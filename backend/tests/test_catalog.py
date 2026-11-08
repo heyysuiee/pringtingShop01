@@ -11,6 +11,8 @@ from pathlib import Path
 _test_directory = tempfile.TemporaryDirectory(prefix="impress-catalog-tests-")
 os.environ.setdefault("PRINTSHOP_DATABASE_PATH", str(Path(_test_directory.name) / "test.sqlite3"))
 os.environ.setdefault("PRINTSHOP_UPLOAD_DIR", str(Path(_test_directory.name) / "uploads"))
+# Never read the developer's .env file (SMTP credentials, production mode) during tests.
+os.environ.setdefault("PRINTSHOP_ENV_FILE", "")
 
 from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

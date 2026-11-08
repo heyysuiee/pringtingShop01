@@ -4,105 +4,93 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#f6f3ed">
-    <title>Services &amp; Products — imPRESSions Print Works</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" href="data:,">
+    <title>Services &amp; Products — ImPRESSion PrintShop Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Loaded without blocking the first paint; system fonts are used until it arrives (or if offline). -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="/assets/admin/dashboard.css">
+    <link rel="stylesheet" href="/assets/admin/admin-ui.css">
 </head>
 <body class="admin-page" data-admin-view="services">
+    <a class="skip-link" href="#view-root">Skip to content</a>
     <div class="admin-shell">
         <aside class="sidebar" id="admin-sidebar">
-            <a class="admin-brand" href="/admin/dashboard"><span class="admin-brand-mark">iP</span><span><strong>imPRESSions</strong><small>PRINT WORKS · ADMIN</small></span></a>
+            <a class="admin-brand" href="/admin/dashboard" data-view="dashboard" aria-label="ImPRESSion PrintShop admin dashboard">
+                <span class="admin-brand-mark">iP</span>
+                <span><strong>ImPRESSion</strong><small>PRINTSHOP · ADMIN</small></span>
+            </a>
             <div class="sidebar-label">WORKSPACE</div>
             <nav class="sidebar-nav" aria-label="Admin navigation">
-                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon">⌂</span>Dashboard</a>
-                <a href="/admin/orders" data-view="orders"><span class="nav-icon">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
-                <a href="/admin/customers" data-view="customers"><span class="nav-icon">♙</span>Customer Management</a>
-                <a href="/admin/services" data-view="services"><span class="nav-icon">▧</span>Services &amp; Products</a>
-                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon">₱</span>Pricing Management</a>
-                <a href="/admin/payments" data-view="payments"><span class="nav-icon">▣</span>Payments &amp; Transactions</a>
-                <a href="/admin/reports" data-view="reports"><span class="nav-icon">▥</span>Sales &amp; Reports</a>
-                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
+                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true">⌂</span>Dashboard</a>
+                <a href="/admin/orders" data-view="orders"><span class="nav-icon" aria-hidden="true">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true">♙</span>Customer Management</a>
+                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true">▣</span>Payments &amp; Transactions</a>
+                <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true">▥</span>Sales &amp; Reports</a>
+                <a href="/admin/services" data-view="services" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true">▧</span>Services &amp; Products</a>
+                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon" aria-hidden="true">₱</span>Pricing Management</a>
+                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
             </nav>
             <div class="sidebar-bottom">
-                <a href="/admin/settings" data-view="settings"><span class="nav-icon">⚙</span>Settings</a>
-                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon">↪</span>Log out</button>
-                <div class="sidebar-user"><span class="avatar">A</span><span><strong>Shop Admin</strong><small>Administrator</small></span><span class="online-dot"></span></div>
+                <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</a>
+                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon" aria-hidden="true">↪</span>Log out</button>
+                <div class="sidebar-user">
+                    <span class="avatar" aria-hidden="true">A</span>
+                    <span><strong>Administrator</strong><small data-admin-email></small></span>
+                </div>
             </div>
         </aside>
         <div class="workspace">
             <header class="topbar">
                 <button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button>
-                <div class="breadcrumb"><span>Admin</span><span>/</span><strong id="current-section">Services &amp; Products</strong></div>
-                <div class="topbar-actions"><span class="demo-pill"><span></span> DEMO DATA</span><button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot"></span></button><div class="topbar-date" id="today-date"></div></div>
+                <div class="breadcrumb"><span>Admin</span><span aria-hidden="true">/</span><strong id="current-section">Services & Products</strong></div>
+                <div class="topbar-actions">
+                    <button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot" hidden></span></button>
+                    <div class="topbar-date" id="today-date"></div>
+                </div>
             </header>
             <main class="main-content">
-                <div class="prototype-banner">
-                    <span class="banner-icon">i</span>
-                    <p><strong>Live catalog</strong> — Changes here are saved to the database and appear on the customer order form immediately.</p>
-                    <button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice" data-action="dismiss-banner">×</button>
-                </div>
                 <div id="view-root" tabindex="-1">
                     <header class="page-heading">
                         <div>
                             <h1>Services &amp; products</h1>
-                            <p>Manage categories and products, and configure the exact questions, sizes, materials, colors, finishes, and uploads each product's order form asks for.</p>
+                            <p>Manage categories and products, and the questions, sizes, materials, and uploads each product's order form asks for. Select a row to edit it.</p>
                         </div>
-                        <div class="page-heading-actions">
-                            <button class="button" type="button" data-catalog-action="reload-catalog">Reload</button>
-                            <button class="button" type="button" data-catalog-action="add-category">＋ Add category</button>
-                            <button class="button button-primary" type="button" data-catalog-action="add-product">＋ Add product</button>
-                        </div>
+                        <div class="page-heading-actions"><button class="button" type="button" data-catalog-action="reload-catalog">↻ Reload</button><button class="button" type="button" data-catalog-action="add-category">＋ Add category</button><button class="button button-primary" type="button" data-catalog-action="add-product">＋ Add product</button></div>
                     </header>
-                    <div class="notice-card services-pricing-note"><strong>Pricing note:</strong> Products stay on “Request a quote” until an administrator enters a price in Pricing Management or the product editor. No business prices have been prefilled.</div>
+                    <div class="notice-card services-pricing-note"><strong>Live catalog:</strong> changes are saved to the database and appear on the customer order form immediately. Products stay on “Request a quote” until a price is entered.</div>
                     <section class="panel table-panel" data-catalog-services>
-                        <div class="panel-heading"><div><h2>Service categories</h2><p class="table-secondary">Hidden categories are not offered on the order form.</p></div></div>
+                        <div class="panel-heading"><div><h2>Service categories</h2><p>Hidden categories are not offered on the order form. Select a row to edit.</p></div></div>
                         <div class="table-wrap">
                             <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">Category</th>
-                                        <th scope="col">Products</th>
-                                        <th scope="col">Visibility</th>
-                                        <th scope="col">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody data-category-rows>
-                                    <tr><td class="empty-state" colspan="4">Loading categories…</td></tr>
-                                </tbody>
+                                <thead><tr><th scope="col">Category</th><th scope="col">Products</th><th scope="col">Visibility</th></tr></thead>
+                                <tbody data-category-rows><tr><td class="empty-state" colspan="3">Loading categories…</td></tr></tbody>
                             </table>
                         </div>
                     </section>
-                    <div class="toolbar">
-                        <label class="search-control"><span aria-hidden="true">⌕</span><input id="service-search" type="search" placeholder="Search products or category…" autocomplete="off"></label>
-                        <select id="service-category-filter" aria-label="Filter products by category">
-                            <option value="">All categories</option>
-                        </select>
+                    <div class="filter-bar">
+                        <label class="search-control filter-search"><span aria-hidden="true">⌕</span><input id="service-search" type="search" placeholder="Search products or category…" autocomplete="off"></label>
+                        <div class="filter-field"><label for="service-category-filter">Category</label><select id="service-category-filter"><option value="">All categories</option></select></div>
+                        <div class="filter-field"><label for="service-availability-filter">Availability</label><select id="service-availability-filter"><option value="">All</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select></div>
                     </div>
-                    <section class="panel table-panel">
-                        <div class="panel-heading"><div><h2>Product catalog <span class="table-secondary" data-service-count>0 items</span></h2></div></div>
-                        <div class="table-wrap">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">Product</th>
-                                        <th scope="col">Category</th>
-                                        <th scope="col">Pricing</th>
-                                        <th scope="col">Order form</th>
-                                        <th scope="col">Availability</th>
-                                        <th scope="col">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody data-service-rows>
-                                    <tr><td class="empty-state" colspan="6">Loading product catalog…</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
+                    <section class="panel">
+                        <div class="panel-heading"><div><h2>Product catalog <span class="table-secondary" data-service-count></span></h2><p>Select a product to configure its details and order form.</p></div></div>
+                        <div data-service-table></div>
                     </section>
                 </div>
             </main>
         </div>
     </div>
-    <dialog class="admin-dialog" id="admin-dialog"><div class="dialog-frame"><button type="button" class="dialog-close" aria-label="Close dialog" data-action="close-dialog">×</button><div id="dialog-content"></div></div></dialog>
-    <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+    <dialog class="admin-dialog" id="admin-dialog" aria-label="Details">
+        <div class="dialog-frame">
+            <button type="button" class="dialog-close" aria-label="Close" data-action="close-dialog">×</button>
+            <div id="dialog-content"></div>
+        </div>
+    </dialog>
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+    <script src="/assets/admin/admin-core.js"></script>
     <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>

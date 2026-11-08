@@ -40,6 +40,21 @@ def initialize() -> None:
             )
             """
         )
+        # Sessions carry this number; raising it signs the customer out everywhere (used after a password reset).
+        # Added in place so existing accounts keep their data; they start at 0.
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(customer_accounts)")}
+        if "session_version" not in columns:
+            connection.execute("ALTER TABLE customer_accounts ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
+
+
+def get_session_version(customer_id: str) -> int | None:
+    """The account's current session version, or None if the account no longer exists."""
+    with connection_scope() as connection:
+        row = connection.execute(
+            "SELECT session_version FROM customer_accounts WHERE id = ?",
+            (customer_id,),
+        ).fetchone()
+    return int(row["session_version"]) if row else None
 
 
 def get_by_email(email: str) -> dict[str, Any] | None:
@@ -106,9 +121,14 @@ def update(customer_id: str, profile: dict[str, str], now: str) -> dict[str, Any
 
 
 def set_password_hash(customer_id: str, password_hash: str, now: str) -> None:
+    """Change the password and end every existing session for the account."""
     with connection_scope() as connection:
         connection.execute(
-            "UPDATE customer_accounts SET password_hash = ?, updated_at = ? WHERE id = ?",
+            """
+            UPDATE customer_accounts
+            SET password_hash = ?, updated_at = ?, session_version = session_version + 1
+            WHERE id = ?
+            """,
             (password_hash, now, customer_id),
         )
 
@@ -165,6 +185,24 @@ def set_reset_token(customer_id: str, token_hash: str, token_expires_at: str) ->
             """,
             (token_hash, token_expires_at, token_expires_at, customer_id),
         )
+
+
+def apply_password_reset(customer_id: str, password_hash: str, now: str) -> None:
+    """Save the new password hash, sign the account out everywhere, and remove the reset record.
+
+    All three happen in one transaction, so the code and token are single use and no old session
+    (on any device) survives the password change.
+    """
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE customer_accounts
+            SET password_hash = ?, updated_at = ?, session_version = session_version + 1
+            WHERE id = ?
+            """,
+            (password_hash, now, customer_id),
+        )
+        connection.execute("DELETE FROM customer_password_resets WHERE customer_id = ?", (customer_id,))
 
 
 def delete_reset(customer_id: str) -> None:

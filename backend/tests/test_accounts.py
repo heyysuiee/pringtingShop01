@@ -13,6 +13,8 @@ from fastapi import HTTPException, Request
 _test_directory = tempfile.TemporaryDirectory(prefix="impress-tests-")
 os.environ["PRINTSHOP_DATABASE_PATH"] = str(Path(_test_directory.name) / "test.sqlite3")
 os.environ["PRINTSHOP_UPLOAD_DIR"] = str(Path(_test_directory.name) / "uploads")
+# Never read the developer's .env file (SMTP credentials, production mode) during tests.
+os.environ.setdefault("PRINTSHOP_ENV_FILE", "")
 
 from backend.app.core.security import hash_password, read_session_token, require_same_origin, verify_password
 from backend.app.repositories import order_repository

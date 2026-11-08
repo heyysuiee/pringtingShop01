@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,12 +10,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.app.core.config import settings
 from backend.app.core.security import session_claims
-from backend.app.repositories import catalog_repository, customer_repository, order_repository
+from backend.app.repositories import auth_throttle_repository, catalog_repository, customer_repository, order_repository
+from backend.app.routes.admin import router as admin_router
 from backend.app.routes.auth import router as auth_router
 from backend.app.routes.catalog import router as catalog_router
 from backend.app.routes.order import router as order_router
 
 
+logger = logging.getLogger("printshop")
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_DIR / "frontend"
 ASSETS_DIR = FRONTEND_DIR / "assets"
@@ -29,6 +32,9 @@ CUSTOMER_PAGES = {
     "/order": "order.html",
     "/sample-work": "sample-work.html",
     "/customer-portal": "customer-portal.html",
+    "/sign-in": "sign-in.html",
+    "/create-account": "create-account.html",
+    "/forgot-password": "forgot-password.html",
 }
 # Admin pages require an administrator session: URL path -> file in frontend/admin.
 ADMIN_PAGES = {
@@ -46,13 +52,22 @@ ADMIN_PAGES = {
 REDIRECTS = {
     "/account": "/customer-portal",
     "/finished-works": "/sample-work",
+    "/signin": "/sign-in",
+    "/register": "/create-account",
+    "/sign-up": "/create-account",
 }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.validate()
+    if not settings.secret_key_persistent:
+        logger.warning(
+            "PRINTSHOP_SECRET_KEY is not set, so a temporary key is used: every restart signs all customers out "
+            "and cancels password resets in progress. Set it in the project-root .env file."
+        )
     customer_repository.initialize()
+    auth_throttle_repository.initialize()
     order_repository.initialize()
     catalog_repository.initialize()
     app.state.database_ready = True
@@ -72,12 +87,27 @@ if settings.cors_origins:
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Idempotency-Key"],
     )
+@app.middleware("http")
+async def revalidate_pages_and_code(request: Request, call_next):
+    """Make browsers re-check HTML, JavaScript, and CSS on every load.
+
+    Without this, a browser may keep running an old cached script against a newer page after an
+    update. Unchanged files are still answered with a cheap 304 Not Modified.
+    """
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if "Cache-Control" not in response.headers and content_type.startswith(("text/html", "text/javascript", "application/javascript", "text/css")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 # Product images are stored in the catalog as /frontend/image/... paths.
 app.mount("/frontend", StaticFiles(directory=ASSETS_DIR), name="frontend")
 app.include_router(auth_router)
 app.include_router(catalog_router)
 app.include_router(order_router)
+app.include_router(admin_router)
 
 
 def _customer_page(filename: str):

@@ -25,6 +25,8 @@ class Settings:
     smtp_password: str
     smtp_from: str
     smtp_starttls: bool
+    # False when PRINTSHOP_SECRET_KEY is missing and a temporary random key was generated for this run.
+    secret_key_persistent: bool = True
 
     @property
     def smtp_configured(self) -> bool:
@@ -62,6 +64,32 @@ def _csv_setting(name: str, default: str = "") -> tuple[str, ...]:
     return tuple(value.strip() for value in os.environ.get(name, default).split(",") if value.strip())
 
 
+def _load_env_file() -> None:
+    """Read KEY=VALUE lines from the project's .env file for local development.
+
+    Variables already set in the environment always win. Set PRINTSHOP_ENV_FILE to another path,
+    or to an empty value to skip the file (the automated tests do this).
+    """
+    path_text = os.environ.get("PRINTSHOP_ENV_FILE", str(PROJECT_DIR / ".env"))
+    if not path_text:
+        return
+    path = Path(path_text)
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key:
+            os.environ.setdefault(key, value)
+
+
+_load_env_file()
 _environment = os.environ.get("PRINTSHOP_ENVIRONMENT", "development").strip().lower()
 _database_path = os.environ.get(
     "PRINTSHOP_DATABASE_PATH",
@@ -74,7 +102,10 @@ settings = Settings(
     upload_dir=Path(
         os.environ.get("PRINTSHOP_UPLOAD_DIR", str(PROJECT_DIR / "backend" / "data" / "order_uploads"))
     ).expanduser().resolve(),
+    # Signs session cookies and keys the stored OTP hashes. Keep it stable (set it in .env) so restarts
+    # do not sign everyone out or cancel password resets; without it a temporary key is generated.
     secret_key=os.environ.get("PRINTSHOP_SECRET_KEY", "") or secrets.token_urlsafe(48),
+    secret_key_persistent=bool(os.environ.get("PRINTSHOP_SECRET_KEY", "")),
     admin_email=os.environ.get("PRINTSHOP_ADMIN_EMAIL", "").strip().lower(),
     admin_password_hash=os.environ.get("PRINTSHOP_ADMIN_PASSWORD_HASH", ""),
     allowed_hosts=_csv_setting("PRINTSHOP_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver"),

@@ -1,85 +1,28 @@
 "use strict";
 
+/**
+ * ImPRESSion PrintShop admin application.
+ * Every figure, table, and action uses the backend API; nothing on these pages is sample data.
+ * Shared building blocks (tables, charts, image viewer, dialogs) live in admin-core.js.
+ */
 (() => {
-    fetch("/api/admin/session")
+    const UI = window.AdminUI;
+    const { h, api, query, money, date, dateTime, days, number, badge, toast } = UI;
+
+    fetch("/api/admin/session", { credentials: "same-origin" })
         .then((response) => {
             if (!response.ok) window.location.replace("/admin/login");
+            return response.ok ? response.json() : null;
+        })
+        .then((session) => {
+            adminEmail = session?.email || "";
+            document.querySelectorAll("[data-admin-email]").forEach((element) => { element.textContent = adminEmail || "Administrator"; });
         })
         .catch(() => window.location.replace("/admin/login"));
 
-    const serviceCatalog = {
-        "Invitation": [
-            "Birthday Invitation", "Wedding Invitation", "Christening Invitation"
-        ],
-        "Souvenir": [
-            "Ref Magnet", "Acrylic Keychain", "Personalized Nail Cutter", "White Mug",
-            "Glass Mug", "Nordic Mug", "Personalized Tote Bag", "Coloring Book"
-        ],
-        "Sticker": [
-            "Business Logo Stickers", "Product Label Stickers", "Name Stickers", "Wall Stickers/Decals"
-        ],
-        "Sintra Board": [
-            "Birthday/Welcome Signs", "Wedding Signs", "Menu Board", "Photo Mounting Boards",
-            "Customized Photo Displays", "Photo Collages"
-        ],
-        "Party Needs": [
-            "Party Hats", "Gable Boxes", "Gift/Thank You Tags", "Personalized Candle"
-        ],
-        "Tarpaulins & Large Format Printing": [
-            "Birthdays", "Weddings", "Graduations", "Announcements", "Events", "Store Banners",
-            "Promos", "Product Advertisements", "Stage Backdrops", "Welcome Banners",
-            "Program Banners", "School Announcements", "Schedules", "Public Notices",
-            "Entrance Signs", "Directional Banners", "Temporary Signs"
-        ]
-    };
+    // ================================================================ constants & state
 
-    // The real product catalog, its order-form fields, and prices are managed by catalog-admin.js
-    // (Services & Products and Pricing Management). serviceCatalog above only labels the sample records.
-    const catalogAdmin = () => window.PrintShopCatalogAdmin;
-
-    const customers = [
-        { id: "C-1001", name: "Mia Santos", email: "mia.santos@example.com", phone: "+63 917 555 0142", joined: "2026-08-12" },
-        { id: "C-1002", name: "Joshua Reyes", email: "joshua.reyes@example.com", phone: "+63 918 555 0168", joined: "2026-09-04" },
-        { id: "C-1003", name: "Angela Cruz", email: "angela.cruz@example.com", phone: "+63 905 555 0135", joined: "2026-09-18" },
-        { id: "C-1004", name: "Marco Lim", email: "marco.lim@example.com", phone: "+63 917 555 0191", joined: "2026-10-02" },
-        { id: "C-1005", name: "Bea Garcia", email: "bea.garcia@example.com", phone: "+63 916 555 0119", joined: "2026-10-20" }
-    ];
-
-    const orders = [
-        { id: "PS-261102-031", customerId: "C-1001", product: "Wedding Invitation", category: "Invitation", date: "2026-11-02", status: "Pending Confirmation", agreedAmount: null, quantity: 100, specs: "Cream stock, sage-green floral details, folded card.", remarks: "", referenceImage: "/frontend/image/invitation/weddinginvitationj.png" },
-        { id: "PS-261101-027", customerId: "C-1002", product: "Birthday / Welcome Signs", category: "Sintra Board", date: "2026-11-01", status: "Under Review", agreedAmount: 4200, quantity: 2, specs: "Welcome signage, 2 x 3 ft, photo and name personalization.", remarks: "Confirm final dimensions before production.", referenceImage: "/frontend/image/SintraBoard/welcomeBoard.jpg" },
-        { id: "PS-261031-024", customerId: "C-1003", product: "Acrylic Keychain", category: "Souvenir", date: "2026-10-31", status: "Awaiting Down Payment", agreedAmount: 3600, quantity: 60, specs: "Round acrylic, printed name and event date.", remarks: "", referenceImage: "" },
-        { id: "PS-261030-021", customerId: "C-1004", product: "Event Banners", category: "Tarpaulins & Large Format Printing", date: "2026-10-30", status: "In Production", agreedAmount: 5400, quantity: 3, specs: "Three event banners; final layout approved.", remarks: "", referenceImage: "/frontend/image/tarpaulin/event.png" },
-        { id: "PS-261029-019", customerId: "C-1005", product: "Business Logo Stickers", category: "Sticker", date: "2026-10-29", status: "Ready for Pickup", agreedAmount: 1800, quantity: 200, specs: "Matte finish, 2-inch round labels.", remarks: "Customer prefers afternoon pickup.", referenceImage: "" },
-        { id: "PS-261027-015", customerId: "C-1001", product: "Personalized Tote Bag", category: "Souvenir", date: "2026-10-27", status: "Completed", agreedAmount: 2500, quantity: 10, specs: "Natural canvas with one-color print.", remarks: "", referenceImage: "" },
-        { id: "PS-261025-012", customerId: "C-1002", product: "Party Hats", category: "Party Needs", date: "2026-10-25", status: "Rejected", agreedAmount: null, quantity: 30, specs: "Custom character artwork requested.", remarks: "Artwork could not be reproduced as submitted.", referenceImage: "" },
-        { id: "PS-261024-010", customerId: "C-1003", product: "Menu Board", category: "Sintra Board", date: "2026-10-24", status: "Cancelled", agreedAmount: 2100, quantity: 1, specs: "A3 menu board, matte surface.", remarks: "Customer cancelled before production.", referenceImage: "" }
-    ];
-    let liveOrders = [];
-    let liveOrdersError = "";
-    let liveOrdersLoaded = false;
-
-    const payments = [
-        { id: "TX-9021", orderId: "PS-261101-027", date: "2026-11-01", amount: 2100, method: "GCash", reference: "DEMO-4821", remarks: "Down payment recorded by admin." },
-        { id: "TX-9018", orderId: "PS-261030-021", date: "2026-10-31", amount: 5400, method: "Bank transfer", reference: "DEMO-7194", remarks: "Full amount recorded by admin." },
-        { id: "TX-9012", orderId: "PS-261029-019", date: "2026-10-30", amount: 900, method: "Cash", reference: "DEMO-3008", remarks: "Down payment recorded by admin." },
-        { id: "TX-9006", orderId: "PS-261027-015", date: "2026-10-28", amount: 2500, method: "Maya", reference: "DEMO-1680", remarks: "Full amount recorded by admin." }
-    ];
-
-    const notifications = [
-        { id: "N-1", title: "New printing request", body: "Mia Santos submitted a wedding invitation request.", time: "Today · 9:14 AM", read: false },
-        { id: "N-2", title: "Payment recorded", body: "A down payment was recorded for order PS-261101-027.", time: "Yesterday · 4:32 PM", read: false },
-        { id: "N-3", title: "Order ready for pickup", body: "Order PS-261029-019 is marked ready for pickup.", time: "Oct 30 · 2:10 PM", read: false },
-        { id: "N-4", title: "New customer registration", body: "Bea Garcia created a customer profile.", time: "Oct 20 · 10:21 AM", read: true }
-    ];
-
-    const activity = [
-        { text: "Demo order PS-261029-019 marked ready for pickup.", time: "Today · 8:45 AM" },
-        { text: "Demo down payment recorded for PS-261101-027.", time: "Yesterday · 4:32 PM" },
-        { text: "Service catalog reviewed by Shop Admin.", time: "Oct 30 · 11:10 AM" }
-    ];
-
-    const labels = {
+    const LABELS = {
         dashboard: "Dashboard",
         orders: "Order Management",
         customers: "Customer Management",
@@ -88,97 +31,168 @@
         payments: "Payments & Transactions",
         reports: "Sales & Reports",
         notifications: "Notifications",
-        settings: "Settings"
+        settings: "Settings",
     };
-    const statusOptions = [
+    const STATUSES = [
         "Pending Confirmation", "Under Review", "Awaiting Quotation", "Awaiting Down Payment",
         "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing",
-        "In Production", "Ready for Pickup", "Completed", "Rejected", "Cancelled"
+        "In Production", "Ready for Pickup", "Completed", "Rejected", "Cancelled",
     ];
+    const STATUS_GROUPS = [
+        ["", "All orders", STATUSES],
+        ["pending", "Pending", ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Awaiting Down Payment"]],
+        ["processing", "In progress", ["Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup"]],
+        ["completed", "Completed", ["Completed"]],
+        ["cancelled", "Cancelled / rejected", ["Rejected", "Cancelled"]],
+    ];
+    const PAYMENT_STATUSES = ["Fully Paid", "Partially Paid", "Unpaid", "Not Quoted"];
+    const ACTION_LABELS = {
+        "Under Review": "Approve request",
+        "Awaiting Quotation": "Mark as awaiting quotation",
+        "Rejected": "Reject request",
+        "Cancelled": "Cancel order",
+        "In Production": "Start production",
+        "Ready for Pickup": "Mark ready for pickup",
+        "Completed": "Mark as completed",
+    };
+    const ACTION_HELP = {
+        "Under Review": "Accept the request and start reviewing its details.",
+        "Awaiting Quotation": "Use when the price needs more time to work out.",
+        "Rejected": "The customer sees the request as rejected.",
+        "Cancelled": "Stops the order. Orders with recorded payments cannot be cancelled here.",
+        "In Production": "The customer approved the draft; printing starts.",
+        "Ready for Pickup": "Printing is done and the order can be collected.",
+        "Completed": "Records today as the completion date. The order must be fully paid.",
+    };
+    const NOTIFICATION_SEEN_KEY = "printshop.admin.notificationsSeenAt";
+    const COMPACT_KEY = "printshop.admin.compactTables";
+
     const viewRoot = document.querySelector("#view-root");
     const dialog = document.querySelector("#admin-dialog");
-    const dialogContent = document.querySelector("#dialog-content");
-    const toastRegion = document.querySelector("#toast-region");
+    let activeView = document.body.dataset.adminView || "dashboard";
+    let adminEmail = "";
+    let services = [];
+
     const filters = {
-        orders: { search: "", category: "", status: "", from: "", to: "" },
-        customers: { search: "" },
-        services: { search: "", category: "" },
-        payments: { search: "" },
-        reports: { from: "", to: "", category: "", period: "" }
+        orders: { search: "", status: "", service: "", payment_status: "", date_from: "", date_to: "" },
+        customers: { search: "", activity: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
+        payments: { search: "", method: "", service: "", payment_status: "", date_from: "", date_to: "" },
+        reports: {
+            tab: "summary",
+            summary: { preset: "month", date_from: "", date_to: "", group_by: "", service: "" },
+            completed: { service: "", customer: "", request_from: "", request_to: "", completed_from: "", completed_to: "", payment_status: "", min_days: "", max_days: "" },
+            service: { service: "", completed_from: "", completed_to: "", request_from: "", request_to: "" },
+        },
+        notifications: { actor: "", limit: 30 },
     };
-    let activeView = "dashboard";
-    let filterTimer;
-    let bannerDismissed = false;
-    let dialogTemplatesPromise;
-    const dialogTemplates = new Map();
+    // Called after an order action so the visible table/report shows the saved change.
+    let refreshActiveView = () => {};
 
-    const money = (value) => new Intl.NumberFormat("en-PH", {
-        style: "currency", currency: "PHP", maximumFractionDigits: 0
-    }).format(Number(value || 0));
-    const dateLabel = (value) => value
-        ? new Date(`${value}T00:00:00`).toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" })
-        : "—";
-    const localDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    const slug = (value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const customerFor = (order) => customers.find((customer) => customer.id === order.customerId);
-    const orderFor = (id) => orders.find((order) => order.id === id);
-    const paidFor = (orderId) => payments
-        .filter((payment) => payment.orderId === orderId)
-        .reduce((total, payment) => total + payment.amount, 0);
-    const balanceFor = (order) => Math.max(0, Number(order.agreedAmount || 0) - paidFor(order.id));
-    const paymentStatus = (order) => {
-        const total = Number(order.agreedAmount || 0);
-        const paid = paidFor(order.id);
-        if (!total) return "Unpaid";
-        if (paid >= total) return "Fully Paid";
-        if (paid > 0) return "Partially Paid";
-        return "Awaiting Down Payment";
-    };
-    const setStatusBadge = (element, status) => {
-        element.className = `status-badge ${slug(status)}`;
-        element.textContent = status;
-    };
+    // ================================================================ small builders
 
-    function showTableEmpty(tableBody, columnCount, message) {
-        const row = document.createElement("tr");
-        const cell = document.createElement("td");
-        cell.className = "empty-state";
-        cell.colSpan = columnCount;
-        cell.textContent = message;
-        row.append(cell);
-        tableBody.replaceChildren(row);
+    function heading(title, description, ...actions) {
+        return h("header", { className: "page-heading" },
+            h("div", {}, h("h1", { text: title }), description ? h("p", { text: description }) : null),
+            actions.length ? h("div", { className: "page-heading-actions" }, ...actions) : null,
+        );
     }
 
-    function setTextPair(primaryElement, secondaryElement, primary, secondary) {
-        primaryElement.textContent = primary;
-        secondaryElement.textContent = secondary;
+    function panel(title, subtitle, content, ...actions) {
+        return h("section", { className: "panel" },
+            h("div", { className: "panel-heading" },
+                h("div", {}, h("h2", {}, ...[].concat(title)), subtitle ? h("p", { text: subtitle }) : null),
+                actions.length ? h("div", { className: "panel-actions" }, ...actions) : null,
+            ),
+            content,
+        );
     }
 
-    function toast(message) {
-        const element = document.createElement("div");
-        element.className = "toast";
-        element.textContent = message;
-        toastRegion.append(element);
-        window.setTimeout(() => element.remove(), 3200);
+    function statCard({ label, value, foot, icon, onClick, tone }) {
+        const card = h(onClick ? "button" : "article", { className: `stat-card${onClick ? " stat-card-link" : ""}${tone ? ` stat-${tone}` : ""}`, type: onClick ? "button" : null },
+            h("span", { className: "stat-top" }, h("span", { className: "stat-label", text: label }), h("span", { className: "stat-icon", "aria-hidden": "true", text: icon || "" })),
+            h("span", { className: "stat-value", text: value }),
+            foot ? h("span", { className: "stat-foot", text: foot }) : null,
+        );
+        if (onClick) card.addEventListener("click", onClick);
+        return card;
     }
 
-    function logActivity(message) {
-        activity.unshift({ text: message, time: "Just now" });
-        activity.splice(8);
+    function loadingBlock(message = "Loading…") {
+        return h("div", { className: "loading-block", role: "status" }, h("span", { className: "spinner", "aria-hidden": "true" }), ` ${message}`);
     }
+
+    function errorBlock(message, retry) {
+        return h("div", { className: "notice-card notice-error", role: "alert" },
+            h("strong", { text: "Something went wrong. " }), message, " ",
+            retry ? h("button", { className: "button button-small", type: "button", text: "Try again", onclick: retry }) : null,
+        );
+    }
+
+    function field(label, control, className = "") {
+        const id = control.id || `f-${Math.random().toString(36).slice(2, 9)}`;
+        control.id = id;
+        return h("div", { className: `filter-field ${className}`.trim() }, h("label", { for: id, text: label }), control);
+    }
+
+    function searchInput(placeholder, value, onChange) {
+        const input = h("input", { type: "search", placeholder, value, autocomplete: "off" });
+        input.addEventListener("input", UI.debounce(() => onChange(input.value.trim()), 300));
+        return h("label", { className: "search-control filter-search" }, h("span", { "aria-hidden": "true", text: "⌕" }), input);
+    }
+
+    function selectInput(options, value, onChange) {
+        const select = h("select");
+        options.forEach(([optionValue, text]) => select.add(new Option(text, optionValue)));
+        select.value = value;
+        select.addEventListener("change", () => onChange(select.value));
+        return select;
+    }
+
+    function dateInput(value, onChange) {
+        const input = h("input", { type: "date", value });
+        input.addEventListener("change", () => onChange(input.value));
+        return input;
+    }
+
+    function numberInput(value, onChange, placeholder = "") {
+        const input = h("input", { type: "number", min: 0, step: 1, value, placeholder, inputmode: "numeric" });
+        input.addEventListener("input", UI.debounce(() => onChange(input.value), 400));
+        return input;
+    }
+
+    function serviceOptions(list = services, allLabel = "All services") {
+        return [["", allLabel], ...list.map((item) => [item.id, item.label])];
+    }
+
+    function rememberServices(list) {
+        if (Array.isArray(list) && list.length) services = list;
+    }
+
+    function cellPair(primary, secondary) {
+        return h("span", { className: "cell-pair" }, h("span", { className: "table-primary", text: primary || "—" }), secondary ? h("span", { className: "table-secondary", text: secondary }) : null);
+    }
+
+    function totalText(row) {
+        if (row.total_amount !== null && row.total_amount !== undefined) return money(row.total_amount);
+        if (row.status === "Rejected" || row.status === "Cancelled") return "—";
+        return row.estimated_total !== null && row.estimated_total !== undefined ? `Est. ${money(row.estimated_total)}` : "Awaiting quote";
+    }
+
+    // ================================================================ navigation
 
     function viewFromLocation() {
         const route = window.location.pathname.split("/").filter(Boolean).pop();
-        const queryView = new URLSearchParams(window.location.search).get("view");
-        const requested = queryView || route;
-        return labels[requested] ? requested : "dashboard";
+        return LABELS[route] ? route : "dashboard";
     }
 
     async function navigate(view, addHistory = true) {
-        const nextView = labels[view] ? view : "dashboard";
+        const nextView = LABELS[view] ? view : "dashboard";
         const path = nextView === "dashboard" ? "/admin/dashboard" : `/admin/${nextView}`;
-        if (nextView === activeView && window.location.pathname === path) return;
-
+        document.querySelector("#admin-sidebar")?.classList.remove("open");
+        if (nextView === activeView && window.location.pathname === path) {
+            renderView();
+            return;
+        }
         try {
             const response = await fetch(path, { credentials: "same-origin" });
             if (!response.ok) throw new Error(`The admin page could not be loaded (HTTP ${response.status}).`);
@@ -188,942 +202,1345 @@
                 window.location.assign(response.url || "/admin/login");
                 return;
             }
-
             viewRoot.replaceChildren(...Array.from(incomingView.childNodes, (node) => document.importNode(node, true)));
             document.title = pageDocument.title;
-            if (!bannerDismissed) {
-                const currentBanner = document.querySelector(".prototype-banner");
-                const incomingBanner = pageDocument.querySelector(".prototype-banner");
-                if (currentBanner && incomingBanner) {
-                    currentBanner.replaceWith(document.importNode(incomingBanner, true));
-                }
-            }
             activeView = nextView;
-            if (addHistory && window.location.pathname !== path) window.history.pushState({ view: nextView }, "", path);
-            updateViewStylesheet();
+            if (addHistory) window.history.pushState({ view: nextView }, "", path);
             renderView();
             viewRoot.focus({ preventScroll: true });
+            window.scrollTo({ top: 0 });
         } catch (error) {
-            console.error(`Could not navigate to admin ${nextView}.`, error);
-            toast(error instanceof Error ? error.message : "The admin page could not be loaded.");
+            toast(error instanceof Error ? error.message : "The admin page could not be loaded.", "error");
         }
-    }
-
-    function updateViewStylesheet() {
-        const files = { reports: "reports.css", notifications: "notifications.css" };
-        let stylesheet = document.querySelector("#admin-view-stylesheet");
-        const fileName = files[activeView];
-        if (!fileName) {
-            stylesheet?.remove();
-            return;
-        }
-        if (!stylesheet) {
-            stylesheet = document.createElement("link");
-            stylesheet.id = "admin-view-stylesheet";
-            stylesheet.rel = "stylesheet";
-            document.head.append(stylesheet);
-        }
-        stylesheet.href = `/assets/admin/${fileName}`;
-    }
-
-    async function loadDialogTemplates() {
-        const response = await fetch("/assets/admin/dialogs.html");
-        if (!response.ok) {
-            throw new Error(`Admin dialog templates could not be loaded (HTTP ${response.status}).`);
-        }
-        const documentText = await response.text();
-        const templateDocument = new DOMParser().parseFromString(documentText, "text/html");
-        const templates = templateDocument.querySelectorAll("template[id^='dialog-']");
-        if (!templates.length) {
-            throw new Error("The admin dialog templates file does not contain any templates.");
-        }
-        templates.forEach((template) => dialogTemplates.set(template.id, template.content));
-    }
-
-    async function showDialog(templateId) {
-        if (!dialogTemplatesPromise) dialogTemplatesPromise = loadDialogTemplates();
-        try {
-            await dialogTemplatesPromise;
-        } catch (error) {
-            console.error("Could not load admin dialog templates.", error);
-            toast("Admin dialog forms could not be loaded. Please reload this page.");
-            return null;
-        }
-        const template = dialogTemplates.get(templateId);
-        if (!template) throw new Error(`The admin dialog template "${templateId}" is missing.`);
-        dialogContent.replaceChildren(template.cloneNode(true));
-        if (!dialog.open) dialog.showModal();
-        return dialogContent.firstElementChild;
-    }
-
-    function appendDetailItem(container, label, value) {
-        const item = dialogTemplates.get("dialog-detail-item");
-        if (!item) throw new Error("The shared admin dialog detail template is missing.");
-        const element = item.firstElementChild.cloneNode(true);
-        element.querySelector("[data-detail-label]").textContent = label;
-        element.querySelector("[data-detail-value]").textContent = String(value || "—");
-        container.append(element);
-    }
-
-    // Dashboard figures come from /api/admin/dashboard (database queries only). No sample values are shown.
-    let dashboardData = null;
-    let dashboardError = "";
-
-    const dashboardStatCards = [
-        ["total-customers", (data) => String(data.total_customers)],
-        ["total-orders", (data) => String(data.total_orders)],
-        ["pending-orders", (data) => String(data.pending_orders)],
-        ["processing-orders", (data) => String(data.processing_orders)],
-        ["completed-orders", (data) => String(data.completed_orders)],
-        ["cancelled-orders", (data) => String(data.cancelled_orders)],
-        ["total-revenue", (data) => money(data.total_revenue)],
-    ];
-
-    function renderDashboard() {
-        const errorBox = document.querySelector("[data-dashboard-error]");
-        if (errorBox) {
-            errorBox.textContent = dashboardError;
-            errorBox.hidden = !dashboardError;
-        }
-        if (!dashboardData) {
-            for (const [name] of dashboardStatCards) {
-                const element = document.querySelector(`[data-stat="${name}"]`);
-                if (element) element.textContent = dashboardError ? "—" : "…";
-            }
-            return;
-        }
-        for (const [name, format] of dashboardStatCards) {
-            const element = document.querySelector(`[data-stat="${name}"]`);
-            if (element) element.textContent = format(dashboardData);
-        }
-
-        const breakdown = document.querySelector("[data-status-breakdown]");
-        if (breakdown) {
-            breakdown.replaceChildren();
-            const entries = Object.entries(dashboardData.status_counts).filter(([, count]) => count > 0);
-            if (!entries.length) {
-                const empty = document.createElement("p");
-                empty.className = "empty-state";
-                empty.textContent = "No orders available yet.";
-                breakdown.append(empty);
-            }
-            for (const [status, count] of entries) {
-                const row = document.createElement("div");
-                row.className = "status-row";
-                const label = document.createElement("span");
-                label.textContent = status;
-                const value = document.createElement("strong");
-                value.textContent = String(count);
-                row.append(label, value);
-                breakdown.append(row);
-            }
-        }
-        const statusTotal = document.querySelector("[data-status-order-count]");
-        if (statusTotal) statusTotal.textContent = String(dashboardData.total_orders);
-    }
-
-    async function refreshDashboard() {
-        try {
-            const response = await fetch("/api/admin/dashboard");
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.detail || "Dashboard figures could not be loaded.");
-            dashboardData = result;
-            dashboardError = "";
-        } catch (error) {
-            dashboardError = error instanceof Error ? error.message : "Dashboard figures could not be loaded.";
-        }
-        if (activeView === "dashboard") renderView();
-    }
-
-    function renderLiveOrdersTable() {
-        const tableBody = document.querySelector("[data-live-order-rows]");
-        if (!tableBody) return;
-        tableBody.replaceChildren();
-        liveOrders.forEach((order) => {
-            const row = document.querySelector("#live-order-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="reference"]').textContent = order.reference;
-            setTextPair(row.querySelector('[data-field="customer"]'), row.querySelector('[data-field="email"]'), order.customer.name, order.customer.email);
-            setTextPair(row.querySelector('[data-field="product"]'), row.querySelector('[data-field="category"]'), order.product.name, order.product.category);
-            row.querySelector('[data-field="submitted"]').textContent = dateLabel(order.created_at.slice(0, 10));
-            row.querySelector('[data-field="total"]').textContent = liveTotalLabel(order);
-            setStatusBadge(row.querySelector('[data-field="status"]'), order.status);
-            row.querySelector("[data-action='live-order-detail']").dataset.id = order.reference;
-            tableBody.append(row);
-        });
-        const errorNotice = document.querySelector("[data-live-order-error]");
-        if (errorNotice) {
-            errorNotice.hidden = !liveOrdersError;
-            errorNotice.textContent = liveOrdersError ? `Customer requests could not be loaded. ${liveOrdersError}` : "";
-        }
-        document.querySelectorAll("[data-live-order-count]").forEach((count) => {
-            count.textContent = `${liveOrders.length} saved requests`;
-        });
-        if (!tableBody.childElementCount) {
-            const message = liveOrdersError
-                ? "Customer requests could not be loaded."
-                : liveOrdersLoaded
-                    ? "No customer requests have been submitted yet."
-                    : "Loading customer requests…";
-            showTableEmpty(tableBody, 7, message);
-        }
-    }
-
-    function liveOrderFor(reference) {
-        return liveOrders.find((order) => order.reference === reference);
-    }
-
-    function livePaymentTotal(order) {
-        return order.payments.reduce((total, payment) => total + payment.amount, 0);
-    }
-
-    function appendLiveStatusActions(container, order) {
-        const options = {
-            "Pending Confirmation": ["Under Review", "Rejected", "Cancelled"],
-            "Under Review": ["Awaiting Quotation", "Rejected", "Cancelled"],
-            "Awaiting Quotation": ["Rejected", "Cancelled"],
-            "Awaiting Down Payment": ["Rejected", "Cancelled"],
-            "Approved for Printing": ["In Production"],
-            "In Production": ["Ready for Pickup"],
-            "Ready for Pickup": ["Completed"],
-        };
-        container.replaceChildren();
-        (options[order.status] || []).forEach((status) => {
-            const button = document.createElement("button");
-            button.className = `button ${status === "Rejected" || status === "Cancelled" ? "button-danger" : "button-primary"}`;
-            button.type = "button";
-            button.dataset.action = "live-status";
-            button.dataset.id = order.reference;
-            button.dataset.status = status;
-            button.textContent = status;
-            container.append(button);
-        });
-    }
-
-    function liveTotalLabel(order) {
-        if (order.total_amount !== null) return money(order.total_amount);
-        const estimate = liveEstimate(order);
-        return estimate === null ? "Waiting for quotation" : `Est. ${money(estimate)} · unconfirmed`;
-    }
-
-    function liveEstimate(order) {
-        const estimate = order.pricing?.estimated_total;
-        return typeof estimate === "number" ? estimate : null;
-    }
-
-    /** Label/value rows for the options saved with an order (older orders used fixed fields). */
-    function liveSpecifications(order) {
-        const customization = order.customization || {};
-        if (Array.isArray(customization.specifications)) {
-            return customization.specifications.map((spec) => [spec.label, spec.value]);
-        }
-        return [
-            ["Size", customization.size],
-            ["Material / variant", customization.material],
-            ["Customization", customization.details],
-        ].filter(([, value]) => value);
-    }
-
-    function renderLivePricing(container, pricing) {
-        container.replaceChildren();
-        container.hidden = !pricing || !Object.keys(pricing).length;
-        if (container.hidden) return;
-        const title = document.createElement("strong");
-        title.textContent = "Price estimate from catalog prices";
-        const list = document.createElement("ul");
-        if (pricing.requires_quote) {
-            (pricing.quote_reasons || []).forEach((reason) => {
-                const item = document.createElement("li");
-                item.textContent = reason;
-                list.append(item);
-            });
-        } else {
-            (pricing.lines || []).forEach((line) => {
-                const item = document.createElement("li");
-                item.textContent = `${line.label}: ${money(line.amount)} (${line.detail})`;
-                list.append(item);
-            });
-            if (pricing.area_sqft) {
-                const item = document.createElement("li");
-                item.textContent = `Print area: ${pricing.area_sqft} sq ft per piece`;
-                list.append(item);
-            }
-            const total = document.createElement("li");
-            total.className = "live-pricing-total";
-            total.textContent = pricing.estimated_total === null ? "No total calculated." : `Estimated total: ${money(pricing.estimated_total)}`;
-            list.append(total);
-        }
-        container.append(title, list);
-    }
-
-    async function openLiveOrder(reference) {
-        const order = liveOrderFor(reference);
-        if (!order) return;
-        const paid = livePaymentTotal(order);
-        const balance = order.total_amount === null ? null : Math.max(0, order.total_amount - paid);
-        const canSendDraft = order.total_amount !== null && paid >= order.total_amount * 0.5 &&
-            ["Draft Preparation", "Awaiting Customer Approval"].includes(order.status);
-        const content = await showDialog("dialog-live-order");
-        if (!content) return;
-        content.querySelector("[data-live-title]").textContent = `Customer request ${reference}`;
-        const details = content.querySelector("[data-live-details]");
-        const estimate = liveEstimate(order);
-        [
-            ["Customer", order.customer.name],
-            ["Email", order.customer.email],
-            ["Contact number", order.customer.phone],
-            ["Messenger", order.customer.messenger],
-            ["Product", order.product.name],
-            ["Category", order.product.category],
-            ["Quantity", String(order.customization.quantity)],
-            ["Catalog estimate", estimate === null ? "Quotation required" : money(estimate)],
-            ["Confirmed total", order.total_amount === null ? "Waiting for Admin Quotation" : money(order.total_amount)],
-            ["Payment received", money(paid)],
-            ["Order status", order.status],
-        ].forEach(([label, value]) => appendDetailItem(details, label, value));
-
-        // Every option the customer chose for this product, as saved with the order.
-        const specs = content.querySelector("[data-live-specs]");
-        specs.replaceChildren();
-        liveSpecifications(order).forEach(([label, value]) => appendDetailItem(specs, label, value));
-        content.querySelector("[data-live-specs-section]").hidden = !specs.childElementCount;
-        renderLivePricing(content.querySelector("[data-live-pricing]"), order.pricing);
-        if (order.has_event) {
-            [
-                ["Celebrant", order.event_details.celebrant],
-                ["Event type", order.event_details.event_type],
-                ["Event date", order.event_details.event_date],
-                ["Event time", order.event_details.event_time],
-                ["Event location", order.event_details.event_location],
-            ].forEach(([label, value]) => appendDetailItem(details, label, value));
-        }
-        content.querySelector("[data-live-instructions]").textContent =
-            order.customization.notes || order.customization.instructions || order.customization.details || "None";
-        const productImage = content.querySelector("[data-live-product-image]");
-        if (order.product.image) {
-            productImage.hidden = false;
-            const image = content.querySelector("[data-live-product-image-source]");
-            image.src = order.product.image;
-            image.alt = `Selected product sample for ${order.product.name}`;
-        } else {
-            productImage.hidden = true;
-        }
-
-        const attachments = content.querySelector("[data-live-attachments]");
-        const attachmentList = content.querySelector("[data-live-attachment-list]");
-        attachmentList.replaceChildren();
-        order.attachments.forEach((file) => {
-            const item = document.createElement("li");
-            const link = document.createElement("a");
-            link.href = file.url;
-            link.target = "_blank";
-            link.rel = "noopener";
-            link.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
-            const source = document.createElement("strong");
-            source.textContent = `${file.field_label || "Reference file"}: `;
-            item.append(source, link);
-            attachmentList.append(item);
-        });
-        attachments.hidden = order.attachments.length === 0;
-        content.querySelector("[data-live-no-attachments]").hidden = order.attachments.length > 0;
-
-        const paymentInstructions = content.querySelector("[data-live-payment-instructions]");
-        paymentInstructions.hidden = !order.payment_instructions;
-        paymentInstructions.querySelector("span").textContent = order.payment_instructions || "";
-        const paymentList = content.querySelector("[data-live-payment-list]");
-        paymentList.replaceChildren();
-        order.payments.forEach((payment) => {
-            const item = document.createElement("li");
-            item.textContent = `${money(payment.amount)} · ${payment.method} · ${new Date(payment.received_at).toLocaleString()}`;
-            paymentList.append(item);
-        });
-        content.querySelector("[data-live-payments]").hidden = order.payments.length === 0;
-
-        const draftNotice = content.querySelector("[data-live-draft-notice]");
-        draftNotice.hidden = !order.draft_attachment;
-        if (order.draft_attachment) {
-            const strong = document.createElement("strong");
-            strong.textContent = "Draft attached: ";
-            const link = document.createElement("a");
-            link.href = order.draft_attachment.url;
-            link.target = "_blank";
-            link.rel = "noopener";
-            link.textContent = order.draft_attachment.name;
-            draftNotice.replaceChildren(strong, link);
-        }
-        content.querySelector("[data-live-approval-notice]").hidden = order.status !== "Awaiting Customer Approval";
-        appendLiveStatusActions(content.querySelector("[data-live-actions]"), order);
-
-        const quoteForm = content.querySelector("[data-live-quote-form]");
-        quoteForm.hidden = !["Under Review", "Awaiting Quotation"].includes(order.status);
-        quoteForm.dataset.id = reference;
-        // Prefill with the estimate from the shop's own catalog prices; the administrator still confirms it.
-        quoteForm.elements.total_amount.value = order.total_amount ?? estimate ?? "";
-        content.querySelector("[data-live-quote-estimate]").textContent = estimate === null
-            ? "No catalog estimate: this request needs a custom quotation."
-            : `Prefilled with the catalog estimate of ${money(estimate)}. Adjust it if needed before saving.`;
-        quoteForm.elements.payment_instructions.value = order.payment_instructions || "";
-
-        const paymentForm = content.querySelector("[data-live-payment-form]");
-        paymentForm.hidden = order.total_amount === null || balance <= 0 ||
-            ["Rejected", "Cancelled", "Completed"].includes(order.status);
-        paymentForm.dataset.id = reference;
-        paymentForm.elements.amount.max = String(balance ?? "");
-        content.querySelector("[data-live-payment-summary]").textContent =
-            order.total_amount === null ? "" :
-                `50% down payment required: ${money(order.total_amount * 0.5)} · Received: ${money(paid)} · Balance: ${money(balance)}`;
-
-        const draftForm = content.querySelector("[data-live-draft-form]");
-        draftForm.hidden = !canSendDraft;
-        draftForm.dataset.id = reference;
-
-        const history = content.querySelector("[data-live-history]");
-        history.replaceChildren();
-        order.history.forEach((event) => {
-            const item = document.createElement("li");
-            const description = document.createElement("span");
-            description.textContent = event.text;
-            const time = document.createElement("time");
-            time.textContent = new Date(event.at).toLocaleString();
-            item.append(description, time);
-            history.append(item);
-        });
-    }
-
-    async function refreshLiveOrders() {
-        try {
-            const response = await fetch("/api/admin/orders");
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.detail || "Could not load customer orders.");
-            liveOrders = result.orders;
-            liveOrdersError = "";
-            liveOrdersLoaded = true;
-        } catch (error) {
-            liveOrdersError = error instanceof Error ? error.message : "Could not load customer orders.";
-            liveOrdersLoaded = true;
-        }
-        void refreshDashboard();
-        if (!dialog.open) renderView();
-    }
-
-    function renderOrders() {
-        const filter = filters.orders;
-        const needle = filter.search.toLowerCase();
-        const filtered = orders.filter((order) => {
-            const customer = customerFor(order);
-            const matchesSearch = !needle || [order.id, customer?.name, customer?.email, order.product].some((value) => String(value || "").toLowerCase().includes(needle));
-            const matchesCategory = !filter.category || order.category === filter.category;
-            const matchesStatus = !filter.status || order.status === filter.status;
-            const matchesFrom = !filter.from || order.date >= filter.from;
-            const matchesTo = !filter.to || order.date <= filter.to;
-            return matchesSearch && matchesCategory && matchesStatus && matchesFrom && matchesTo;
-        });
-        const categoryFilter = document.querySelector("#order-category-filter");
-        categoryFilter.replaceChildren(new Option("All service categories", ""));
-        Object.keys(serviceCatalog).forEach((category) => categoryFilter.add(new Option(category, category)));
-        categoryFilter.value = filter.category;
-        const statusFilter = document.querySelector("#order-status-filter");
-        statusFilter.replaceChildren(new Option("All statuses", ""));
-        statusOptions.forEach((status) => statusFilter.add(new Option(status, status)));
-        statusFilter.value = filter.status;
-        document.querySelector("#order-search").value = filter.search;
-        document.querySelector("#order-date-from").value = filter.from;
-        document.querySelector("#order-date-to").value = filter.to;
-
-        renderLiveOrdersTable();
-
-        const sampleRows = document.querySelector("[data-sample-order-rows]");
-        sampleRows.replaceChildren();
-        filtered.forEach((order) => {
-            const customer = customerFor(order);
-            const row = document.querySelector("#sample-order-row-template").content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="id"]').textContent = order.id;
-            setTextPair(row.querySelector('[data-field="customer"]'), row.querySelector('[data-field="email"]'), customer?.name || "Unknown", customer?.email || "");
-            setTextPair(row.querySelector('[data-field="product"]'), row.querySelector('[data-field="category"]'), order.product, order.category);
-            row.querySelector('[data-field="date"]').textContent = dateLabel(order.date);
-            row.querySelector('[data-field="amount"]').textContent =
-                order.agreedAmount ? money(order.agreedAmount) : "Quote required";
-            setStatusBadge(row.querySelector('[data-field="status"]'), order.status);
-            row.querySelector("[data-action='order-detail']").dataset.id = order.id;
-            sampleRows.append(row);
-        });
-        document.querySelector("[data-sample-order-count]").textContent = `${filtered.length} illustrative records`;
-        if (!sampleRows.childElementCount) showTableEmpty(sampleRows, 7, "No orders match these filters.");
-    }
-
-    function renderCustomers() {
-        const needle = filters.customers.search.toLowerCase();
-        const filtered = customers.filter((customer) =>
-            !needle || `${customer.name} ${customer.email} ${customer.id}`.toLowerCase().includes(needle)
-        );
-        const tableBody = document.querySelector("[data-customer-rows]");
-        tableBody.replaceChildren();
-        filtered.forEach((customer) => {
-            const customerOrders = orders.filter((order) => order.customerId === customer.id);
-            const completed = customerOrders.filter((order) => order.status === "Completed").length;
-            const row = document.querySelector("#customer-row-template").content.firstElementChild.cloneNode(true);
-            setTextPair(row.querySelector('[data-field="name"]'), row.querySelector('[data-field="id"]'), customer.name, customer.id);
-            row.querySelector('[data-field="email"]').textContent = customer.email;
-            row.querySelector('[data-field="phone"]').textContent = customer.phone;
-            row.querySelector('[data-field="joined"]').textContent = dateLabel(customer.joined);
-            row.querySelector('[data-field="orders"]').textContent = String(customerOrders.length);
-            row.querySelector('[data-field="completed"]').textContent = String(completed);
-            row.querySelector("[data-action='customer-detail']").dataset.id = customer.id;
-            tableBody.append(row);
-        });
-        document.querySelector("[data-customer-count]").textContent = `${filtered.length} profiles · demo data`;
-        if (!filtered.length) showTableEmpty(tableBody, 7, "No customers match this search.");
-    }
-
-    function renderServices() {
-        catalogAdmin()?.renderServices(filters.services);
-    }
-
-    function renderPricing() {
-        catalogAdmin()?.renderPricing();
-    }
-
-    function renderPayments() {
-        const needle = filters.payments.search.toLowerCase();
-        const filtered = [...payments].filter((payment) => {
-            const order = orderFor(payment.orderId);
-            const customer = order ? customerFor(order) : null;
-            return !needle || `${payment.id} ${payment.orderId} ${customer?.name || ""} ${payment.reference}`.toLowerCase().includes(needle);
-        }).sort((a, b) => b.date.localeCompare(a.date));
-        document.querySelector("#payment-search").value = filters.payments.search;
-        const received = payments.reduce((sum, payment) => sum + payment.amount, 0);
-        const outstanding = orders.filter((order) => order.agreedAmount && !["Rejected", "Cancelled"].includes(order.status))
-            .reduce((sum, order) => sum + balanceFor(order), 0);
-        document.querySelector("[data-payment-received]").textContent = money(received);
-        document.querySelector("[data-payment-outstanding]").textContent = money(outstanding);
-        document.querySelector("[data-payment-count]").textContent = String(payments.length);
-        document.querySelector("[data-payment-unpriced]").textContent =
-            String(orders.filter((order) => !order.agreedAmount).length);
-
-        const customerPaymentRows = document.querySelector("[data-customer-payment-rows]");
-        customerPaymentRows.replaceChildren();
-        liveOrders.forEach((order) => {
-            order.payments.forEach((payment) => {
-                const row = document.querySelector("#customer-payment-row-template").content.firstElementChild.cloneNode(true);
-                setTextPair(row.querySelector('[data-field="reference"]'), row.querySelector('[data-field="receipt"]'), order.reference, payment.reference || "No payment reference");
-                setTextPair(row.querySelector('[data-field="customer"]'), row.querySelector('[data-field="product"]'), order.customer.name, order.product.name);
-                row.querySelector('[data-field="date"]').textContent = dateLabel(payment.received_at.slice(0, 10));
-                row.querySelector('[data-field="method"]').textContent = payment.method;
-                row.querySelector('[data-field="amount"]').textContent = money(payment.amount);
-                const paymentState = order.total_amount === null
-                    ? "Awaiting quotation"
-                    : livePaymentTotal(order) >= order.total_amount ? "Paid in full" : "Partial payment";
-                setStatusBadge(row.querySelector('[data-field="status"]'), paymentState);
-                customerPaymentRows.append(row);
-            });
-        });
-        const customerPaymentTotal = liveOrders.reduce((sum, order) => sum + livePaymentTotal(order), 0);
-        document.querySelector("[data-customer-payment-total]").textContent = `${money(customerPaymentTotal)} recorded`;
-        if (!customerPaymentRows.childElementCount) {
-            showTableEmpty(customerPaymentRows, 6, "No payments have been recorded for customer requests.");
-        }
-
-        const historyRows = document.querySelector("[data-payment-history-rows]");
-        historyRows.replaceChildren();
-        filtered.forEach((payment) => {
-            const order = orderFor(payment.orderId);
-            const customer = order ? customerFor(order) : null;
-            const row = document.querySelector("#payment-history-row-template").content.firstElementChild.cloneNode(true);
-            setTextPair(row.querySelector('[data-field="transaction"]'), row.querySelector('[data-field="reference"]'), payment.id, payment.reference);
-            setTextPair(row.querySelector('[data-field="order"]'), row.querySelector('[data-field="customer"]'), payment.orderId, customer?.name || "Unknown customer");
-            row.querySelector('[data-field="date"]').textContent = dateLabel(payment.date);
-            row.querySelector('[data-field="method"]').textContent = payment.method;
-            row.querySelector('[data-field="amount"]').textContent = money(payment.amount);
-            setStatusBadge(row.querySelector('[data-field="status"]'), order ? paymentStatus(order) : "Recorded");
-            row.querySelector('[data-field="remarks"]').textContent = payment.remarks;
-            historyRows.append(row);
-        });
-        document.querySelector("[data-payment-history-count]").textContent = `${filtered.length} records · demo data`;
-        if (!historyRows.childElementCount) showTableEmpty(historyRows, 7, "No payments match this search.");
-    }
-
-    function renderReports() {
-        const filter = filters.reports;
-        const records = payments.filter((payment) => {
-            const order = orderFor(payment.orderId);
-            return (!filter.from || payment.date >= filter.from) &&
-                (!filter.to || payment.date <= filter.to) &&
-                (!filter.category || order?.category === filter.category);
-        });
-        const total = records.reduce((sum, payment) => sum + payment.amount, 0);
-        const categoryTotals = Object.keys(serviceCatalog).map((category) => ({
-            category,
-            amount: records.filter((payment) => orderFor(payment.orderId)?.category === category)
-                .reduce((sum, payment) => sum + payment.amount, 0)
-        })).sort((a, b) => b.amount - a.amount);
-        const max = Math.max(1, ...categoryTotals.map((item) => item.amount));
-        const categorySelect = document.querySelector("#report-category");
-        categorySelect.replaceChildren(new Option("All categories", ""));
-        Object.keys(serviceCatalog).forEach((category) => {
-            categorySelect.add(new Option(category, category));
-        });
-        categorySelect.value = filter.category;
-        document.querySelector("#report-period").value = filter.period;
-        document.querySelector("#report-from").value = filter.from;
-        document.querySelector("#report-to").value = filter.to;
-
-        document.querySelector("[data-report-total]").textContent = money(total);
-        document.querySelector("[data-report-transactions]").textContent = String(records.length);
-        document.querySelector("[data-report-orders]").textContent = String(new Set(records.map((payment) => payment.orderId)).size);
-        document.querySelector("[data-report-completed]").textContent = String(orders.filter((order) => order.status === "Completed").length);
-        document.querySelector("[data-report-record-count]").textContent = `${records.length} transactions`;
-
-        const categoryList = document.querySelector("[data-report-category-totals]");
-        categoryList.replaceChildren();
-        const categoryTemplate = document.querySelector("#report-category-template");
-        categoryTotals.filter((item) => item.amount > 0).forEach((item) => {
-            const fragment = categoryTemplate.content.cloneNode(true);
-            fragment.querySelector('[data-field="category"]').textContent = item.category;
-            const bar = fragment.querySelector('[data-field="bar"]');
-            bar.max = max;
-            bar.value = item.amount;
-            bar.setAttribute("aria-label", `${item.category}: ${money(item.amount)}`);
-            fragment.querySelector('[data-field="amount"]').textContent = money(item.amount);
-            categoryList.append(fragment);
-        });
-        if (!categoryList.childElementCount) {
-            const empty = document.createElement("p");
-            empty.className = "empty-state";
-            empty.textContent = "No payments match these filters.";
-            categoryList.append(empty);
-        }
-
-        const tableBody = document.querySelector("[data-report-rows]");
-        tableBody.replaceChildren();
-        const rowTemplate = document.querySelector("#report-row-template");
-        records.forEach((payment) => {
-            const order = orderFor(payment.orderId);
-            const row = rowTemplate.content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="date"]').textContent = dateLabel(payment.date);
-            row.querySelector('[data-field="order"]').textContent = payment.orderId;
-            row.querySelector('[data-field="category"]').textContent = order?.category || "—";
-            row.querySelector('[data-field="product"]').textContent = order?.product || "—";
-            row.querySelector('[data-field="amount"]').textContent = money(payment.amount);
-            tableBody.append(row);
-        });
-        if (!tableBody.childElementCount) showTableEmpty(tableBody, 5, "No payments match these filters.");
-    }
-
-    function renderNotifications() {
-        const unread = notifications.filter((notification) => !notification.read).length;
-        document.querySelector("[data-notifications-description]").textContent =
-            `${unread} unread sample notifications. Prototype notices are not connected to email or a live order system.`;
-        const list = document.querySelector("[data-notification-list]");
-        list.replaceChildren();
-        const itemTemplate = document.querySelector("#notification-item-template");
-        notifications.forEach((notification) => {
-            const item = itemTemplate.content.firstElementChild.cloneNode(true);
-            item.classList.toggle("unread", !notification.read);
-            item.querySelector("[data-notification-symbol]").textContent =
-                notification.title.includes("Payment") ? "₱" :
-                    notification.title.includes("registration") ? "♙" : "▤";
-            item.querySelector("[data-notification-title]").textContent = notification.title;
-            item.querySelector("[data-notification-body]").textContent = notification.body;
-            item.querySelector("[data-notification-time]").textContent = notification.time;
-            list.append(item);
-        });
-    }
-
-    function renderSettings() {
-        const activityList = document.querySelector("[data-settings-activity]");
-        activityList.replaceChildren();
-        const rowTemplate = document.querySelector("#activity-row-template");
-        activity.forEach((item) => {
-            const row = rowTemplate.content.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="text"]').textContent = item.text;
-            row.querySelector('[data-field="time"]').textContent = item.time;
-            activityList.append(row);
-        });
     }
 
     function renderView() {
-        const renderers = {
-            dashboard: renderDashboard, orders: renderOrders, customers: renderCustomers,
-            services: renderServices, pricing: renderPricing, payments: renderPayments,
-            reports: renderReports, notifications: renderNotifications, settings: renderSettings
-        };
-        document.querySelector("#current-section").textContent = labels[activeView];
+        document.querySelector("#current-section").textContent = LABELS[activeView];
         document.querySelectorAll("[data-view]").forEach((link) => {
-            link.classList.toggle("active", link.dataset.view === activeView);
+            const active = link.dataset.view === activeView;
+            link.classList.toggle("active", active);
             if (link.matches(".sidebar-nav a, .sidebar-bottom > a")) {
-                if (link.dataset.view === activeView) link.setAttribute("aria-current", "page");
+                if (active) link.setAttribute("aria-current", "page");
                 else link.removeAttribute("aria-current");
             }
         });
-        document.querySelector("#pending-count").textContent = String(
-            orders.filter((order) => order.status === "Pending Confirmation").length +
-            liveOrders.filter((order) => order.status === "Pending Confirmation").length
+        refreshActiveView = () => {};
+        const renderers = {
+            dashboard: renderDashboard,
+            orders: renderOrders,
+            customers: renderCustomers,
+            services: () => window.PrintShopCatalogAdmin?.renderServices(),
+            pricing: () => window.PrintShopCatalogAdmin?.renderPricing(),
+            payments: renderPayments,
+            reports: renderReports,
+            notifications: renderNotifications,
+            settings: renderSettings,
+        };
+        renderers[activeView]?.();
+    }
+
+    function viewBody() {
+        return viewRoot.querySelector("[data-view-body]");
+    }
+
+    async function refreshBadges() {
+        try {
+            const [orders, activity] = await Promise.all([
+                api(`/api/admin/orders${query({ page_size: 10 })}`),
+                api(`/api/admin/activity${query({ actor: "customer", limit: 200 })}`),
+            ]);
+            rememberServices(orders.services);
+            const pending = orders.status_counts?.["Pending Confirmation"] || 0;
+            const pendingBadge = document.querySelector("#pending-count");
+            pendingBadge.textContent = pending ? String(pending) : "";
+            pendingBadge.title = pending ? `${pending} new request${pending === 1 ? "" : "s"} waiting for review` : "";
+            const seen = localStorage.getItem(NOTIFICATION_SEEN_KEY) || "";
+            const unread = activity.events.filter((event) => (event.at || "") > seen).length;
+            document.querySelector("#notification-count").textContent = unread ? String(unread) : "";
+            document.querySelectorAll(".notification-dot").forEach((dot) => { dot.hidden = !unread; });
+        } catch {
+            // Badges are a convenience; the pages themselves report loading errors.
+        }
+    }
+
+    // ================================================================ dashboard
+
+    async function renderDashboard() {
+        const body = viewBody();
+        if (!body) return;
+        body.replaceChildren(loadingBlock("Loading live figures…"));
+        let data;
+        try {
+            data = await api("/api/admin/dashboard");
+        } catch (error) {
+            body.replaceChildren(errorBlock(error.message, renderDashboard));
+            return;
+        }
+        if (activeView !== "dashboard") return;
+        const goOrders = (status) => () => {
+            filters.orders = { ...filters.orders, status };
+            navigate("orders");
+        };
+        const cards = h("section", { className: "stats-grid stats-grid-8", "aria-label": "Business summary" },
+            statCard({ label: "Total customers", value: number(data.total_customers), foot: "Registered customer accounts", icon: "👥", onClick: () => navigate("customers") }),
+            statCard({ label: "Total orders", value: number(data.total_orders), foot: "All order requests", icon: "▤", onClick: goOrders("") }),
+            statCard({ label: "Pending orders", value: number(data.pending_orders), foot: "Awaiting review, quotation, or down payment", icon: "◷", onClick: goOrders("pending") }),
+            statCard({ label: "In progress", value: number(data.processing_orders), foot: "Drafting, approval, production, pickup", icon: "⚒", onClick: goOrders("processing") }),
+            statCard({ label: "Completed orders", value: number(data.completed_orders), foot: "Marked completed", icon: "✓", onClick: goOrders("completed") }),
+            statCard({ label: "Cancelled orders", value: number(data.cancelled_orders), foot: "Cancelled or rejected", icon: "✕", onClick: goOrders("cancelled") }),
+            statCard({ label: "Fully paid orders", value: number(data.fully_paid_orders), foot: "Payments cover the confirmed total", icon: "₱", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_status: "Fully Paid" }; navigate("orders"); } }),
+            statCard({ label: "Total confirmed revenue", value: money(data.total_revenue), foot: "Completed and fully paid orders only", icon: "₱", tone: "highlight", onClick: () => { filters.reports.tab = "summary"; filters.reports.summary.preset = "all"; navigate("reports"); } }),
         );
-        document.querySelector("#notification-count").textContent = String(notifications.filter((notification) => !notification.read).length);
-        renderers[activeView]();
-        document.querySelector("#today-date").textContent = new Date().toLocaleDateString("en-PH", {
-            weekday: "short", month: "short", day: "numeric"
+
+        const trend = h("div", { className: "chart-box" });
+        UI.columnChart(trend, data.revenue_trend.map((bucket) => ({
+            label: bucket.label,
+            short: shortBucket(bucket.key, "month"),
+            value: bucket.revenue,
+            completed: bucket.completed_orders,
+        })), {
+            format: money,
+            axisFormat: UI.compactMoney,
+            detail: (point) => `${point.completed} completed order${point.completed === 1 ? "" : "s"}`,
+            emptyMessage: "No confirmed revenue in the last 12 months yet.",
         });
+
+        const statusChart = h("div", { className: "chart-box" });
+        UI.barChart(statusChart, STATUSES.map((status) => ({ label: status, value: data.status_counts[status] || 0 })).filter((item) => item.value), {
+            emptyMessage: "No orders have been submitted yet.",
+            detail: (item) => `${Math.round((item.value / Math.max(1, data.total_orders)) * 100)}% of all orders`,
+            onSelect: (item) => { filters.orders = { ...filters.orders, status: item.label }; navigate("orders"); },
+        });
+        const ordersChart = h("div", { className: "chart-box" });
+        UI.barChart(ordersChart, data.by_service.map((item) => ({ label: item.service, value: item.orders })), { emptyMessage: "No orders yet." });
+        const completedChart = h("div", { className: "chart-box" });
+        UI.barChart(completedChart, data.by_service.map((item) => ({ label: item.service, value: item.completed_orders })), { emptyMessage: "No completed orders yet." });
+        const revenueChart = h("div", { className: "chart-box" });
+        UI.barChart(revenueChart, data.by_service.map((item) => ({ label: item.service, value: item.revenue })), {
+            format: money,
+            emptyMessage: "No confirmed revenue yet.",
+            detail: (item) => (data.total_revenue ? `${((item.value / data.total_revenue) * 100).toFixed(1)}% of revenue` : ""),
+        });
+
+        const recentTable = h("div");
+        new UI.DataTable(recentTable, {
+            columns: [
+                { label: "Order ID", className: "ref-cell", render: (row) => cellPair(row.reference, row.request_date ? date(row.request_date) : "") },
+                { label: "Customer", render: (row) => cellPair(row.customer_name, row.product) },
+                { label: "Total", align: "right", render: (row) => totalText(row) },
+                { label: "Status", render: (row) => badge(row.status) },
+            ],
+            rows: () => data.recent_orders,
+            pageSize: 10,
+            emptyMessage: "No orders have been submitted yet.",
+            onRowClick: (row) => openOrder(row.reference),
+            rowTitle: (row) => `Open order ${row.reference}`,
+        }).load();
+        const completedTable = h("div");
+        new UI.DataTable(completedTable, {
+            columns: [
+                { label: "Transaction", className: "ref-cell", render: (row) => cellPair(row.reference, row.customer_name) },
+                { label: "Service", render: (row) => cellPair(row.service, row.product) },
+                { label: "Completed", render: (row) => cellPair(date(row.completion_date), days(row.completion_days)) },
+                { label: "Amount", align: "right", render: (row) => money(row.total_amount) },
+                { label: "Payment", render: (row) => badge(row.payment_status) },
+            ],
+            rows: () => data.recent_completed,
+            pageSize: 10,
+            emptyMessage: "No completed transactions yet.",
+            onRowClick: (row) => openOrder(row.reference),
+        }).load();
+
+        body.replaceChildren(
+            cards,
+            h("div", { className: "dashboard-grid" },
+                panel("Revenue trend", "Confirmed revenue per month, last 12 months", trend),
+                panel("Order status distribution", `${number(data.total_orders)} orders · select a status to open it`, statusChart),
+                panel("Orders per service", "All order requests by printing service", ordersChart),
+                panel("Completed orders per service", "Completed transactions by printing service", completedChart),
+            ),
+            panel("Revenue by service", "Confirmed revenue (completed and fully paid)", revenueChart,
+                h("button", { className: "button button-small", type: "button", text: "Open reports", onclick: () => navigate("reports") })),
+            panel("Recent orders", "Newest requests · select a row for details", recentTable,
+                h("button", { className: "button button-small", type: "button", text: "All orders", onclick: () => navigate("orders") })),
+            panel("Recently completed transactions", "Select a row to view the transaction", completedTable),
+        );
+        refreshActiveView = renderDashboard;
     }
 
-    async function openOrder(orderId) {
-        const order = orderFor(orderId);
-        if (!order) return;
-        const customer = customerFor(order);
-        const content = await showDialog("dialog-sample-order");
-        if (!content) return;
-        content.querySelector("[data-sample-title]").textContent = `Order ${order.id}`;
-        const details = content.querySelector("[data-sample-details]");
-        [
-            ["Customer", customer?.name],
-            ["Email", customer?.email],
-            ["Phone", customer?.phone],
-            ["Requested date", dateLabel(order.date)],
-            ["Service / product", order.product],
-            ["Category", order.category],
-            ["Quantity", String(order.quantity)],
-            ["Agreed amount", order.agreedAmount ? money(order.agreedAmount) : "Quote not agreed"],
-            ["Payment received", money(paidFor(order.id))],
-            ["Balance", order.agreedAmount ? money(balanceFor(order)) : "Set agreed amount first"],
-        ].forEach(([label, value]) => appendDetailItem(details, label, value));
-        content.querySelector("[data-sample-specs]").textContent = order.specs;
-        const imagePanel = content.querySelector("[data-sample-image]");
-        imagePanel.hidden = !order.referenceImage;
-        if (order.referenceImage) {
-            const image = content.querySelector("[data-sample-image-source]");
-            image.src = order.referenceImage;
-            image.alt = `Sample artwork attached to ${order.id}`;
+    function shortBucket(key, group) {
+        const [year, month, day] = key.split("-").map(Number);
+        const value = new Date(Date.UTC(year, month - 1, day));
+        const options = { timeZone: "UTC" };
+        if (group === "day" || group === "week") return value.toLocaleDateString("en-PH", { ...options, month: "short", day: "numeric" });
+        if (group === "month") return value.toLocaleDateString("en-PH", { ...options, month: "short", year: "2-digit" });
+        return String(year);
+    }
+
+    // ================================================================ orders
+
+    function renderOrders() {
+        const body = viewBody();
+        if (!body) return;
+        const f = filters.orders;
+        const tabs = h("div", { className: "segmented", role: "tablist", "aria-label": "Order status groups" });
+        const countLabel = h("span", { className: "table-secondary" });
+        const tableHost = h("div");
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
+        const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
+        const paymentSelect = selectInput([["", "All payment statuses"], ...PAYMENT_STATUSES.map((status) => [status, status])], f.payment_status, (value) => apply({ payment_status: value }));
+        const fromInput = dateInput(f.date_from, (value) => apply({ date_from: value }));
+        const toInput = dateInput(f.date_to, (value) => apply({ date_to: value }));
+        const search = searchInput("Search order ID, customer, email, product…", f.search, (value) => apply({ search: value }));
+
+        function renderTabs(counts = {}) {
+            tabs.replaceChildren(...STATUS_GROUPS.map(([value, label, statuses]) => {
+                const count = statuses.reduce((sum, status) => sum + (counts[status] || 0), 0);
+                return h("button", {
+                    className: `segmented-button${f.status === value ? " active" : ""}`,
+                    type: "button",
+                    role: "tab",
+                    "aria-selected": String(f.status === value),
+                    onclick: () => { statusSelect.value = value; apply({ status: value }); },
+                }, label, h("span", { className: "segmented-count", text: number(count) }));
+            }));
         }
-        const form = content.querySelector('[data-form="order-update"]');
-        form.dataset.id = order.id;
-        const status = form.elements.status;
-        statusOptions.filter((item) => item !== "Approved for Printing")
-            .forEach((item) => status.add(new Option(item, item)));
-        status.value = order.status;
-        form.elements.amount.value = order.agreedAmount ?? "";
-        form.elements.remarks.value = order.remarks;
-        content.querySelectorAll("[data-sample-decision]").forEach((button) => {
-            button.dataset.id = order.id;
-            button.hidden = !["Pending Confirmation", "Under Review"].includes(order.status);
+
+        function apply(values) {
+            Object.assign(f, values);
+            renderTabs(lastCounts);
+            table.setQuery({ ...f });
+        }
+
+        let lastCounts = {};
+        const table = new UI.DataTable(tableHost, {
+            columns: [
+                { label: "Order ID", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "cell-pair" },
+                    h("span", { className: "table-primary", text: row.reference }),
+                    row.image_count ? h("span", { className: "table-chip", text: `🖼 ${row.image_count} image${row.image_count === 1 ? "" : "s"}` }) : null) },
+                { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
+                { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
+                { label: "Request date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
+                { label: "Total", sortKey: "total", align: "right", render: (row) => totalText(row) },
+                { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
+                { label: "Payment", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+                { label: "Status", sortKey: "status", render: (row) => badge(row.status) },
+            ],
+            defaultSort: { key: "request_date", dir: "desc" },
+            initialQuery: { ...f },
+            fetch: (params) => api(`/api/admin/orders${query(params)}`),
+            onLoad: (result) => {
+                lastCounts = result.status_counts || {};
+                renderTabs(lastCounts);
+                if (result.services?.length && serviceSelect.options.length <= 1) {
+                    rememberServices(result.services);
+                    serviceSelect.replaceChildren(...serviceOptions().map(([value, text]) => new Option(text, value)));
+                    serviceSelect.value = f.service;
+                }
+                countLabel.textContent = `${number(result.total)} order${result.total === 1 ? "" : "s"}`;
+            },
+            emptyMessage: "No customer orders have been submitted yet.",
+            onRowClick: (row) => openOrder(row.reference),
+            rowTitle: (row) => `Open order ${row.reference}`,
+            caption: "Orders",
         });
+        renderTabs();
+        const clear = h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
+            Object.assign(f, { search: "", status: "", service: "", payment_status: "", date_from: "", date_to: "" });
+            renderOrders();
+        } });
+        body.replaceChildren(
+            tabs,
+            h("div", { className: "filter-bar" },
+                search,
+                field("Service", serviceSelect),
+                field("Status", statusSelect),
+                field("Payment", paymentSelect),
+                field("Requested from", fromInput),
+                field("Requested to", toInput),
+                clear,
+            ),
+            panel(["Orders ", countLabel], "Select a row to review the order, its uploaded samples, and available actions.", tableHost,
+                UI.exportButtons("orders", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
+        );
+        table.load();
+        refreshActiveView = () => table.reload();
     }
 
-    async function openCustomer(customerId) {
-        const customer = customers.find((item) => item.id === customerId);
-        if (!customer) return;
-        const content = await showDialog("dialog-customer");
-        if (!content) return;
-        content.querySelector("[data-customer-title]").textContent = customer.name;
-        const details = content.querySelector("[data-customer-details]");
-        [
-            ["Customer ID", customer.id],
-            ["Email address", customer.email],
-            ["Contact number", customer.phone],
-            ["Joined", dateLabel(customer.joined)],
-        ].forEach(([label, value]) => appendDetailItem(details, label, value));
-        const tableBody = content.querySelector("[data-customer-history-rows]");
-        const rowTemplate = dialogTemplates.get("dialog-customer-order-row");
-        orders.filter((order) => order.customerId === customer.id).forEach((order) => {
-            const row = rowTemplate.firstElementChild.cloneNode(true);
-            row.querySelector('[data-field="order"]').textContent = order.id;
-            row.querySelector('[data-field="product"]').textContent = order.product;
-            row.querySelector('[data-field="date"]').textContent = dateLabel(order.date);
-            setStatusBadge(row.querySelector('[data-field="status"]'), order.status);
-            tableBody.append(row);
-        });
-        if (!tableBody.childElementCount) showTableEmpty(tableBody, 4, "No orders found for this customer.");
-    }
+    // ================================================================ order details modal
 
-    async function openPaymentForm() {
-        const eligible = orders.filter((order) => order.agreedAmount && balanceFor(order) > 0 && !["Rejected", "Cancelled"].includes(order.status));
-        if (!eligible.length) {
-            toast("No agreed orders with an outstanding balance are available.");
+    async function openOrder(reference, { back = null, focus = "" } = {}) {
+        const container = h("div", { className: "order-modal" }, loadingBlock("Loading order details…"));
+        UI.openModal(container, { wide: true, size: "xl" });
+        let order;
+        try {
+            order = await api(`/api/admin/orders/${encodeURIComponent(reference)}`);
+        } catch (error) {
+            container.replaceChildren(errorBlock(error.message, () => openOrder(reference, { back, focus })));
             return;
         }
-        const content = await showDialog("dialog-payment-form");
-        if (!content) return;
-        const select = content.querySelector("#payment-order");
-        eligible.forEach((order) => {
-            const customer = customerFor(order);
-            select.add(new Option(`${order.id} · ${customer?.name || ""} · balance ${money(balanceFor(order))}`, order.id));
-        });
-        content.querySelector("#payment-date").value = new Date().toISOString().slice(0, 10);
+        if (!dialog.open || !container.isConnected) return;
+        container.replaceChildren(...orderModalContent(order, { back, focus }));
+        if (focus) container.querySelector(`[data-focus="${focus}"]`)?.scrollIntoView({ block: "start" });
     }
 
-    function confirmAndUpdateStatus(order, status) {
-        if (!window.confirm(`Change ${order.id} from "${order.status}" to "${status}"? This is a temporary prototype update.`)) return;
-        order.status = status;
-        logActivity(`Order ${order.id} status changed to ${status}.`);
-        dialog.close();
-        renderView();
-        toast(`Order status updated to ${status}.`);
-    }
-
-    function exportCsv(filename, rows) {
-        const csv = rows.map((row) => row.map((cell) =>
-            `"${String(cell ?? "").replace(/"/g, "\"\"")}"`
-        ).join(",")).join("\r\n");
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
-        link.download = filename;
-        link.click();
-        URL.revokeObjectURL(link.href);
-    }
-
-    function preserveRender() {
-        const active = document.activeElement;
-        const id = active?.id;
-        const selectionStart = active?.selectionStart;
-        renderView();
-        if (id) {
-            const replacement = document.getElementById(id);
-            replacement?.focus();
-            if (Number.isInteger(selectionStart) && replacement?.setSelectionRange) {
-                replacement.setSelectionRange(selectionStart, selectionStart);
-            }
+    function orderImages(order) {
+        const images = [];
+        if (order.product?.image) {
+            images.push({ src: order.product.image, name: `${order.product.name} — catalog sample`, caption: "Product sample the customer selected from the catalog", kind: "Catalog sample" });
         }
-    }
-
-    async function readUploadAsDataUrl(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.addEventListener("load", () => resolve(reader.result));
-            reader.addEventListener("error", () => reject(new Error(`Could not read ${file.name}.`)));
-            reader.readAsDataURL(file);
+        order.attachments.filter((file) => file.mime_type.startsWith("image/")).forEach((file) => {
+            images.push({ src: file.url, name: file.name, caption: `${file.field_label || "Reference file"} · uploaded by the customer · ${UI.fileSize(file.size)}`, kind: file.field_label || "Customer upload" });
         });
+        if (order.draft_attachment?.mime_type?.startsWith("image/")) {
+            images.push({ src: order.draft_attachment.url, name: order.draft_attachment.name, caption: "Draft layout sent to the customer for approval", kind: "Draft layout" });
+        }
+        return images;
     }
 
-    async function saveLiveOrder(reference, action, payload) {
-        try {
-            const response = await fetch(`/api/admin/orders/${encodeURIComponent(reference)}/${action}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
+    function gallery(order) {
+        const images = orderImages(order);
+        const documents = order.attachments.filter((file) => !file.mime_type.startsWith("image/"));
+        if (order.draft_attachment && !order.draft_attachment.mime_type?.startsWith("image/")) documents.push({ ...order.draft_attachment, field_label: "Draft layout" });
+        const section = h("section", { className: "order-gallery", "aria-label": "Product samples and uploads" });
+        if (!images.length) {
+            section.append(h("div", { className: "gallery-empty" }, h("span", { "aria-hidden": "true", text: "🖼" }), h("p", { text: "No product sample or uploaded images for this order." })));
+        } else {
+            let current = 0;
+            const mainImage = h("img", { alt: "", decoding: "async" });
+            const kind = h("span", { className: "gallery-kind" });
+            const main = h("button", { className: "gallery-main", type: "button", title: "Open large preview with zoom and fullscreen" },
+                mainImage, kind, h("span", { className: "gallery-zoom-hint", "aria-hidden": "true", text: "🔍 Zoom · Fullscreen" }));
+            const name = h("p", { className: "gallery-name" });
+            const thumbs = h("div", { className: "gallery-thumbs" });
+            const select = (index) => {
+                current = index;
+                const image = images[index];
+                mainImage.src = image.src;
+                mainImage.alt = image.name;
+                kind.textContent = image.kind;
+                name.textContent = `${image.name} — ${image.caption}`;
+                main.setAttribute("aria-label", `Open ${image.name} in the large preview`);
+                thumbs.querySelectorAll("button").forEach((thumb, position) => thumb.classList.toggle("active", position === index));
+            };
+            mainImage.addEventListener("error", () => { kind.textContent = "Image unavailable"; });
+            images.forEach((image, index) => thumbs.append(h("button", {
+                className: "gallery-thumb", type: "button", "aria-label": `Show ${image.name}`, title: image.name, onclick: () => select(index),
+            }, h("img", { src: image.src, alt: "", loading: "lazy", decoding: "async" }))));
+            main.addEventListener("click", () => UI.openViewer(images, current));
+            section.append(main, name, images.length > 1 ? thumbs : null,
+                h("button", { className: "button button-small gallery-open", type: "button", text: `Open large preview (${images.length} image${images.length === 1 ? "" : "s"})`, onclick: () => UI.openViewer(images, current) }));
+            select(0);
+        }
+        if (documents.length) {
+            section.append(h("div", { className: "gallery-docs" }, h("strong", { text: "Other files" }),
+                h("ul", {}, ...documents.map((file) => h("li", {},
+                    h("a", { href: file.url, target: "_blank", rel: "noopener", text: `📄 ${file.name}` }),
+                    h("span", { className: "table-secondary", text: ` ${file.field_label || "Reference file"} · ${UI.fileSize(file.size || 0)}` }))))));
+        }
+        return section;
+    }
+
+    function detailList(items) {
+        return h("dl", { className: "detail-list" }, ...items.filter(Boolean).flatMap(([label, value]) => [
+            h("dt", { text: label }),
+            h("dd", {}, value instanceof Node ? value : (value === null || value === undefined || value === "" ? "—" : String(value))),
+        ]));
+    }
+
+    function specifications(order) {
+        const customization = order.customization || {};
+        if (Array.isArray(customization.specifications)) return customization.specifications.map((spec) => [spec.label, spec.value]);
+        return [["Size", customization.size], ["Material / variant", customization.material], ["Customization", customization.details]].filter(([, value]) => value);
+    }
+
+    function orderModalContent(order, { back, focus }) {
+        const summary = order.summary;
+        const reload = () => openOrder(order.reference, { back, focus });
+        const header = h("header", { className: "order-modal-header" },
+            back ? h("button", { className: "button button-small back-button", type: "button", text: "← Back", onclick: back }) : null,
+            h("div", {},
+                h("p", { className: "eyebrow", text: `${summary.service} · ${summary.product}` }),
+                h("h2", { className: "dialog-heading", text: `Order ${order.reference}` }),
+                h("div", { className: "badge-row" }, badge(order.status), badge(summary.payment_status), h("span", { className: "table-secondary", text: `Requested ${dateTime(order.created_at)}` })),
+            ),
+        );
+        const customerLink = order.customer_id
+            ? h("button", { className: "table-link", type: "button", text: "View customer profile →", onclick: () => openCustomer(order.customer_id, { back: () => openOrder(order.reference, { back }) }) })
+            : null;
+        const facts = h("div", { className: "order-facts" },
+            h("section", { className: "fact-card" }, h("h3", { text: "Customer" }), detailList([
+                ["Name", order.customer.name],
+                ["Email", h("a", { href: `mailto:${order.customer.email}`, text: order.customer.email })],
+                ["Contact number", order.customer.phone],
+                order.customer.messenger ? ["Messenger", order.customer.messenger] : null,
+            ]), customerLink),
+            h("section", { className: "fact-card" }, h("h3", { text: "Order" }), detailList([
+                ["Order ID", order.reference],
+                ["Service", summary.service],
+                ["Product", summary.product],
+                ["Quantity", number(order.customization?.quantity)],
+                ["Request date", dateTime(order.created_at)],
+                ["Completion date", summary.completed_at ? dateTime(summary.completed_at) : "Not completed"],
+                summary.completion_days !== null ? ["Completion duration", `${days(summary.completion_days)} (calendar)`] : null,
+            ])),
+            h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: "Payment" }), detailList([
+                ["Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
+                ["Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
+                ["Amount paid", money(summary.amount_paid)],
+                ["Balance", summary.balance === null ? "—" : money(summary.balance)],
+                ["Payment status", badge(summary.payment_status)],
+            ])),
+        );
+
+        const specs = specifications(order);
+        const details = h("div", { className: "order-detail-sections" },
+            specs.length ? h("section", { className: "fact-card" }, h("h3", { text: "Customer specifications" }), detailList(specs)) : null,
+            h("section", { className: "fact-card" }, h("h3", { text: "Special instructions" }),
+                h("p", { className: "prewrap", text: order.customization?.notes || order.customization?.instructions || "None provided." })),
+            order.has_event ? h("section", { className: "fact-card" }, h("h3", { text: "Event details" }), detailList([
+                ["Celebrant", order.event_details.celebrant],
+                ["Event type", order.event_details.event_type],
+                ["Event date", order.event_details.event_date ? date(order.event_details.event_date) : ""],
+                ["Event time", order.event_details.event_time],
+                ["Location", order.event_details.event_location],
+            ])) : null,
+            pricingCard(order.pricing),
+            order.admin_notes ? h("section", { className: "fact-card" }, h("h3", { text: "Latest note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
+        );
+
+        const payments = h("section", { className: "fact-card" }, h("h3", { text: `Payment history (${order.payments.length})` }),
+            order.payments.length ? h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
+                h("thead", {}, h("tr", {}, ...["Received", "Method", "Reference", "Amount"].map((text, index) => h("th", { scope: "col", className: index === 3 ? "align-right" : "", text })))),
+                h("tbody", {}, ...order.payments.map((payment) => h("tr", {},
+                    h("td", { text: dateTime(payment.received_at) }), h("td", { text: payment.method }),
+                    h("td", { text: payment.reference || "—" }), h("td", { className: "align-right", text: money(payment.amount) })))),
+            )) : h("p", { className: "field-note", text: "No payments recorded yet." }),
+            order.payment_instructions ? h("p", { className: "field-note" }, h("strong", { text: "Payment instructions shared: " }), order.payment_instructions) : null,
+        );
+
+        const history = h("section", { className: "fact-card" }, h("h3", { text: "Order activity" }),
+            h("ol", { className: "timeline" }, ...[...order.history].reverse().map((entry) => h("li", {},
+                h("span", { text: entry.text }), h("time", { text: dateTime(entry.at) })))));
+
+        return [
+            header,
+            h("div", { className: "order-top" }, gallery(order), h("div", { className: "order-top-side" }, facts, actionsPanel(order, reload))),
+            details,
+            payments,
+            history,
+        ];
+    }
+
+    function pricingCard(pricing) {
+        if (!pricing || !Object.keys(pricing).length) return null;
+        const items = pricing.requires_quote
+            ? (pricing.quote_reasons || []).map((reason) => h("li", { text: reason }))
+            : [
+                ...(pricing.lines || []).map((line) => h("li", { text: `${line.label}: ${money(line.amount)} (${line.detail})` })),
+                pricing.area_sqft ? h("li", { text: `Print area: ${pricing.area_sqft} sq ft per piece` }) : null,
+                h("li", { className: "strong", text: pricing.estimated_total === null ? "No total calculated." : `Estimated total: ${money(pricing.estimated_total)}` }),
+            ];
+        return h("section", { className: "fact-card" }, h("h3", { text: "Price estimate from catalog prices" }), h("ul", { className: "plain-list" }, ...items));
+    }
+
+    function actionsPanel(order, reload) {
+        const summary = order.summary;
+        const actions = order.actions;
+        const section = h("section", { className: "actions-card", dataset: { focus: "actions" } }, h("h3", { text: "Available actions" }));
+        const buttons = h("div", { className: "action-buttons" });
+
+        order.allowed_statuses.forEach((status) => {
+            const danger = status === "Rejected" || status === "Cancelled";
+            const blocked = (danger && actions.cancel_blocked_by_payments) || (status === "Completed" && actions.complete_requires_payment);
+            const button = h("button", {
+                className: `button ${danger ? "button-danger-strong" : "button-primary"}`,
+                type: "button",
+                text: ACTION_LABELS[status] || status,
+                disabled: blocked,
+                title: ACTION_HELP[status] || "",
             });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.detail || "The order update could not be saved.");
-            const index = liveOrders.findIndex((order) => order.reference === reference);
-            if (index >= 0) liveOrders[index] = result;
-            dialog.close();
-            renderView();
-            await openLiveOrder(reference);
-            toast("Order action recorded.");
-        } catch (error) {
-            toast(error instanceof Error ? error.message : "The order update could not be saved.");
+            button.addEventListener("click", async () => {
+                const answer = await UI.confirm({
+                    title: `${ACTION_LABELS[status] || status}?`,
+                    message: `${ACTION_HELP[status] || ""} Order ${order.reference} will move from “${order.status}” to “${status}”.`,
+                    confirmLabel: ACTION_LABELS[status] || "Confirm",
+                    tone: danger ? "danger" : "primary",
+                    input: danger ? { label: status === "Rejected" ? "Reason for rejection (recorded in the order history)" : "Reason (optional)", required: status === "Rejected", placeholder: "e.g. Artwork cannot be reproduced at this size" } : null,
+                    details: status === "Completed" ? [["Confirmed total", money(order.total_amount)], ["Amount paid", money(summary.amount_paid)], ["Completion date", "Today"]] : [],
+                });
+                if (!answer) return;
+                await submitAction(button, order, "status", { status, note: answer.value || "" }, reload, `Order marked as ${status}.`);
+            });
+            buttons.append(button);
+        });
+        if (buttons.childElementCount) section.append(buttons);
+        if (actions.complete_requires_payment) {
+            section.append(h("p", { className: "notice-card notice-warning", text: `Record the remaining balance of ${money(summary.balance)} before marking this order as completed. Only fully paid orders count as completed revenue.` }));
         }
+        if (actions.cancel_blocked_by_payments && order.allowed_statuses.some((status) => status === "Rejected" || status === "Cancelled")) {
+            section.append(h("p", { className: "field-note", text: "This order has recorded payments, so it cannot be rejected or cancelled from here." }));
+        }
+        if (order.status === "Awaiting Customer Approval") {
+            section.append(h("p", { className: "notice-card", text: "Waiting for the customer to approve the draft in their portal. The administrator cannot approve printing for the customer." }));
+        }
+        if (actions.quote) section.append(quoteForm(order, reload));
+        if (actions.record_payment) section.append(paymentForm(order, reload));
+        if (actions.send_draft) section.append(draftForm(order, reload));
+        if (section.childElementCount === 1) {
+            const final = { Completed: "This order is completed and fully paid. No further actions are needed.", Rejected: "This request was rejected.", Cancelled: "This order was cancelled." }[order.status];
+            section.append(h("p", { className: "field-note", text: final || "No administrator action is available at this stage." }));
+        }
+        return section;
     }
 
-    async function handleLiveAdminForm(form) {
-        if (!form.reportValidity()) return;
-        const reference = form.dataset.id;
-        const formData = new FormData(form);
-        const submitButton = form.querySelector('[type="submit"]');
-        submitButton.disabled = true;
-        try {
-            if (form.dataset.form === "live-quote") {
-                await saveLiveOrder(reference, "quotation", {
-                    total_amount: Number(formData.get("total_amount")),
-                    payment_instructions: String(formData.get("payment_instructions") || "").trim(),
+    async function submitAction(button, order, action, payload, reload, successMessage) {
+        await UI.busy(button, async () => {
+            try {
+                await api(`/api/admin/orders/${encodeURIComponent(order.reference)}/${action}`, {
+                    method: "POST",
+                    body: { ...payload, expected_version: order.version },
                 });
-            } else if (form.dataset.form === "live-payment") {
-                if (!formData.get("received") || !window.confirm("Record this amount as money the shop has actually received?")) return;
-                await saveLiveOrder(reference, "payments", {
-                    amount: Number(formData.get("amount")),
-                    method: String(formData.get("method")),
-                    reference: String(formData.get("reference") || "").trim(),
-                    received: true,
-                });
-            } else if (form.dataset.form === "live-draft") {
-                const file = form.querySelector('input[name="file"]').files[0];
-                const acceptedTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
-                if (!file || !acceptedTypes.has(file.type) || !/\.(jpe?g|png|pdf)$/i.test(file.name)) {
-                    toast("Choose a JPG, PNG, or PDF draft file.");
-                    return;
-                }
-                if (file.size > 5 * 1024 * 1024) {
-                    toast("Draft files must be no larger than 5 MB.");
-                    return;
-                }
-                const dataUrl = await readUploadAsDataUrl(file);
-                await saveLiveOrder(reference, "draft", { file: { name: file.name, dataUrl } });
+                toast(successMessage, "success");
+                await reload();
+                refreshActiveView();
+                refreshBadges();
+            } catch (error) {
+                toast(error.message, "error");
+                if (error.status === 409) await reload();
             }
-        } catch (error) {
-            toast(error instanceof Error ? error.message : "The order action could not be recorded.");
-        } finally {
-            submitButton.disabled = false;
-        }
+        });
     }
 
-    function handleFormSubmit(event) {
-        const form = event.target.closest("form[data-form]");
-        if (!form) return;
-        event.preventDefault();
-        const formData = new FormData(form);
-        const type = form.dataset.form;
-        if (type.startsWith("live-")) {
-            void handleLiveAdminForm(form);
+    function quoteForm(order, reload) {
+        const estimate = order.summary.estimated_total;
+        const amount = h("input", { id: "quote-amount", name: "total_amount", type: "number", min: "0.01", step: "0.01", required: true, value: order.total_amount ?? estimate ?? "" });
+        const instructions = h("textarea", { id: "quote-instructions", name: "payment_instructions", maxlength: 1000, placeholder: "The shop's approved payment instructions (GCash number, bank details, etc.)" });
+        instructions.value = order.payment_instructions || "";
+        const submit = h("button", { className: "button button-primary", type: "submit", text: "Send quotation" });
+        const form = h("form", { className: "action-form" },
+            h("h4", { text: "Confirm quotation" }),
+            h("p", { className: "field-note", text: estimate === null ? "No catalog estimate: enter a custom quotation." : `Prefilled with the catalog estimate of ${money(estimate)}. Adjust it if needed.` }),
+            h("div", { className: "form-grid" },
+                h("div", { className: "form-field" }, h("label", { for: "quote-amount", text: "Total order amount (PHP)" }), amount),
+                h("div", { className: "form-field full" }, h("label", { for: "quote-instructions", text: "Payment instructions" }), instructions)),
+            h("div", { className: "dialog-actions" }, submit),
+        );
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            if (!form.reportValidity()) return;
+            const total = Number(amount.value);
+            const answer = await UI.confirm({ title: "Send this quotation?", message: "The customer sees the quotation and payment instructions in their portal. The order moves to Awaiting Down Payment.", confirmLabel: "Send quotation", details: [["Total amount", money(total)]] });
+            if (!answer) return;
+            await submitAction(submit, order, "quotation", { total_amount: total, payment_instructions: instructions.value.trim() }, reload, "Quotation saved and shared with the customer.");
+        });
+        return form;
+    }
+
+    function paymentForm(order, reload) {
+        const summary = order.summary;
+        const amount = h("input", { id: "payment-amount", type: "number", min: "0.01", step: "0.01", max: String(summary.balance), required: true });
+        const method = selectInput(["GCash", "Maya", "Bank transfer", "Cash", "Other"].map((value) => [value, value]), "GCash", () => {});
+        method.id = "payment-method";
+        const reference = h("input", { id: "payment-reference", maxlength: 120, placeholder: "Receipt or transaction number" });
+        const received = h("input", { id: "payment-received", type: "checkbox", required: true });
+        const submit = h("button", { className: "button button-primary", type: "submit", text: "Confirm payment" });
+        const down = order.total_amount * 0.5;
+        const fill = (value) => h("button", { className: "button button-small", type: "button", text: value === summary.balance ? `Full balance ${money(value)}` : `50% down ${money(value)}`, onclick: () => { amount.value = value.toFixed(2); } });
+        const form = h("form", { className: "action-form", dataset: { focus: "payment" } },
+            h("h4", { text: "Confirm a received payment" }),
+            h("p", { className: "field-note", text: `Confirmed total ${money(order.total_amount)} · Paid ${money(summary.amount_paid)} · Balance ${money(summary.balance)}. Record only money the shop has actually received.` }),
+            h("div", { className: "quick-fill" }, summary.amount_paid < down - 0.005 && down < summary.balance ? fill(Math.round((down - summary.amount_paid) * 100) / 100) : null, fill(summary.balance)),
+            h("div", { className: "form-grid" },
+                h("div", { className: "form-field" }, h("label", { for: "payment-amount", text: "Amount received (PHP)" }), amount),
+                h("div", { className: "form-field" }, h("label", { for: "payment-method", text: "Payment method" }), method),
+                h("div", { className: "form-field full" }, h("label", { for: "payment-reference", text: "Payment reference (optional)" }), reference),
+                h("label", { className: "check-field full", for: "payment-received" }, received, " I confirm this payment has actually been received.")),
+            h("div", { className: "dialog-actions" }, submit),
+        );
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            if (!form.reportValidity()) return;
+            const value = Number(amount.value);
+            const remaining = Math.round((summary.balance - value) * 100) / 100;
+            const answer = await UI.confirm({
+                title: "Record this payment?",
+                message: "Payments cannot be edited after they are saved.",
+                confirmLabel: "Record payment",
+                details: [["Amount", money(value)], ["Method", method.value], ["Balance after payment", money(Math.max(0, remaining))]],
+            });
+            if (!answer) return;
+            await submitAction(submit, order, "payments", { amount: value, method: method.value, reference: reference.value.trim(), received: true }, reload,
+                remaining <= 0 ? "Payment recorded. The order is now fully paid." : "Payment recorded.");
+        });
+        return form;
+    }
+
+    function draftForm(order, reload) {
+        const file = h("input", { id: "draft-file", type: "file", accept: ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf", required: true });
+        const submit = h("button", { className: "button button-primary", type: "submit", text: order.draft_attachment ? "Replace draft" : "Send draft for approval" });
+        const form = h("form", { className: "action-form" },
+            h("h4", { text: order.draft_attachment ? "Send a revised draft" : "Send a draft layout for customer approval" }),
+            h("p", { className: "field-note", text: "The draft appears in the customer's My Orders page. Printing starts only after the customer approves it." }),
+            h("div", { className: "form-field" }, h("label", { for: "draft-file", text: "Draft file (JPG, PNG, WebP, or PDF · max 5 MB)" }), file),
+            h("div", { className: "dialog-actions" }, submit),
+        );
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const chosen = file.files?.[0];
+            if (!chosen || !/\.(jpe?g|png|webp|pdf)$/i.test(chosen.name)) {
+                toast("Choose a JPG, PNG, WebP, or PDF draft file.", "error");
+                return;
+            }
+            if (chosen.size > 5 * 1024 * 1024) {
+                toast("Draft files must be no larger than 5 MB.", "error");
+                return;
+            }
+            const answer = await UI.confirm({ title: "Send this draft to the customer?", message: `${chosen.name} will be shared for approval.`, confirmLabel: "Send draft" });
+            if (!answer) return;
+            const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.addEventListener("load", () => resolve(reader.result));
+                reader.addEventListener("error", () => reject(new Error(`Could not read ${chosen.name}.`)));
+                reader.readAsDataURL(chosen);
+            });
+            await submitAction(submit, order, "draft", { file: { name: chosen.name, dataUrl } }, reload, "Draft sent for customer approval.");
+        });
+        return form;
+    }
+
+    // ================================================================ customers
+
+    const CUSTOMER_ACTIVITY = [
+        ["", "Any order activity"],
+        ["with_orders", "Has orders"],
+        ["no_orders", "No orders yet"],
+        ["with_pending", "Has pending orders"],
+        ["with_completed", "Has completed orders"],
+        ["repeat", "Repeat customers (2+ orders)"],
+        ["with_spend", "Has confirmed spending"],
+        ["no_spend", "No confirmed spending"],
+    ];
+
+    function renderCustomers() {
+        const body = viewBody();
+        if (!body) return;
+        const f = filters.customers;
+        const tableHost = h("div");
+        const countLabel = h("span", { className: "table-secondary" });
+        const summaryLine = h("p", { className: "field-note" });
+        const table = new UI.DataTable(tableHost, {
+            columns: [
+                { label: "Customer ID", render: (row) => h("span", { className: "mono", text: row.display_id }) },
+                { label: "Customer name", sortKey: "name", render: (row) => cellPair(row.name, row.last_order_date ? `Last order ${date(row.last_order_date)}` : "No orders yet") },
+                { label: "Email address", sortKey: "email", render: (row) => row.email },
+                { label: "Contact number", render: (row) => row.phone || "—" },
+                { label: "Registered", sortKey: "registered", type: "date", render: (row) => date(row.registered_date) },
+                { label: "Total orders", sortKey: "orders", align: "right", render: (row) => number(row.total_orders) },
+                { label: "Completed", sortKey: "completed", align: "right", render: (row) => number(row.completed_orders) },
+                { label: "Pending", sortKey: "pending", align: "right", render: (row) => number(row.pending_orders) },
+                { label: "Amount spent", sortKey: "spent", align: "right", render: (row) => h("strong", { text: money(row.total_spent) }) },
+            ],
+            defaultSort: { key: "registered", dir: "desc" },
+            initialQuery: { ...f },
+            fetch: (params) => api(`/api/admin/customers${query(params)}`),
+            onLoad: (result) => {
+                countLabel.textContent = `${number(result.total)} customer${result.total === 1 ? "" : "s"}`;
+                summaryLine.textContent = `${number(result.summary.with_orders)} with orders · ${money(result.summary.total_spent)} total spent by these customers (completed and fully paid orders only).`;
+            },
+            emptyMessage: "No customer accounts have been registered yet.",
+            onRowClick: (row) => openCustomer(row.id),
+            rowTitle: (row) => `Open ${row.name}'s profile`,
+        });
+        const apply = (values) => {
+            Object.assign(f, values);
+            table.setQuery({ ...f });
+        };
+        body.replaceChildren(
+            h("div", { className: "filter-bar" },
+                searchInput("Search name, email, phone, or customer ID…", f.search, (value) => apply({ search: value })),
+                field("Order activity", selectInput(CUSTOMER_ACTIVITY, f.activity, (value) => apply({ activity: value }))),
+                field("Registered from", dateInput(f.registered_from, (value) => apply({ registered_from: value }))),
+                field("Registered to", dateInput(f.registered_to, (value) => apply({ registered_to: value }))),
+                field("Ordered from", dateInput(f.ordered_from, (value) => apply({ ordered_from: value }))),
+                field("Ordered to", dateInput(f.ordered_to, (value) => apply({ ordered_to: value }))),
+                h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
+                    Object.keys(f).forEach((key) => { f[key] = ""; });
+                    renderCustomers();
+                } }),
+            ),
+            panel(["Customers ", countLabel], "Amount spent counts only completed and fully paid orders. Select a row for the full history.", h("div", {}, summaryLine, tableHost),
+                UI.exportButtons("customers", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
+        );
+        table.load();
+        refreshActiveView = () => table.reload();
+    }
+
+    async function openCustomer(customerId, { back = null } = {}) {
+        const container = h("div", { className: "customer-modal" }, loadingBlock("Loading customer…"));
+        UI.openModal(container, { wide: true, size: "xl" });
+        let data;
+        try {
+            data = await api(`/api/admin/customers/${encodeURIComponent(customerId)}`);
+        } catch (error) {
+            container.replaceChildren(errorBlock(error.message, () => openCustomer(customerId, { back })));
             return;
         }
-
-        if (type === "order-update") {
-            const order = orderFor(form.dataset.id);
-            if (!order) return;
-            const nextStatus = String(formData.get("status"));
-            const amountValue = String(formData.get("amount") || "").trim();
-            const newAmount = amountValue ? Number(amountValue) : null;
-            if (nextStatus === "Approved for Printing") {
-                toast("Only the customer can approve a submitted draft. Use a submitted customer request for the live workflow.");
-                return;
-            }
-            if (nextStatus === "In Production" && order.status !== "In Production") {
-                toast("A sample order cannot enter production without a recorded customer draft approval. Use a submitted customer request for the live workflow.");
-                return;
-            }
-            if (newAmount !== null && (!Number.isFinite(newAmount) || newAmount < 0)) {
-                toast("Enter a valid agreed amount.");
-                return;
-            }
-            if (newAmount !== null && newAmount < paidFor(order.id)) {
-                toast("Agreed amount cannot be less than payments already recorded.");
-                return;
-            }
-            const statusChanged = nextStatus !== order.status;
-            if (statusChanged && !window.confirm(`Save changes and update status to "${nextStatus}"?`)) return;
-            order.status = nextStatus;
-            order.agreedAmount = newAmount;
-            order.remarks = String(formData.get("remarks") || "").trim();
-            logActivity(`Order ${order.id} details updated${statusChanged ? `; status set to ${nextStatus}` : ""}.`);
-            dialog.close();
-            renderView();
-            toast("Order details updated for this demo session.");
-        }
-
-        if (type === "payment-save") {
-            const order = orderFor(String(formData.get("orderId")));
-            const amount = Number(formData.get("amount"));
-            if (!order || !Number.isFinite(amount) || amount <= 0) {
-                toast("Select an order and enter a valid received amount.");
-                return;
-            }
-            if (amount > balanceFor(order)) {
-                toast(`Amount exceeds the remaining balance of ${money(balanceFor(order))}.`);
-                return;
-            }
-            if (!window.confirm(`Record ${money(amount)} as received for ${order.id}? Only confirm money actually received.`)) return;
-            payments.unshift({
-                id: `TX-${Date.now().toString().slice(-6)}`,
-                orderId: order.id,
-                date: String(formData.get("date")),
-                amount,
-                method: String(formData.get("method")),
-                reference: String(formData.get("reference")).trim(),
-                remarks: String(formData.get("remarks") || "").trim()
-            });
-            logActivity(`Payment of ${money(amount)} recorded for ${order.id}.`);
-            dialog.close();
-            renderView();
-            toast("Payment recorded in demo data.");
-        }
+        if (!container.isConnected) return;
+        const customer = data.customer;
+        const self = () => openCustomer(customerId, { back });
+        const ordersHost = h("div");
+        const paymentsHost = h("div");
+        const servicesHost = h("div");
+        new UI.DataTable(ordersHost, {
+            columns: [
+                { label: "Order ID", sortKey: "reference", render: (row) => row.reference },
+                { label: "Service / product", sortKey: "service", value: (row) => row.service, render: (row) => cellPair(row.product, row.service) },
+                { label: "Requested", sortKey: "created_at", type: "date", render: (row) => date(row.request_date) },
+                { label: "Total", sortKey: "total_amount", align: "right", render: (row) => totalText(row) },
+                { label: "Paid", sortKey: "amount_paid", align: "right", render: (row) => money(row.amount_paid) },
+                { label: "Payment", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+                { label: "Status", sortKey: "status", render: (row) => badge(row.status) },
+            ],
+            rows: () => [...data.orders],
+            defaultSort: { key: "created_at", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "This customer has not placed any orders.",
+            onRowClick: (row) => openOrder(row.reference, { back: self }),
+        }).load();
+        new UI.DataTable(paymentsHost, {
+            columns: [
+                { label: "Received", sortKey: "received_at", type: "date", render: (row) => dateTime(row.received_at) },
+                { label: "Order ID", sortKey: "reference", render: (row) => cellPair(row.reference, row.product) },
+                { label: "Method", sortKey: "method", render: (row) => row.method },
+                { label: "Reference", render: (row) => row.payment_reference || "—" },
+                { label: "Amount", sortKey: "amount", align: "right", render: (row) => money(row.amount) },
+            ],
+            rows: () => [...data.payments],
+            defaultSort: { key: "received_at", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "No payments recorded for this customer.",
+            onRowClick: (row) => openOrder(row.reference, { back: self, focus: "payments" }),
+        }).load();
+        new UI.DataTable(servicesHost, {
+            columns: [
+                { label: "Service", sortKey: "service", render: (row) => row.service },
+                { label: "Orders", sortKey: "orders", align: "right", render: (row) => number(row.orders) },
+                { label: "Completed", sortKey: "completed", align: "right", render: (row) => number(row.completed) },
+                { label: "Amount spent", sortKey: "spent", align: "right", render: (row) => money(row.spent) },
+                { label: "Last order", sortKey: "last_order_date", type: "date", render: (row) => date(row.last_order_date) },
+            ],
+            rows: () => [...data.service_history],
+            defaultSort: { key: "orders", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "No service history yet.",
+        }).load();
+        const tabs = tabSet([
+            ["orders", `Order history (${data.orders.length})`, ordersHost],
+            ["payments", `Payment history (${data.payments.length})`, paymentsHost],
+            ["services", `Service history (${data.service_history.length})`, servicesHost],
+        ]);
+        container.replaceChildren(
+            h("header", { className: "order-modal-header" },
+                back ? h("button", { className: "button button-small back-button", type: "button", text: "← Back", onclick: back }) : null,
+                h("div", {},
+                    h("p", { className: "eyebrow", text: `Customer ${customer.display_id}` }),
+                    h("h2", { className: "dialog-heading", text: customer.name }),
+                    h("p", { className: "table-secondary", text: `Registered ${dateTime(customer.created_at)}` })),
+                h("div", { className: "header-actions" }, UI.exportButtons("customer", () => ({ customer_id: customer.id }), { label: "Report" })),
+            ),
+            h("div", { className: "mini-stats" },
+                miniStat("Total orders", number(customer.total_orders)),
+                miniStat("Completed", number(customer.completed_orders)),
+                miniStat("Pending", number(customer.pending_orders)),
+                miniStat("Cancelled", number(customer.cancelled_orders)),
+                miniStat("Amount spent", money(customer.total_spent), "Completed and fully paid orders"),
+                miniStat("Total payments received", money(customer.total_paid), "Includes payments on open orders"),
+            ),
+            h("section", { className: "fact-card" }, h("h3", { text: "Customer information" }), detailList([
+                ["Customer ID", customer.display_id],
+                ["Name", customer.name],
+                ["Email address", h("a", { href: `mailto:${customer.email}`, text: customer.email })],
+                ["Contact number", customer.phone],
+                customer.messenger ? ["Messenger", customer.messenger] : null,
+                ["Registration date", date(customer.registered_date)],
+                ["Last order", customer.last_order_date ? date(customer.last_order_date) : "No orders yet"],
+            ])),
+            tabs,
+        );
     }
+
+    function miniStat(label, value, note = "") {
+        return h("div", { className: "mini-stat", title: note || null }, h("span", { text: label }), h("strong", { text: value }), note ? h("small", { text: note }) : null);
+    }
+
+    function tabSet(entries, active = entries[0][0], onChange = null) {
+        const list = h("div", { className: "tab-list", role: "tablist" });
+        const panels = h("div", { className: "tab-panels" });
+        const select = (key) => {
+            list.querySelectorAll("button").forEach((button) => {
+                const on = button.dataset.tab === key;
+                button.classList.toggle("active", on);
+                button.setAttribute("aria-selected", String(on));
+                button.tabIndex = on ? 0 : -1;
+            });
+            panels.querySelectorAll("[role=tabpanel]").forEach((element) => { element.hidden = element.dataset.tab !== key; });
+            onChange?.(key);
+        };
+        entries.forEach(([key, label, content]) => {
+            const id = `tab-${key}-${Math.random().toString(36).slice(2, 7)}`;
+            list.append(h("button", { className: "tab-button", type: "button", role: "tab", id, dataset: { tab: key }, onclick: () => select(key) }, label));
+            panels.append(h("div", { role: "tabpanel", "aria-labelledby": id, dataset: { tab: key } }, content));
+        });
+        list.addEventListener("keydown", (event) => {
+            if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+            const buttons = [...list.querySelectorAll("button")];
+            const index = buttons.indexOf(document.activeElement);
+            const next = buttons[(index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length];
+            next.focus();
+            next.click();
+        });
+        select(active);
+        return h("div", { className: "tabs" }, list, panels);
+    }
+
+    // ================================================================ payments
+
+    function renderPayments() {
+        const body = viewBody();
+        if (!body) return;
+        const f = filters.payments;
+        const cards = h("section", { className: "stats-grid", "aria-label": "Payment summary" }, loadingBlock());
+        const tableHost = h("div");
+        const countLabel = h("span", { className: "table-secondary" });
+        const methodSelect = selectInput([["", "All methods"]], f.method, (value) => apply({ method: value }));
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
+        let balances = [];
+        const table = new UI.DataTable(tableHost, {
+            columns: [
+                { label: "Date received", sortKey: "received", type: "date", render: (row) => dateTime(row.received_at) },
+                { label: "Order ID", sortKey: "reference", className: "ref-cell", render: (row) => cellPair(row.reference, `Payment #${row.payment_number}`) },
+                { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
+                { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
+                { label: "Method", sortKey: "method", render: (row) => row.method },
+                { label: "Reference", render: (row) => row.payment_reference || "—" },
+                { label: "Amount", sortKey: "amount", align: "right", render: (row) => h("strong", { text: money(row.amount) }) },
+                { label: "Order payment", sortKey: "payment_status", render: (row) => badge(row.order_payment_status) },
+            ],
+            defaultSort: { key: "received", dir: "desc" },
+            initialQuery: { ...f },
+            fetch: (params) => api(`/api/admin/payments${query(params)}`),
+            onLoad: (result) => {
+                const s = result.summary;
+                balances = s.orders_with_balance;
+                cards.replaceChildren(
+                    statCard({ label: "Total payments received", value: money(s.total_received), foot: "All recorded payments", icon: "₱" }),
+                    statCard({ label: "Outstanding balance", value: money(s.outstanding_balance), foot: `${s.orders_with_balance.length} active order${s.orders_with_balance.length === 1 ? "" : "s"} with a balance`, icon: "◷" }),
+                    statCard({ label: "Fully paid orders", value: number(s.fully_paid_orders), foot: "Payments cover the confirmed total", icon: "✓" }),
+                    statCard({ label: "Awaiting quotation", value: number(s.awaiting_quotation), foot: "No confirmed total yet", icon: "⌕" }),
+                );
+                countLabel.textContent = `${number(s.filtered_count)} payment${s.filtered_count === 1 ? "" : "s"} · ${money(s.filtered_amount)}`;
+                if (methodSelect.options.length <= 1 && result.methods.length) {
+                    result.methods.forEach((method) => methodSelect.add(new Option(method, method)));
+                    methodSelect.value = f.method;
+                }
+                if (result.services?.length && serviceSelect.options.length <= 1) {
+                    rememberServices(result.services);
+                    serviceSelect.replaceChildren(...serviceOptions().map(([value, text]) => new Option(text, value)));
+                    serviceSelect.value = f.service;
+                }
+            },
+            emptyMessage: "No payments have been recorded yet.",
+            onRowClick: (row) => openOrder(row.reference, { focus: "payments" }),
+            rowTitle: (row) => `View transaction details for ${row.reference}`,
+        });
+        const apply = (values) => {
+            Object.assign(f, values);
+            table.setQuery({ ...f });
+        };
+        const recordButton = h("button", { className: "button button-primary", type: "button", text: "＋ Record a payment", onclick: () => openBalancePicker(balances) });
+        body.replaceChildren(
+            h("div", { className: "page-actions-row" }, recordButton),
+            cards,
+            h("div", { className: "filter-bar" },
+                searchInput("Search order ID, customer, payment reference…", f.search, (value) => apply({ search: value })),
+                field("Method", methodSelect),
+                field("Service", serviceSelect),
+                field("Order payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.slice(0, 3).map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
+                field("Received from", dateInput(f.date_from, (value) => apply({ date_from: value }))),
+                field("Received to", dateInput(f.date_to, (value) => apply({ date_to: value }))),
+                h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
+                    Object.keys(f).forEach((key) => { f[key] = ""; });
+                    renderPayments();
+                } }),
+            ),
+            panel(["Payment transactions ", countLabel], "Payments are recorded from an order's details. Select a row to view the transaction and its order.", tableHost,
+                UI.exportButtons("payments", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
+        );
+        table.load();
+        refreshActiveView = () => table.reload();
+    }
+
+    function openBalancePicker(rows) {
+        const host = h("div");
+        UI.openModal(h("div", {},
+            h("h2", { className: "dialog-heading", text: "Record a payment" }),
+            h("p", { className: "dialog-subtitle", text: "Choose the order the payment is for. Its details open with the payment form." }),
+            host,
+        ), { wide: true });
+        new UI.DataTable(host, {
+            columns: [
+                { label: "Order ID", sortKey: "reference", render: (row) => row.reference },
+                { label: "Customer", sortKey: "customer_name", render: (row) => cellPair(row.customer_name, row.product) },
+                { label: "Status", sortKey: "status", render: (row) => badge(row.status) },
+                { label: "Balance", sortKey: "balance", align: "right", render: (row) => h("strong", { text: money(row.balance) }) },
+            ],
+            rows: () => [...rows],
+            defaultSort: { key: "balance", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "No quoted orders have an outstanding balance.",
+            onRowClick: (row) => openOrder(row.reference, { focus: "payment", back: () => openBalancePicker(rows) }),
+        }).load();
+    }
+
+    // ================================================================ reports
+
+    function renderReports() {
+        const body = viewBody();
+        if (!body) return;
+        const requested = new URLSearchParams(window.location.search).get("tab");
+        if (requested && ["summary", "completed", "services"].includes(requested)) filters.reports.tab = requested;
+        const summaryHost = h("div");
+        const completedHost = h("div");
+        const servicesHost = h("div");
+        const rendered = new Set();
+        const show = (key) => {
+            filters.reports.tab = key;
+            if (rendered.has(key)) return;
+            rendered.add(key);
+            ({ summary: renderSummaryTab, completed: renderCompletedTab, services: renderServiceTab })[key](
+                { summary: summaryHost, completed: completedHost, services: servicesHost }[key],
+            );
+        };
+        body.replaceChildren(tabSet([
+            ["summary", "Business summary & revenue", summaryHost],
+            ["completed", "Completed transactions", completedHost],
+            ["services", "Service reports", servicesHost],
+        ], filters.reports.tab, show));
+        refreshActiveView = () => {
+            rendered.clear();
+            renderReports();
+        };
+    }
+
+    function renderSummaryTab(host) {
+        const f = filters.reports.summary;
+        const content = h("div", {}, loadingBlock("Calculating…"));
+        const fromInput = dateInput(f.date_from, (value) => { f.date_from = value; if (f.date_to) load(); });
+        const toInput = dateInput(f.date_to, (value) => { f.date_to = value; if (f.date_from) load(); });
+        const customFields = h("div", { className: "filter-inline" }, field("From", fromInput), field("To", toInput));
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => { f.service = value; load(); });
+        const presetSelect = selectInput([
+            ["all", "All time"], ["today", "Today"], ["week", "This week"], ["month", "This month"], ["year", "This year"], ["custom", "Custom date range"],
+        ], f.preset, (value) => {
+            f.preset = value;
+            f.group_by = "";
+            groupSelect.value = "";
+            customFields.hidden = value !== "custom";
+            if (value !== "custom" || (f.date_from && f.date_to)) load();
+        });
+        const groupSelect = selectInput([["", "Automatic"], ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["year", "Yearly"]], f.group_by, (value) => { f.group_by = value; load(); });
+        customFields.hidden = f.preset !== "custom";
+        const params = () => ({ ...f });
+        host.replaceChildren(
+            h("div", { className: "filter-bar report-filters" },
+                field("Report period", presetSelect), customFields,
+                field("Revenue grouping", groupSelect),
+                field("Service", serviceSelect),
+                h("div", { className: "export-group" },
+                    h("span", { className: "export-label", text: "Business summary" }), UI.exportButtons("summary", params, { label: "" })),
+                h("div", { className: "export-group" },
+                    h("span", { className: "export-label", text: "Revenue report" }), UI.exportButtons("revenue", params, { label: "" })),
+            ),
+            content,
+        );
+        host.querySelectorAll(".export-buttons button").forEach((button) => { button.textContent = button.textContent.trim(); });
+
+        let requestId = 0;
+        async function load() {
+            const id = ++requestId;
+            content.classList.add("is-refreshing");
+            if (!content.childElementCount) content.append(loadingBlock("Calculating…"));
+            let data;
+            try {
+                data = await api(`/api/admin/reports/summary${query(params())}`);
+            } catch (error) {
+                if (id === requestId) content.replaceChildren(errorBlock(error.message, load));
+                return;
+            } finally {
+                if (id === requestId) content.classList.remove("is-refreshing");
+            }
+            if (id !== requestId) return;
+            rememberServices(data.services);
+            if (serviceSelect.options.length <= 1) {
+                serviceSelect.replaceChildren(...serviceOptions().map(([value, text]) => new Option(text, value)));
+                serviceSelect.value = f.service;
+            }
+            groupSelect.value = f.group_by;
+            content.replaceChildren(...summaryContent(data));
+        }
+        load();
+    }
+
+    function summaryContent(data) {
+        const t = data.totals;
+        const group = data.period.group_by;
+        const groupName = { day: "Daily", week: "Weekly", month: "Monthly", year: "Yearly" }[group];
+        const cards = h("section", { className: "stats-grid stats-grid-8" },
+            statCard({ label: "Total customers", value: number(t.total_customers), foot: `${number(t.new_customers)} registered in this period`, icon: "👥" }),
+            statCard({ label: "Total orders", value: number(t.total_orders), foot: "Requested in this period", icon: "▤" }),
+            statCard({ label: "Completed orders", value: number(t.completed_orders), foot: "Completed in this period", icon: "✓" }),
+            statCard({ label: "Pending orders", value: number(t.pending_orders), foot: `${number(t.processing_orders)} more in progress`, icon: "◷" }),
+            statCard({ label: "Cancelled orders", value: number(t.cancelled_orders), foot: "Cancelled or rejected", icon: "✕" }),
+            statCard({ label: "Fully paid orders", value: number(t.fully_paid_orders), foot: "Requested in this period", icon: "₱" }),
+            statCard({ label: "Total confirmed revenue", value: money(t.confirmed_revenue), foot: "Completed and fully paid", icon: "₱", tone: "highlight" }),
+            statCard({ label: "Avg. completion time", value: t.average_completion_days === null ? "—" : days(t.average_completion_days), foot: "Calendar days, request to completion", icon: "⏱" }),
+        );
+        const trendChart = h("div", { className: "chart-box" });
+        UI.columnChart(trendChart, data.trend.map((bucket) => ({
+            label: bucket.label, short: shortBucket(bucket.key, group), value: bucket.revenue, completed: bucket.completed_orders,
+        })), {
+            format: money, axisFormat: UI.compactMoney, emptyMessage: "No confirmed revenue in this period.",
+            detail: (point) => `${point.completed} completed order${point.completed === 1 ? "" : "s"}`,
+        });
+        const revenueChart = h("div", { className: "chart-box" });
+        UI.barChart(revenueChart, data.by_service.map((item) => ({ label: item.service, value: item.revenue, share: item.revenue_share })), {
+            format: money, emptyMessage: "No confirmed revenue in this period.", detail: (item) => `${item.share}% of revenue`,
+        });
+        const completedChart = h("div", { className: "chart-box" });
+        UI.barChart(completedChart, data.by_service.map((item) => ({ label: item.service, value: item.completed_orders })), { emptyMessage: "No orders were completed in this period." });
+
+        const comparisonHost = h("div");
+        new UI.DataTable(comparisonHost, {
+            columns: [
+                { label: "Service", sortKey: "service", render: (row) => h("strong", { text: row.service }) },
+                { label: "Orders requested", sortKey: "total_orders", align: "right", render: (row) => number(row.total_orders) },
+                { label: "Completed", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
+                { label: "Completed & fully paid", sortKey: "fully_paid_completed", align: "right", render: (row) => number(row.fully_paid_completed) },
+                { label: "Confirmed revenue", sortKey: "revenue", align: "right", render: (row) => h("strong", { text: money(row.revenue) }) },
+                { label: "Share", sortKey: "revenue_share", align: "right", render: (row) => `${row.revenue_share.toFixed(1)}%` },
+                { label: "Avg. completion", sortKey: "average_completion_days", align: "right", render: (row) => days(row.average_completion_days) },
+            ],
+            rows: () => [...data.by_service],
+            defaultSort: { key: "revenue", dir: "desc" },
+            pageSize: 25,
+            emptyMessage: "No services in the catalog.",
+            onRowClick: (row) => {
+                filters.reports.service.service = row.service_id;
+                filters.reports.tab = "services";
+                renderReports();
+            },
+            rowTitle: (row) => `Open the ${row.service} service report`,
+        }).load();
+        const trendHost = h("div");
+        new UI.DataTable(trendHost, {
+            columns: [
+                { label: "Period", sortKey: "key", render: (row) => row.label },
+                { label: "Completed orders", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
+                { label: "Completed & fully paid", sortKey: "fully_paid_completed", align: "right", render: (row) => number(row.fully_paid_completed) },
+                { label: "Confirmed revenue", sortKey: "revenue", align: "right", render: (row) => money(row.revenue) },
+            ],
+            rows: () => [...data.trend],
+            defaultSort: { key: "key", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "No periods to show.",
+        }).load();
+        const transactionsHost = h("div");
+        new UI.DataTable(transactionsHost, {
+            columns: [
+                { label: "Completed", sortKey: "completed_at", type: "date", render: (row) => date(row.completion_date) },
+                { label: "Transaction ID", sortKey: "reference", className: "ref-cell", render: (row) => row.reference },
+                { label: "Customer", sortKey: "customer_name", render: (row) => row.customer_name },
+                { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
+                { label: "Revenue", sortKey: "confirmed_revenue", align: "right", render: (row) => money(row.confirmed_revenue) },
+            ],
+            rows: () => [...data.revenue_transactions],
+            defaultSort: { key: "completed_at", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "No completed and fully paid transactions in this period.",
+            onRowClick: (row) => openOrder(row.reference),
+        }).load();
+
+        return [
+            h("p", { className: "report-period-note" }, h("strong", { text: data.period.label }),
+                data.service ? ` · ${data.service.label}` : " · All services",
+                " · Orders are counted by request date; completed orders and revenue by completion date. Revenue includes only completed and fully paid orders, each counted once."),
+            cards,
+            h("div", { className: "dashboard-grid" },
+                panel(`Revenue trend (${groupName.toLowerCase()})`, data.period.label, trendChart),
+                panel("Revenue per service", "Confirmed revenue in this period", revenueChart),
+                panel("Completed orders per service", "Orders completed in this period", completedChart),
+                panel(`Revenue by period (${groupName.toLowerCase()})`, "Table view of the revenue trend", trendHost),
+            ),
+            panel("Service performance comparison", "Select a service to open its report", comparisonHost),
+            panel("Revenue transactions", "Completed and fully paid orders in this period · select a row for details", transactionsHost),
+        ];
+    }
+
+    function completedColumns() {
+        return [
+            { label: "Transaction ID", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "table-primary", text: row.reference }) },
+            { label: "Customer", sortKey: "customer", render: (row) => row.customer_name },
+            { label: "Service", sortKey: "service", render: (row) => row.service },
+            { label: "Product / description", sortKey: "description", className: "wrap-cell", render: (row) => row.description },
+            { label: "Total amount", sortKey: "total", align: "right", render: (row) => money(row.total_amount) },
+            { label: "Amount paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
+            { label: "Request date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
+            { label: "Completion date", sortKey: "completion_date", type: "date", render: (row) => date(row.completion_date) },
+            { label: "Duration", sortKey: "days", align: "right", render: (row) => days(row.completion_days) },
+            { label: "Payment status", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+        ];
+    }
+
+    function completedSummaryCards(host, s) {
+        host.replaceChildren(
+            statCard({ label: "Completed transactions", value: number(s.completed_orders), foot: `${number(s.fully_paid_orders)} fully paid`, icon: "✓" }),
+            statCard({ label: "Total order amount", value: money(s.total_order_amount), foot: `Paid ${money(s.total_amount_paid)}`, icon: "▤" }),
+            statCard({ label: "Confirmed revenue", value: money(s.confirmed_revenue), foot: "Completed and fully paid only", icon: "₱", tone: "highlight" }),
+            statCard({ label: "Avg. completion time", value: s.average_completion_days === null ? "—" : days(s.average_completion_days), foot: s.fastest_completion_days === null ? "Calendar days" : `Fastest ${days(s.fastest_completion_days)} · slowest ${days(s.slowest_completion_days)}`, icon: "⏱" }),
+        );
+    }
+
+    function renderCompletedTab(host) {
+        const f = filters.reports.completed;
+        const cards = h("section", { className: "stats-grid" }, loadingBlock());
+        const tableHost = h("div");
+        const countLabel = h("span", { className: "table-secondary" });
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
+        const table = new UI.DataTable(tableHost, {
+            columns: completedColumns(),
+            defaultSort: { key: "completion_date", dir: "desc" },
+            initialQuery: { ...f },
+            fetch: (params) => api(`/api/admin/reports/completed${query(params)}`),
+            onLoad: (result) => {
+                completedSummaryCards(cards, result.summary);
+                countLabel.textContent = `${number(result.total)} transaction${result.total === 1 ? "" : "s"}`;
+                if (result.services?.length && serviceSelect.options.length <= 1) {
+                    rememberServices(result.services);
+                    serviceSelect.replaceChildren(...serviceOptions().map(([value, text]) => new Option(text, value)));
+                    serviceSelect.value = f.service;
+                }
+            },
+            className: "report-table",
+            emptyMessage: "No orders have been completed yet.",
+            onRowClick: (row) => openOrder(row.reference),
+            rowTitle: (row) => `Open transaction ${row.reference}`,
+        });
+        const apply = (values) => {
+            Object.assign(f, values);
+            table.setQuery({ ...f });
+        };
+        host.replaceChildren(
+            h("div", { className: "filter-bar report-filters" },
+                field("Service", serviceSelect),
+                field("Customer", (() => { const input = h("input", { type: "search", placeholder: "Name or email", value: f.customer }); input.addEventListener("input", UI.debounce(() => apply({ customer: input.value.trim() }), 300)); return input; })()),
+                field("Payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.slice(0, 3).map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
+                field("Requested from", dateInput(f.request_from, (value) => apply({ request_from: value }))),
+                field("Requested to", dateInput(f.request_to, (value) => apply({ request_to: value }))),
+                field("Completed from", dateInput(f.completed_from, (value) => apply({ completed_from: value }))),
+                field("Completed to", dateInput(f.completed_to, (value) => apply({ completed_to: value }))),
+                field("Min. days", numberInput(f.min_days, (value) => apply({ min_days: value }), "0"), "narrow"),
+                field("Max. days", numberInput(f.max_days, (value) => apply({ max_days: value }), "Any"), "narrow"),
+                h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
+                    Object.keys(f).forEach((key) => { f[key] = ""; });
+                    renderCompletedTab(host);
+                } }),
+            ),
+            cards,
+            panel(["Completed transactions ", countLabel], "Duration = completion date − request date, in calendar days (weekends included). Select a row for the full transaction.", tableHost,
+                UI.exportButtons("completed", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
+        );
+        table.load();
+    }
+
+    function renderServiceTab(host) {
+        const f = filters.reports.service;
+        const cardsHost = h("div", { className: "service-cards" }, loadingBlock());
+        const detailHost = h("div");
+        let table = null;
+        const dateParams = () => ({ completed_from: f.completed_from, completed_to: f.completed_to, request_from: f.request_from, request_to: f.request_to });
+        async function loadCards() {
+            let data;
+            try {
+                data = await api(`/api/admin/reports/services${query(dateParams())}`);
+            } catch (error) {
+                cardsHost.replaceChildren(errorBlock(error.message, loadCards));
+                return;
+            }
+            rememberServices(data.services);
+            if (!f.service && data.summaries.length) f.service = data.summaries[0].service_id;
+            cardsHost.replaceChildren(...data.summaries.map((item) => h("button", {
+                className: `service-card${item.service_id === f.service ? " active" : ""}`,
+                type: "button",
+                "aria-pressed": String(item.service_id === f.service),
+                onclick: () => { f.service = item.service_id; loadCards(); },
+            },
+            h("strong", { text: item.service }),
+            h("span", { className: "service-card-revenue", text: money(item.confirmed_revenue) }),
+            h("span", { className: "table-secondary", text: `${number(item.completed_orders)} completed · ${number(item.fully_paid_orders)} fully paid` }),
+            h("span", { className: "table-secondary", text: `Avg. ${days(item.average_completion_days)}` }))));
+            renderDetail(data.summaries.find((item) => item.service_id === f.service));
+        }
+        function renderDetail(summary) {
+            if (!summary) {
+                detailHost.replaceChildren(h("p", { className: "empty-state", text: "Select a service to see its report." }));
+                return;
+            }
+            const cards = h("section", { className: "stats-grid" });
+            const tableHost = h("div");
+            cards.append(
+                statCard({ label: "Total completed orders", value: number(summary.completed_orders), foot: `${number(summary.total_orders)} orders in total for this service`, icon: "✓" }),
+                statCard({ label: "Total fully paid orders", value: number(summary.fully_paid_orders), foot: "Among completed orders", icon: "₱" }),
+                statCard({ label: "Total revenue", value: money(summary.confirmed_revenue), foot: "Completed and fully paid", icon: "₱", tone: "highlight" }),
+                statCard({ label: "Avg. completion duration", value: days(summary.average_completion_days), foot: "Calendar days", icon: "⏱" }),
+            );
+            table = new UI.DataTable(tableHost, {
+                columns: completedColumns().filter((column) => column.sortKey !== "service"),
+                defaultSort: { key: "completion_date", dir: "desc" },
+                initialQuery: { ...dateParams(), service: summary.service_id },
+                fetch: (params) => api(`/api/admin/reports/services${query(params)}`),
+                className: "report-table",
+                emptyMessage: `No completed ${summary.service} transactions yet.`,
+                filteredEmptyMessage: `No completed ${summary.service} transactions in the selected dates.`,
+                onRowClick: (row) => openOrder(row.reference),
+            });
+            detailHost.replaceChildren(
+                h("h2", { className: "section-title", text: `${summary.service} report` }),
+                cards,
+                panel(`${summary.service} — completed transactions`, "Only transactions for this service are listed.", tableHost,
+                    UI.exportButtons("service", () => ({ ...dateParams(), service: summary.service_id, sort: table.sort.key, dir: table.sort.dir }))),
+            );
+            table.load();
+        }
+        const apply = (values) => {
+            Object.assign(f, values);
+            loadCards();
+        };
+        host.replaceChildren(
+            h("div", { className: "filter-bar report-filters" },
+                field("Completed from", dateInput(f.completed_from, (value) => apply({ completed_from: value }))),
+                field("Completed to", dateInput(f.completed_to, (value) => apply({ completed_to: value }))),
+                field("Requested from", dateInput(f.request_from, (value) => apply({ request_from: value }))),
+                field("Requested to", dateInput(f.request_to, (value) => apply({ request_to: value }))),
+                h("div", { className: "export-group" }, h("span", { className: "export-label", text: "All services (one sheet each)" }),
+                    UI.exportButtons("service", () => ({ ...dateParams(), service: "all" }), { label: "" })),
+            ),
+            h("p", { className: "field-note", text: "Select a service. Each report lists only that service's completed transactions." }),
+            cardsHost,
+            detailHost,
+        );
+        host.querySelectorAll(".export-buttons button").forEach((button) => { button.textContent = button.textContent.trim(); });
+        loadCards();
+    }
+
+    // ================================================================ notifications
+
+    function renderNotifications() {
+        const body = viewBody();
+        if (!body) return;
+        const f = filters.notifications;
+        const list = h("section", { className: "notification-list", "aria-label": "Activity notifications" }, loadingBlock());
+        const description = viewRoot.querySelector("[data-notifications-description]");
+        const seenAt = localStorage.getItem(NOTIFICATION_SEEN_KEY) || "";
+        const chips = h("div", { className: "segmented" }, ...[["", "All activity"], ["customer", "Customer activity"], ["admin", "Admin actions"]].map(([value, label]) => h("button", {
+            className: `segmented-button${f.actor === value ? " active" : ""}`, type: "button", onclick: () => { f.actor = value; f.limit = 30; renderNotifications(); },
+        }, label)));
+        const more = h("button", { className: "button", type: "button", text: "Show more", hidden: true, onclick: () => { f.limit += 30; load(); } });
+        const markAll = h("button", { className: "button", type: "button", text: "Mark all as read", onclick: () => {
+            localStorage.setItem(NOTIFICATION_SEEN_KEY, new Date().toISOString().replace(/\.\d+Z$/, "+00:00"));
+            list.querySelectorAll(".notification-item.unread").forEach((item) => item.classList.remove("unread"));
+            refreshBadges();
+            toast("All notifications marked as read.", "success");
+        } });
+        body.replaceChildren(h("div", { className: "notifications-toolbar" }, chips, markAll), list, h("div", { className: "center-row" }, more));
+        async function load() {
+            let data;
+            try {
+                data = await api(`/api/admin/activity${query({ actor: f.actor, limit: f.limit })}`);
+            } catch (error) {
+                list.replaceChildren(errorBlock(error.message, load));
+                return;
+            }
+            const unread = data.events.filter((event) => event.actor === "customer" && (event.at || "") > seenAt).length;
+            if (description) description.textContent = `${number(data.total)} events from real orders and registrations · ${number(unread)} new customer update${unread === 1 ? "" : "s"} since you last marked them read.`;
+            if (!data.events.length) {
+                list.replaceChildren(h("p", { className: "empty-state", text: "No activity yet." }));
+            } else {
+                list.replaceChildren(...data.events.map((event) => {
+                    const symbol = event.kind === "customer" ? "♙" : event.title.includes("Payment") ? "₱" : event.actor === "customer" ? "✉" : "▤";
+                    const item = h("button", {
+                        className: `notification-item${event.actor === "customer" && (event.at || "") > seenAt ? " unread" : ""}`,
+                        type: "button",
+                        onclick: () => (event.reference ? openOrder(event.reference) : event.customer_id ? openCustomer(event.customer_id) : null),
+                    },
+                    h("span", { className: "notification-symbol", "aria-hidden": "true", text: symbol }),
+                    h("div", {},
+                        h("h2", { text: event.title }),
+                        h("p", { text: event.body }),
+                        h("p", { className: "table-secondary", text: [event.reference, event.customer_name].filter(Boolean).join(" · ") })),
+                    h("time", { datetime: event.at, title: dateTime(event.at), text: UI.relativeTime(event.at) }));
+                    return item;
+                }));
+            }
+            more.hidden = data.events.length >= data.total;
+        }
+        load();
+        refreshActiveView = load;
+    }
+
+    // ================================================================ settings
+
+    function renderSettings() {
+        const body = viewBody();
+        if (!body) return;
+        const compact = localStorage.getItem(COMPACT_KEY) === "true";
+        const toggle = h("button", { className: "settings-toggle", type: "button", "aria-pressed": String(compact), "aria-label": "Compact tables" });
+        toggle.addEventListener("click", () => {
+            const next = toggle.getAttribute("aria-pressed") !== "true";
+            toggle.setAttribute("aria-pressed", String(next));
+            localStorage.setItem(COMPACT_KEY, String(next));
+            document.body.classList.toggle("compact-tables", next);
+            toast(next ? "Compact tables turned on." : "Compact tables turned off.", "success");
+        });
+        const activity = h("div", { className: "activity-list" }, loadingBlock());
+        body.replaceChildren(
+            h("section", { className: "split-grid" },
+                panel("Administrator account", "Signed-in administrator", h("div", { className: "settings-list" },
+                    h("div", { className: "settings-row" }, h("div", {}, h("strong", { text: "Email" }), h("p", { "data-admin-email": "", text: adminEmail || "Loading…" }))),
+                    h("div", { className: "settings-row" }, h("div", {}, h("strong", { text: "Session" }), h("p", { text: "Sessions end after 12 hours or when you sign out." })),
+                        h("button", { className: "button button-danger-strong", type: "button", dataset: { action: "logout" }, text: "Sign out" })),
+                )),
+                panel("Display preferences", "Saved in this browser", h("div", { className: "settings-list" },
+                    h("div", { className: "settings-row" }, h("div", {}, h("strong", { text: "Compact tables" }), h("p", { text: "Use tighter row spacing in management tables." })), toggle),
+                )),
+            ),
+            panel("How figures are calculated", "Rules used by the dashboard, reports, customer totals, and exports", h("ul", { className: "rules-list" },
+                h("li", { text: "Confirmed revenue includes only orders that are Completed and fully paid. Each order counts once, for its confirmed total, on the date it was completed." }),
+                h("li", { text: "Pending payments, partially paid, unpaid, cancelled, and rejected orders are never counted as revenue." }),
+                h("li", { text: "A customer's amount spent uses the same rule, so customer totals add up to revenue." }),
+                h("li", { text: "Completion duration = completion date − request date, in calendar days (weekends included), using the stored timestamps on Philippine time." }),
+                h("li", { text: "An order can be marked Completed only after its full amount is recorded as paid." }),
+            )),
+            panel("Recent administrator activity", "Actions recorded in order histories", activity),
+        );
+        api(`/api/admin/activity${query({ actor: "admin", limit: 15 })}`).then((data) => {
+            activity.replaceChildren(...(data.events.length ? data.events.map((event) => h("div", { className: "activity-item" },
+                h("span", { className: "activity-point" }),
+                h("div", {}, h("p", { text: `${event.reference}: ${event.body}` }), h("time", { text: dateTime(event.at) })))) : [h("p", { className: "empty-state", text: "No administrator actions recorded yet." })]));
+        }).catch((error) => activity.replaceChildren(errorBlock(error.message)));
+    }
+
+    // ================================================================ global events
 
     document.addEventListener("click", async (event) => {
         const viewLink = event.target.closest("[data-view]");
@@ -1134,7 +1551,6 @@
         }
         const action = event.target.closest("[data-action]");
         if (!action) return;
-        const id = action.dataset.id;
         switch (action.dataset.action) {
             case "menu": {
                 const sidebar = document.querySelector("#admin-sidebar");
@@ -1144,178 +1560,56 @@
                 action.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
                 break;
             }
-            case "dismiss-banner":
-                bannerDismissed = true;
-                action.closest(".prototype-banner").remove();
-                break;
-            case "logout":
-                if (window.confirm("Sign out of the admin dashboard?")) {
-                    try {
-                        const response = await fetch("/api/admin/session", { method: "DELETE" });
-                        if (!response.ok) throw new Error("The administrator session could not be cleared.");
-                    } catch (error) {
-                        toast(error instanceof Error ? error.message : "The administrator session could not be cleared.");
-                        return;
-                    }
-                    window.location.assign("/admin/login");
+            case "logout": {
+                const answer = await UI.confirm({ title: "Sign out?", message: "You will need to sign in again to use the admin dashboard.", confirmLabel: "Sign out" });
+                if (!answer) return;
+                try {
+                    const response = await fetch("/api/admin/session", { method: "DELETE", credentials: "same-origin" });
+                    if (!response.ok) throw new Error("The administrator session could not be cleared.");
+                } catch (error) {
+                    toast(error.message, "error");
+                    return;
                 }
+                window.location.assign("/admin/login");
                 break;
+            }
             case "close-dialog":
-                dialog.close();
+                UI.closeModal();
                 break;
-            case "order-detail":
-                await openOrder(id);
-                break;
-            case "live-order-detail":
-                await openLiveOrder(id);
-                break;
-            case "refresh-live-orders":
-                liveOrdersLoaded = false;
-                liveOrdersError = "";
+            case "refresh-view":
                 renderView();
-                void refreshLiveOrders();
+                refreshBadges();
+                toast("Figures refreshed from the database.", "success");
                 break;
-            case "live-status": {
-                const order = liveOrderFor(id);
-                const status = action.dataset.status;
-                if (order && window.confirm(`Record ${status} for ${id}?`)) {
-                    void saveLiveOrder(id, "status", { status });
-                }
-                break;
-            }
-            case "customer-detail":
-                await openCustomer(id);
-                break;
-            case "accept-order": {
-                const order = orderFor(id);
-                if (order) confirmAndUpdateStatus(order, "Under Review");
-                break;
-            }
-            case "reject-order": {
-                const order = orderFor(id);
-                if (order) confirmAndUpdateStatus(order, "Rejected");
-                break;
-            }
-            case "record-payment":
-                await openPaymentForm();
-                break;
-            case "mark-all-read":
-                notifications.forEach((notification) => { notification.read = true; });
-                renderView();
-                toast("All sample notifications marked as read.");
-                break;
-            case "toggle-setting":
-                action.setAttribute("aria-pressed", String(action.getAttribute("aria-pressed") !== "true"));
-                toast("Preference changed for this session.");
-                break;
-            case "clear-report-filters":
-                filters.reports = { from: "", to: "", category: "", period: "" };
-                renderView();
-                break;
-            case "print-report":
-                window.print();
-                break;
-            case "export-orders":
-                exportCsv("impressions-demo-orders.csv", [
-                    ["Order number", "Customer", "Email", "Product", "Category", "Date", "Agreed amount", "Status"],
-                    ...orders.map((order) => [order.id, customerFor(order)?.name, customerFor(order)?.email, order.product, order.category, order.date, order.agreedAmount ?? "Quote", order.status])
-                ]);
-                break;
-            case "export-report": {
-                const reportRecords = payments.filter((payment) => {
-                    const order = orderFor(payment.orderId);
-                    const filter = filters.reports;
-                    return (!filter.from || payment.date >= filter.from) && (!filter.to || payment.date <= filter.to) && (!filter.category || order?.category === filter.category);
-                });
-                exportCsv("impressions-demo-payments-report.csv", [
-                    ["Date", "Transaction", "Order", "Category", "Product", "Payment received PHP"],
-                    ...reportRecords.map((payment) => {
-                        const order = orderFor(payment.orderId);
-                        return [payment.date, payment.id, payment.orderId, order?.category, order?.product, payment.amount];
-                    })
-                ]);
-                break;
-            }
             default:
                 break;
         }
     });
 
-    document.addEventListener("submit", handleFormSubmit);
-    document.addEventListener("input", (event) => {
-        const target = event.target;
-        if (target.id === "order-search") filters.orders.search = target.value;
-        else if (target.id === "customer-search") filters.customers.search = target.value;
-        else if (target.id === "service-search") filters.services.search = target.value;
-        else if (target.id === "payment-search") filters.payments.search = target.value;
-        else return;
-        window.clearTimeout(filterTimer);
-        filterTimer = window.setTimeout(preserveRender, 100);
-    });
-
-    document.addEventListener("change", (event) => {
-        const target = event.target;
-        if (target.id === "order-category-filter") {
-            filters.orders.category = target.value;
-            renderView();
-        } else if (target.id === "order-status-filter") {
-            filters.orders.status = target.value;
-            renderView();
-        } else if (target.id === "order-date-from") {
-            filters.orders.from = target.value;
-            renderView();
-        } else if (target.id === "order-date-to") {
-            filters.orders.to = target.value;
-            renderView();
-        } else if (target.id === "service-category-filter") {
-            filters.services.category = target.value;
-            renderView();
-        } else if (target.id === "report-from") {
-            filters.reports.from = target.value;
-            filters.reports.period = "";
-            renderView();
-        } else if (target.id === "report-to") {
-            filters.reports.to = target.value;
-            filters.reports.period = "";
-            renderView();
-        } else if (target.id === "report-category") {
-            filters.reports.category = target.value;
-            renderView();
-        } else if (target.id === "report-period") {
-            const today = new Date();
-            const start = new Date(today);
-            if (target.value === "day") {
-                start.setHours(0, 0, 0, 0);
-            } else if (target.value === "week") {
-                start.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-                start.setHours(0, 0, 0, 0);
-            } else if (target.value === "month") {
-                start.setDate(1);
-                start.setHours(0, 0, 0, 0);
-            } else if (target.value === "year") {
-                start.setMonth(0, 1);
-                start.setHours(0, 0, 0, 0);
-            }
-            filters.reports.period = target.value;
-            filters.reports.from = target.value ? localDate(start) : "";
-            filters.reports.to = target.value ? localDate(today) : "";
-            renderView();
-        } else if (target.id === "payment-order") {
-            const form = target.closest("form");
-            const order = orderFor(target.value);
-            const amount = form?.querySelector("#payment-amount");
-            if (order && amount) amount.max = String(balanceFor(order));
-        }
-    });
-
     document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") document.querySelector("#admin-sidebar").classList.remove("open");
+        if (event.key === "Escape") document.querySelector("#admin-sidebar")?.classList.remove("open");
     });
-    window.addEventListener("popstate", () => {
-        void navigate(viewFromLocation(), false);
+    dialog.addEventListener("close", () => {
+        dialog.classList.remove("admin-dialog-wide", "admin-dialog-xl");
+        document.querySelector("#dialog-content").replaceChildren();
     });
+    // Clicking the dimmed backdrop closes the details modal.
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) UI.closeModal();
+    });
+    window.addEventListener("popstate", () => navigate(viewFromLocation(), false));
+
+    document.body.classList.toggle("compact-tables", localStorage.getItem(COMPACT_KEY) === "true");
+    document.querySelector("#today-date").textContent = new Date().toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", timeZone: "Asia/Manila" });
     activeView = document.body.dataset.adminView || viewFromLocation();
-    updateViewStylesheet();
     renderView();
-    void refreshLiveOrders();
+    refreshBadges();
+    window.setInterval(refreshBadges, 60000);
+
+    // Deep links: /admin/orders?order=IPS-11-08-26 or /admin/customers?customer=<id>
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("order")) openOrder(params.get("order"));
+    else if (params.get("customer")) openCustomer(params.get("customer"));
+
+    window.PrintShopAdmin = { openOrder, openCustomer, navigate };
 })();

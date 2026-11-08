@@ -1,117 +1,78 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#f6f3ed">
-    <title>Admin Settings — imPRESSions Print Works</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" href="data:,">
+    <title>Settings — ImPRESSion PrintShop Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Loaded without blocking the first paint; system fonts are used until it arrives (or if offline). -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="/assets/admin/dashboard.css">
+    <link rel="stylesheet" href="/assets/admin/admin-ui.css">
 </head>
-
 <body class="admin-page" data-admin-view="settings">
+    <a class="skip-link" href="#view-root">Skip to content</a>
     <div class="admin-shell">
         <aside class="sidebar" id="admin-sidebar">
-            <a class="admin-brand" href="/admin/dashboard"><span
-                    class="admin-brand-mark">iP</span><span><strong>imPRESSions</strong><small>PRINT WORKS ·
-                        ADMIN</small></span></a>
+            <a class="admin-brand" href="/admin/dashboard" data-view="dashboard" aria-label="ImPRESSion PrintShop admin dashboard">
+                <span class="admin-brand-mark">iP</span>
+                <span><strong>ImPRESSion</strong><small>PRINTSHOP · ADMIN</small></span>
+            </a>
             <div class="sidebar-label">WORKSPACE</div>
             <nav class="sidebar-nav" aria-label="Admin navigation">
-                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon">⌂</span>Dashboard</a>
-                <a href="/admin/orders" data-view="orders"><span class="nav-icon">▤</span>Order Management<span
-                        class="nav-count" id="pending-count"></span></a>
-                <a href="/admin/customers" data-view="customers"><span class="nav-icon">♙</span>Customer Management</a>
-                <a href="/admin/services" data-view="services"><span class="nav-icon">▧</span>Services &amp;
-                    Products</a>
-                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon">₱</span>Pricing Management</a>
-                <a href="/admin/payments" data-view="payments"><span class="nav-icon">▣</span>Payments &amp;
-                    Transactions</a>
-                <a href="/admin/reports" data-view="reports"><span class="nav-icon">▥</span>Sales &amp; Reports</a>
-                <a href="/admin/notifications" data-view="notifications"><span
-                        class="nav-icon">♧</span>Notifications<span class="nav-count"
-                        id="notification-count"></span></a>
+                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true">⌂</span>Dashboard</a>
+                <a href="/admin/orders" data-view="orders"><span class="nav-icon" aria-hidden="true">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true">♙</span>Customer Management</a>
+                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true">▣</span>Payments &amp; Transactions</a>
+                <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true">▥</span>Sales &amp; Reports</a>
+                <a href="/admin/services" data-view="services"><span class="nav-icon" aria-hidden="true">▧</span>Services &amp; Products</a>
+                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon" aria-hidden="true">₱</span>Pricing Management</a>
+                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
             </nav>
             <div class="sidebar-bottom">
-                <a href="/admin/settings" data-view="settings"><span class="nav-icon">⚙</span>Settings</a>
-                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon">↪</span>Log
-                    out</button>
-                <div class="sidebar-user"><span class="avatar">A</span><span><strong>Shop
-                            Admin</strong><small>Administrator</small></span><span class="online-dot"></span></div>
+                <a href="/admin/settings" data-view="settings" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</a>
+                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon" aria-hidden="true">↪</span>Log out</button>
+                <div class="sidebar-user">
+                    <span class="avatar" aria-hidden="true">A</span>
+                    <span><strong>Administrator</strong><small data-admin-email></small></span>
+                </div>
             </div>
         </aside>
         <div class="workspace">
-            <header class="topbar"><button class="mobile-menu-button" type="button" aria-label="Open navigation"
-                    aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button>
-                <div class="breadcrumb"><span>Admin</span><span>/</span><strong id="current-section">Settings</strong>
-                </div>
-                <div class="topbar-actions"><span class="demo-pill"><span></span> DEMO DATA</span><button
-                        class="icon-button" type="button" aria-label="Open notifications"
-                        data-view="notifications">♧<span class="notification-dot"></span></button>
+            <header class="topbar">
+                <button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button>
+                <div class="breadcrumb"><span>Admin</span><span aria-hidden="true">/</span><strong id="current-section">Settings</strong></div>
+                <div class="topbar-actions">
+                    <button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot" hidden></span></button>
                     <div class="topbar-date" id="today-date"></div>
                 </div>
             </header>
             <main class="main-content">
-                <div class="prototype-banner"><span class="banner-icon">i</span>
-                    <p><strong>Prototype mode</strong> — Preferences are temporary and are not saved to a server.</p>
-                    <button type="button" class="banner-dismiss" aria-label="Dismiss prototype notice"
-                        data-action="dismiss-banner">×</button>
-                </div>
                 <div id="view-root" tabindex="-1">
                     <header class="page-heading">
                         <div>
                             <h1>Settings</h1>
-                            <p>Prototype preferences are held only in this page session and are not saved to a server.</p>
+                            <p>Administrator account, display preferences, and how report figures are calculated.</p>
                         </div>
                     </header>
-                    <section class="split-grid">
-                        <article class="panel">
-                            <div class="panel-heading"><div><h2>Admin preferences</h2><p>Visual and notification preferences for this mockup</p></div></div>
-                            <div class="settings-list">
-                                <div class="settings-row">
-                                    <div><strong>New request notifications</strong><p>Show a notice when a sample request arrives.</p></div>
-                                    <button class="settings-toggle" type="button" id="setting-new-orders" aria-label="New request notifications" aria-pressed="true" data-action="toggle-setting"></button>
-                                </div>
-                                <div class="settings-row">
-                                    <div><strong>Payment notifications</strong><p>Show a notice when a payment is recorded.</p></div>
-                                    <button class="settings-toggle" type="button" id="setting-payments" aria-label="Payment notifications" aria-pressed="true" data-action="toggle-setting"></button>
-                                </div>
-                                <div class="settings-row">
-                                    <div><strong>Compact tables</strong><p>Use tighter spacing in management tables.</p></div>
-                                    <button class="settings-toggle" type="button" id="setting-compact" aria-label="Compact tables" aria-pressed="false" data-action="toggle-setting"></button>
-                                </div>
-                            </div>
-                        </article>
-                        <article class="panel">
-                            <div class="panel-heading"><div><h2>Prototype information</h2><p>Current development scope</p></div></div>
-                            <div class="notice-card"><strong>Live order workflow.</strong> Submitted customer orders, attachments, quotations, received payment entries, and status history are stored in SQLite. Remaining dashboard sample records and catalog edits are illustrative and are not business data.</div>
-                            <div class="settings-logout"><button class="button button-danger" type="button" data-action="logout">End demo session</button></div>
-                        </article>
-                    </section>
-                    <section class="panel settings-activity">
-                        <div class="panel-heading"><div><h2>Activity log</h2><p>Changes made during this prototype session</p></div></div>
-                        <div class="activity-list" data-settings-activity>
-                            <p class="empty-state">Loading activity…</p>
-                        </div>
-                    </section>
-                    <template id="activity-row-template">
-                        <div class="activity-item">
-                            <span class="activity-point"></span>
-                            <div><p data-field="text"></p><time data-field="time"></time></div>
-                        </div>
-                    </template>
+                    <div data-view-body><div class="loading-block" role="status"><span class="spinner" aria-hidden="true"></span> Loading…</div></div>
                 </div>
             </main>
         </div>
     </div>
-    <dialog class="admin-dialog" id="admin-dialog">
-        <div class="dialog-frame"><button type="button" class="dialog-close" aria-label="Close dialog"
-                data-action="close-dialog">×</button>
+    <dialog class="admin-dialog" id="admin-dialog" aria-label="Details">
+        <div class="dialog-frame">
+            <button type="button" class="dialog-close" aria-label="Close" data-action="close-dialog">×</button>
             <div id="dialog-content"></div>
         </div>
     </dialog>
-    <div class="toast-region" id="toast-region" role="status" aria-live="polite"></div>
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+    <script src="/assets/admin/admin-core.js"></script>
     <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>
-
 </html>

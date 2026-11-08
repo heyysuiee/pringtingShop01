@@ -45,11 +45,8 @@
     }
 
     function toast(message) {
-        const region = document.querySelector("#toast-region");
-        if (!region) return;
-        const element = h("div", { className: "toast", text: message });
-        region.append(element);
-        window.setTimeout(() => element.remove(), 3600);
+        const failed = /could not|must|invalid|choose|add at least|every option|add a category/i.test(message);
+        window.AdminUI?.toast(message, failed ? "error" : "success");
     }
 
     async function api(method, url, body) {
@@ -115,8 +112,8 @@
     }
 
     function rerenderActiveView() {
-        if (document.querySelector("[data-catalog-services]")) renderServices(lastServiceFilter);
-        if (document.querySelector("[data-catalog-pricing]")) renderPricing();
+        if (document.querySelector("[data-service-table]")) renderServices();
+        if (document.querySelector("[data-pricing-table]")) renderPricing();
     }
 
     function emptyRow(tbody, columns, message) {
@@ -129,71 +126,103 @@
 
     function thumb(product) {
         return product.image
-            ? h("img", { className: "product-thumb", src: product.image, alt: "" })
+            ? h("img", { className: "product-thumb", src: product.image, alt: "", loading: "lazy", decoding: "async" })
             : h("span", { className: "product-thumb product-thumb-empty", "aria-hidden": "true", text: product.name.slice(0, 1) });
     }
 
     // ================================================================ Services & Products view
 
-    let lastServiceFilter = { search: "", category: "" };
+    const UI = () => window.AdminUI;
+    const views = { products: null, pricing: null };
+    const serviceFilter = { search: "", category: "", availability: "" };
+    const pricingFilter = { search: "", category: "", state: "" };
 
-    function renderServices(filter = lastServiceFilter) {
-        lastServiceFilter = filter;
-        const productRows = document.querySelector("[data-service-rows]");
+    /** Bind a toolbar control once per page render (the view's DOM is replaced on navigation). */
+    function bindControl(selector, event, handler) {
+        const control = document.querySelector(selector);
+        if (!control || control.dataset.bound) return control;
+        control.dataset.bound = "true";
+        control.addEventListener(event, handler);
+        return control;
+    }
+
+    function fillCategorySelect(select, value) {
+        if (!select) return;
+        select.replaceChildren(new Option("All categories", ""), ...categories().map((category) => new Option(category.label, category.id)));
+        select.value = categories().some((category) => category.id === value) ? value : "";
+    }
+
+    function productTable(host) {
+        if (views.products && views.products.container === host && host.isConnected) return views.products;
+        views.products = new (UI().DataTable)(host, {
+            columns: [
+                { label: "Product", sortKey: "name", render: (product) => h("div", { className: "product-cell" }, thumb(product), h("span", {},
+                    h("span", { className: "table-primary", text: product.name }),
+                    h("span", { className: "table-secondary", text: product.description || "No description" }),
+                )) },
+                { label: "Category", sortKey: "category_label", render: (product) => product.category_label },
+                { label: "Pricing", sortKey: "base_price", value: (product) => (product.pricing_mode === "quote" ? null : product.base_price), render: (product) => priceText(product) },
+                { label: "Order form", sortKey: "fields", value: (product) => product.fields.length, render: (product) => {
+                    const optionCount = product.fields.reduce((total, field) => total + field.options.length, 0);
+                    return h("span", {}, h("span", { className: "table-primary", text: `${product.fields.length} fields` }), h("span", { className: "table-secondary", text: `${optionCount} options` }));
+                } },
+                { label: "Availability", sortKey: "active", value: (product) => (product.active ? 0 : 1), render: (product) => statusBadge(product.active) },
+                { label: "Order form preview", render: (product) => h("a", { className: "table-link", href: orderPreviewUrl(product), target: "_blank", rel: "noopener", text: "Preview ↗" }) },
+            ],
+            rows: () => allProducts(),
+            filter: (product, filter) => {
+                const needle = (filter.search || "").toLowerCase();
+                return (!filter.category || product.category_id === filter.category) &&
+                    (!filter.availability || (filter.availability === "available") === product.active) &&
+                    (!needle || `${product.name} ${product.category_label} ${product.description}`.toLowerCase().includes(needle));
+            },
+            initialQuery: { ...serviceFilter },
+            defaultSort: { key: "category_label", dir: "asc" },
+            emptyMessage: "No products yet. Add a product to start the catalog.",
+            onRowClick: (product) => openProductEditor(product.id),
+            rowTitle: (product) => `Configure ${product.name}`,
+            onLoad: (result) => {
+                const count = document.querySelector("[data-service-count]");
+                if (count) count.textContent = `${result.total} of ${allProducts().length} products`;
+            },
+        });
+        return views.products;
+    }
+
+    function renderServices() {
+        const host = document.querySelector("[data-service-table]");
         const categoryRows = document.querySelector("[data-category-rows]");
-        if (!productRows) return;
+        if (!host) return;
         if (!state.catalog) {
-            emptyRow(productRows, 6, state.error ? `The catalog could not be loaded. ${state.error}` : "Loading product catalog…");
-            if (categoryRows) emptyRow(categoryRows, 4, state.error ? "—" : "Loading categories…");
+            host.replaceChildren(h("p", { className: "empty-state", text: state.error ? `The catalog could not be loaded. ${state.error}` : "Loading product catalog…" }));
+            if (categoryRows) emptyRow(categoryRows, 3, state.error ? "—" : "Loading categories…");
             if (!state.error) load().then(rerenderActiveView, rerenderActiveView);
             return;
         }
 
-        const categoryFilter = document.querySelector("#service-category-filter");
-        if (categoryFilter) {
-            categoryFilter.replaceChildren(new Option("All categories", ""), ...categories().map((category) => new Option(category.label, category.id)));
-            categoryFilter.value = categories().some((category) => category.id === filter.category) ? filter.category : "";
-        }
+        const table = productTable(host);
+        const apply = (values) => {
+            Object.assign(serviceFilter, values);
+            table.setQuery({ ...serviceFilter });
+        };
+        const search = bindControl("#service-search", "input", (event) => apply({ search: event.target.value.trim() }));
+        if (search && !search.value) search.value = serviceFilter.search;
+        bindControl("#service-category-filter", "change", (event) => apply({ category: event.target.value }));
+        fillCategorySelect(document.querySelector("#service-category-filter"), serviceFilter.category);
+        const availability = bindControl("#service-availability-filter", "change", (event) => apply({ availability: event.target.value }));
+        if (availability) availability.value = serviceFilter.availability;
 
         if (categoryRows) {
             categoryRows.replaceChildren(...categories().map((category) => h(
                 "tr",
-                {},
+                { className: "clickable-row", tabindex: "0", title: `Edit ${category.label}`, dataset: { catalogAction: "edit-category", id: category.id } },
                 h("td", {}, h("span", { className: "table-primary", text: category.label }), h("span", { className: "table-secondary", text: category.description || "—" })),
                 h("td", { text: `${category.products.length} product${category.products.length === 1 ? "" : "s"}` }),
                 h("td", {}, statusBadge(category.active, "Shown", "Hidden")),
-                h("td", {}, h("button", { className: "table-link", type: "button", dataset: { catalogAction: "edit-category", id: category.id }, text: "Edit" })),
             )));
-            if (!categories().length) emptyRow(categoryRows, 4, "No categories yet. Add one to start your catalog.");
+            if (!categories().length) emptyRow(categoryRows, 3, "No categories yet. Add one to start your catalog.");
         }
-
-        const needle = (filter.search || "").toLowerCase();
-        const products = allProducts().filter((product) =>
-            (!filter.category || product.category_id === filter.category) &&
-            (!needle || `${product.name} ${product.category_label} ${product.description}`.toLowerCase().includes(needle))
-        );
-        productRows.replaceChildren(...products.map((product) => {
-            const optionCount = product.fields.reduce((total, field) => total + field.options.length, 0);
-            return h(
-                "tr",
-                {},
-                h("td", {}, h("div", { className: "product-cell" }, thumb(product), h("span", {},
-                    h("span", { className: "table-primary", text: product.name }),
-                    h("span", { className: "table-secondary", text: product.description || "No description" }),
-                ))),
-                h("td", { text: product.category_label }),
-                h("td", { text: priceText(product) }),
-                h("td", {}, h("span", { className: "table-primary", text: `${product.fields.length} fields` }), h("span", { className: "table-secondary", text: `${optionCount} options` })),
-                h("td", {}, statusBadge(product.active)),
-                h("td", {}, h("div", { className: "table-actions" },
-                    h("button", { className: "table-link", type: "button", dataset: { catalogAction: "edit-product", id: product.id }, text: "Configure" }),
-                    h("a", { className: "table-link", href: orderPreviewUrl(product), target: "_blank", rel: "noopener", text: "Preview" }),
-                )),
-            );
-        }));
-        const count = document.querySelector("[data-service-count]");
-        if (count) count.textContent = `${products.length} of ${allProducts().length} products`;
-        if (!products.length) emptyRow(productRows, 6, allProducts().length ? "No products match these filters." : "No products yet.");
+        table.setQuery({ ...serviceFilter });
     }
 
     function orderPreviewUrl(product) {
@@ -203,33 +232,57 @@
     // ================================================================ Pricing view
 
     function renderPricing() {
-        const rows = document.querySelector("[data-pricing-rows]");
-        if (!rows) return;
+        const host = document.querySelector("[data-pricing-table]");
+        if (!host) return;
         if (!state.catalog) {
-            emptyRow(rows, 6, state.error ? `The catalog could not be loaded. ${state.error}` : "Loading administrator-defined prices…");
+            host.replaceChildren(h("p", { className: "empty-state", text: state.error ? `The catalog could not be loaded. ${state.error}` : "Loading administrator-defined prices…" }));
             if (!state.error) load().then(rerenderActiveView, rerenderActiveView);
             return;
         }
-        const products = allProducts();
-        rows.replaceChildren(...products.map((product) => {
-            const options = product.fields.flatMap((field) => field.options);
-            const priced = options.filter((option) => option.price_adjustment).length;
-            const quoted = options.filter((option) => option.requires_quote).length;
-            const ready = product.pricing_mode !== "quote" && product.base_price !== null;
-            return h(
-                "tr",
-                {},
-                h("td", {}, h("span", { className: "table-primary", text: product.name }), h("span", { className: "table-secondary", text: product.active ? "Available" : "Unavailable" })),
-                h("td", { text: product.category_label }),
-                h("td", { text: PRICING_LABELS[product.pricing_mode] }),
-                h("td", {}, h("span", { className: `status-badge ${ready ? "available" : "pending"}`, text: priceText(product) })),
-                h("td", { text: `${priced} priced · ${quoted} quote-only · ${options.length} total` }),
-                h("td", {}, h("button", { className: "table-link", type: "button", dataset: { catalogAction: "edit-pricing", id: product.id }, text: "Set prices" })),
-            );
-        }));
-        const count = document.querySelector("[data-pricing-count]");
-        if (count) count.textContent = `${products.length} products · ${products.filter((product) => product.base_price !== null && product.pricing_mode !== "quote").length} with a published price`;
-        if (!products.length) emptyRow(rows, 6, "No products in the catalog yet.");
+        if (!views.pricing || views.pricing.container !== host || !host.isConnected) {
+            views.pricing = new (UI().DataTable)(host, {
+                columns: [
+                    { label: "Product", sortKey: "name", render: (product) => h("span", {}, h("span", { className: "table-primary", text: product.name }), h("span", { className: "table-secondary", text: product.active ? "Available" : "Unavailable" })) },
+                    { label: "Category", sortKey: "category_label", render: (product) => product.category_label },
+                    { label: "Method", sortKey: "pricing_mode", render: (product) => PRICING_LABELS[product.pricing_mode] },
+                    { label: "Base price", sortKey: "base_price", value: (product) => (product.pricing_mode === "quote" ? null : product.base_price), render: (product) => {
+                        const ready = product.pricing_mode !== "quote" && product.base_price !== null;
+                        return h("span", { className: `status-badge ${ready ? "available" : "pending"}`, text: priceText(product) });
+                    } },
+                    { label: "Option prices", render: (product) => {
+                        const options = product.fields.flatMap((field) => field.options);
+                        return `${options.filter((option) => option.price_adjustment).length} priced · ${options.filter((option) => option.requires_quote).length} quote-only · ${options.length} total`;
+                    } },
+                ],
+                rows: () => allProducts(),
+                filter: (product, filter) => {
+                    const needle = (filter.search || "").toLowerCase();
+                    const priced = product.pricing_mode !== "quote" && product.base_price !== null;
+                    return (!filter.category || product.category_id === filter.category) &&
+                        (!filter.state || (filter.state === "priced") === priced) &&
+                        (!needle || `${product.name} ${product.category_label}`.toLowerCase().includes(needle));
+                },
+                initialQuery: { ...pricingFilter },
+                defaultSort: { key: "category_label", dir: "asc" },
+                emptyMessage: "No products in the catalog yet.",
+                onRowClick: (product) => openPricingEditor(product.id),
+                rowTitle: (product) => `Set prices for ${product.name}`,
+                onLoad: () => {
+                    const count = document.querySelector("[data-pricing-count]");
+                    const products = allProducts();
+                    if (count) count.textContent = `${products.length} products · ${products.filter((product) => product.base_price !== null && product.pricing_mode !== "quote").length} with a published price`;
+                },
+            });
+        }
+        const apply = (values) => {
+            Object.assign(pricingFilter, values);
+            views.pricing.setQuery({ ...pricingFilter });
+        };
+        bindControl("#pricing-search", "input", (event) => apply({ search: event.target.value.trim() }));
+        bindControl("#pricing-category-filter", "change", (event) => apply({ category: event.target.value }));
+        bindControl("#pricing-state-filter", "change", (event) => apply({ state: event.target.value }));
+        fillCategorySelect(document.querySelector("#pricing-category-filter"), pricingFilter.category);
+        views.pricing.setQuery({ ...pricingFilter });
     }
 
     // ================================================================ dialog helpers
@@ -358,7 +411,7 @@
 
         const form = h("form", { className: "catalog-form", novalidate: true });
         const name = h("input", { name: "name", required: true, maxlength: 120, value: product?.name || "" });
-        const category = selectOf("category_id", categories().map((item) => [item.id, item.label]), product?.category_id || lastServiceFilter.category || categories()[0].id);
+        const category = selectOf("category_id", categories().map((item) => [item.id, item.label]), product?.category_id || serviceFilter.category || categories()[0].id);
         const description = h("textarea", { name: "description", maxlength: 600 });
         description.value = product?.description || "";
         const active = selectOf("active", [["true", "Available to order"], ["false", "Unavailable"]], product ? String(product.active) : "true");
@@ -796,9 +849,13 @@
 
     // ================================================================ events
 
-    document.addEventListener("click", (event) => {
+    function handleTrigger(event) {
         const trigger = event.target.closest("[data-catalog-action]");
         if (!trigger) return;
+        // Links and buttons inside a clickable row keep their own behavior.
+        const inner = event.target.closest("a, button, input, select");
+        if (inner && inner !== trigger && trigger.contains(inner)) return;
+        if (event.type === "keydown" && ((event.key !== "Enter" && event.key !== " ") || event.target !== trigger)) return;
         event.preventDefault();
         const id = trigger.dataset.id;
         const run = async () => {
@@ -823,7 +880,9 @@
             }
         };
         void run();
-    });
+    }
+    document.addEventListener("click", handleTrigger);
+    document.addEventListener("keydown", handleTrigger);
 
     // The script loads at the end of <body>, so the shared dialog already exists.
     dialog()?.addEventListener("close", () => dialog().classList.remove("admin-dialog-wide"));

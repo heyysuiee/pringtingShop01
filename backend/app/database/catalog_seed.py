@@ -9,11 +9,16 @@ every option with no surcharge, until an administrator enters real prices.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any
 
 
 def slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "option"
+
+
+# An option can be a plain label ("Bi-fold") or a full option from opt() (for example one that needs a quote).
+OptionSpec = str | dict[str, Any]
 
 
 def opt(label: str, value: str | None = None, quote: bool = False, price_type: str = "per_unit") -> dict[str, Any]:
@@ -23,7 +28,7 @@ def opt(label: str, value: str | None = None, quote: bool = False, price_type: s
 def choice(
     key: str,
     label: str,
-    options: list[Any],
+    options: Sequence[OptionSpec],
     *,
     kind: str = "select",
     required: bool = True,
@@ -145,7 +150,14 @@ IMG = "/frontend/image"
 ORIENTATION = choice("orientation", "Orientation", ["Portrait", "Landscape"], kind="radio", default="portrait")
 
 
-def invitation_fields(*, paper: list[str], folds: list[str], printing: list[str], sizes: list[Any], envelopes: list[str]) -> list[dict[str, Any]]:
+def invitation_fields(
+    *,
+    paper: Sequence[OptionSpec],
+    folds: Sequence[OptionSpec],
+    printing: Sequence[OptionSpec],
+    sizes: Sequence[OptionSpec],
+    envelopes: Sequence[OptionSpec],
+) -> list[dict[str, Any]]:
     return [
         choice("invitation_size", "Invitation size", sizes),
         choice("paper_type", "Paper type", paper),
@@ -216,7 +228,7 @@ INVITATIONS = [
             printing=["Single-sided, full color", "Double-sided, full color", "Full color with foil accents"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope", "Vellum envelope"],
         ),
-        image=f"{IMG}/invitation/weddinginvitationj.png",
+        image=f"{IMG}/invitation/weddinginvitationj.jpg",
         event_mode="required",
         min_quantity=10,
     ),
@@ -231,7 +243,7 @@ INVITATIONS = [
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope"],
         ),
-        image=f"{IMG}/invitation/christening.png",
+        image=f"{IMG}/invitation/christening.jpg",
         event_mode="required",
         min_quantity=10,
     ),
@@ -269,7 +281,7 @@ SOUVENIRS = [
             design_upload(),
             packaging(["No packaging", "Individual clear plastic sleeve", "Gift box with ribbon"]),
         ],
-        image=f"{IMG}/souvenir/refmagnet.png",
+        image=f"{IMG}/souvenir/refmagnet.jpg",
         event_mode="optional",
     ),
     product(
@@ -315,7 +327,7 @@ SOUVENIRS = [
             design_upload(),
             packaging(["No packaging", "White mug box", "Window box with ribbon"]),
         ],
-        image=f"{IMG}/souvenir/whitemug.png",
+        image=f"{IMG}/souvenir/whitemug.jpg",
         event_mode="optional",
     ),
     product(
@@ -361,7 +373,7 @@ SOUVENIRS = [
             design_upload(),
             packaging(["Folded, no packaging", "Folded in clear plastic"]),
         ],
-        image=f"{IMG}/souvenir/totebag.png",
+        image=f"{IMG}/souvenir/totebag.jpg",
         event_mode="optional",
     ),
     product(
@@ -421,7 +433,7 @@ STICKERS = [
             upload("design_upload", "Logo / design upload", required=True, help_text="Upload your logo (PNG with transparent background or PDF preferred)."),
             text("design_notes", "Design notes", multiline=True, placeholder="Colors, text to add, or layout notes"),
         ],
-        image=f"{IMG}/Sticker/sticker.png",
+        image=f"{IMG}/Sticker/sticker.jpg",
         min_quantity=10,
     ),
     product(
@@ -530,7 +542,7 @@ SINTRA_BOARDS = [
             photo_required=False,
             photo_max=5,
         ),
-        image=f"{IMG}/SintraBoard/menuBoard.png",
+        image=f"{IMG}/SintraBoard/menuBoard.jpg",
     ),
     product(
         "photo-mounting-boards",
@@ -542,7 +554,7 @@ SINTRA_BOARDS = [
             photo_required=True,
             photo_max=1,
         ),
-        image=f"{IMG}/SintraBoard/customizePhotoDesign.png",
+        image=f"{IMG}/SintraBoard/customizePhotoDesign.jpg",
         event_mode="optional",
     ),
     product(
@@ -555,7 +567,7 @@ SINTRA_BOARDS = [
             photo_required=True,
             photo_max=5,
         ),
-        image=f"{IMG}/SintraBoard/customizePhotoDesign.png",
+        image=f"{IMG}/SintraBoard/customizePhotoDesign.jpg",
         event_mode="optional",
     ),
     product(
@@ -571,7 +583,7 @@ SINTRA_BOARDS = [
             photo_required=True,
             photo_max=10,
         ),
-        image=f"{IMG}/SintraBoard/photocollage.png",
+        image=f"{IMG}/SintraBoard/photocollage.jpg",
         event_mode="optional",
     ),
 ]
@@ -698,11 +710,11 @@ LARGE_FORMAT = [
         "Birthday / Wedding / Graduation Tarpaulins",
         "Celebration tarpaulins for birthdays, weddings, and graduations.",
         large_format_fields([choice("occasion", "Occasion", ["Birthday", "Wedding", "Graduation", "Other celebration"], kind="radio"), wording()]),
-        image=f"{IMG}/tarpaulin/event.png",
+        image=f"{IMG}/tarpaulin/event.jpg",
         pricing_mode="area",
         event_mode="optional",
     ),
-    product("event-tarpaulins", "Event Tarpaulins", "Tarpaulins for events, programs, and gatherings.", large_format_fields([wording()]), image=f"{IMG}/tarpaulin/event.png", pricing_mode="area", event_mode="optional"),
+    product("event-tarpaulins", "Event Tarpaulins", "Tarpaulins for events, programs, and gatherings.", large_format_fields([wording()]), image=f"{IMG}/tarpaulin/event.jpg", pricing_mode="area", event_mode="optional"),
     product("store-banners", "Store Banners", "Storefront banners for your business name and services.", large_format_fields([wording("Banner text", "Business name, services, contact number")], outdoor_default="outdoor"), pricing_mode="area"),
     product("promotional-banners", "Promotional Banners", "Banners for sales, promos, and product advertisements.", large_format_fields([wording("Promo text", "Promo headline, details, validity dates")]), pricing_mode="area"),
     product(

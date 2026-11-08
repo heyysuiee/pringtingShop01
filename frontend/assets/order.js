@@ -311,9 +311,9 @@
         setError("");
         const chosen = [...uploadInput.files];
         uploadInput.value = "";
-        const allowed = new Set(["image/jpeg", "image/png", "application/pdf"]);
-        const invalid = chosen.find((file) => !allowed.has(file.type) || !/\.(jpe?g|png|pdf)$/i.test(file.name));
-        if (invalid) return setError(`${invalid.name}: choose a JPG, JPEG, PNG, or PDF file.`);
+        const allowed = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+        const invalid = chosen.find((file) => !allowed.has(file.type) || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name));
+        if (invalid) return setError(`${invalid.name}: choose a JPG, JPEG, PNG, WebP, or PDF file.`);
         const oversized = chosen.find((file) => file.size > 5 * 1024 * 1024);
         if (oversized) return setError(`${oversized.name}: each file must be no larger than 5 MB.`);
         if (state.referenceFiles.length + chosen.length > MAX_REFERENCE_FILES) return setError(`Attach up to ${MAX_REFERENCE_FILES} reference files.`);
@@ -561,6 +561,13 @@
     const stepper = $("#stepper");
 
     function showGate() {
+        // Return to this exact page (with the chosen product) after signing in or creating an account.
+        const here = window.location.pathname + window.location.search;
+        gate?.querySelectorAll("a[data-auth-return]").forEach((link) => {
+            const url = new URL(link.getAttribute("href"), window.location.origin);
+            url.searchParams.set("next", here);
+            link.href = url.pathname + url.search;
+        });
         if (gate) gate.hidden = false;
         stepper.hidden = true;
         form.hidden = true;

@@ -23,6 +23,11 @@ class SlidingWindowLimiter:
             events.append(now)
             return True
 
+    def reset(self, bucket: str, key: str) -> None:
+        """Forget the recorded events for one key (for example, give back a cooldown after a failed send)."""
+        with self._lock:
+            self._events.pop((bucket, key), None)
+
     def clear(self) -> None:
         with self._lock:
             self._events.clear()

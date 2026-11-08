@@ -58,6 +58,8 @@ class CustomerRegistration(_ContactDetails, _EmailModel):
 
 class CustomerLogin(_EmailModel):
     password: str = Field(min_length=1, max_length=256)
+    # "Remember me": keep the customer signed in for 30 days instead of the browser session.
+    remember: bool = False
 
 
 class CustomerProfileUpdate(_ContactDetails):
