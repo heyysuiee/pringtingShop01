@@ -36,6 +36,13 @@ router = APIRouter(tags=["authentication"])
 
 
 def _client_address(request: Request) -> str:
+    # Behind Vercel's proxy every request arrives from the proxy, so limiting by request.client
+    # would make all visitors share one sign-in limit. Vercel sets X-Real-IP to the visitor's
+    # address itself (a value sent by the client is overwritten), so it is safe to trust there.
+    if settings.behind_vercel_proxy:
+        forwarded = request.headers.get("x-real-ip", "").strip()
+        if forwarded:
+            return forwarded
     return request.client.host if request.client else "unknown"
 
 

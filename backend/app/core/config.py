@@ -25,6 +25,11 @@ class Settings:
     smtp_password: str
     smtp_from: str
     smtp_starttls: bool
+    # Turso (hosted SQLite) used instead of the local database file when the URL is set (Vercel).
+    turso_database_url: str = ""
+    turso_auth_token: str = ""
+    # True on Vercel, whose proxy puts the visitor's real address in the X-Real-IP header.
+    behind_vercel_proxy: bool = False
     # False when PRINTSHOP_SECRET_KEY is missing and a temporary random key was generated for this run.
     secret_key_persistent: bool = True
 
@@ -116,4 +121,7 @@ settings = Settings(
     smtp_password=os.environ.get("PRINTSHOP_SMTP_PASSWORD", ""),
     smtp_from=os.environ.get("PRINTSHOP_SMTP_FROM", "").strip(),
     smtp_starttls=os.environ.get("PRINTSHOP_SMTP_STARTTLS", "true").strip().lower() not in {"0", "false", "no"},
+    turso_database_url=os.environ.get("TURSO_DATABASE_URL", "").strip(),
+    turso_auth_token=os.environ.get("TURSO_AUTH_TOKEN", "").strip(),
+    behind_vercel_proxy=bool(os.environ.get("VERCEL")),
 )
