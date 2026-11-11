@@ -23,6 +23,9 @@ from backend.app.utils.images import optimized_image
 
 
 SEED_MARKER = "catalog_seed_v1"
+# Marks the sectioned Invitation order-form fields. Existing databases get their old invitation
+# fields replaced once so the new package/customize flow has the right questions.
+FIELD_MIGRATION_MARKER = "invitation_fields_v2"
 
 
 def new_id(prefix: str) -> str:
@@ -82,6 +85,7 @@ SCHEMA = (
         max_files INTEGER NOT NULL DEFAULT 1,
         depends_on TEXT NOT NULL DEFAULT '',
         depends_values TEXT NOT NULL DEFAULT '[]',
+        section TEXT NOT NULL DEFAULT '',
         sort_order INTEGER NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
@@ -115,12 +119,38 @@ def initialize() -> None:
     with connection_scope() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
+        _ensure_section_column(connection)
         seeded = connection.execute("SELECT value FROM app_meta WHERE key = ?", (SEED_MARKER,)).fetchone()
         if seeded is None:
             # Seed only once. If the administrator later removes products, they are not re-created.
             if connection.execute("SELECT COUNT(*) FROM catalog_categories").fetchone()[0] == 0:
                 _seed(connection)
+                # Fresh databases already have the sectioned invitation fields.
+                connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (FIELD_MIGRATION_MARKER, now_iso()))
             connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (SEED_MARKER, now_iso()))
+        _migrate_invitation_fields(connection)
+
+
+def _ensure_section_column(connection: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(catalog_fields)")}
+    if "section" not in columns:
+        connection.execute("ALTER TABLE catalog_fields ADD COLUMN section TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_invitation_fields(connection: sqlite3.Connection) -> None:
+    """Replace the old Invitation form fields with the sectioned package/customize fields once."""
+    if connection.execute("SELECT value FROM app_meta WHERE key = ?", (FIELD_MIGRATION_MARKER,)).fetchone():
+        return
+    for category in CATALOG_SEED:
+        if category["id"] != "invitation":
+            continue
+        for product in category["products"]:
+            if connection.execute("SELECT 1 FROM catalog_products WHERE id = ?", (product["id"],)).fetchone() is None:
+                continue
+            connection.execute("DELETE FROM catalog_fields WHERE product_id = ?", (product["id"],))
+            for field_index, field in enumerate(product["fields"]):
+                _insert_field(connection, product["id"], {**field, "sort_order": field_index})
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (FIELD_MIGRATION_MARKER, now_iso()))
 
 
 def _seed(connection: sqlite3.Connection) -> None:
@@ -170,6 +200,7 @@ def _field_from_row(row: sqlite3.Row) -> CatalogField:
         "max_files": int(row["max_files"]),
         "depends_on": row["depends_on"],
         "depends_values": [str(value) for value in depends_values if isinstance(value, str)],
+        "section": row["section"] if "section" in row.keys() else "",
         "sort_order": int(row["sort_order"]),
         "active": bool(row["active"]),
         "options": [],
@@ -381,9 +412,9 @@ def _insert_field(connection: sqlite3.Connection, product_id: str, data: dict[st
         """
         INSERT INTO catalog_fields (
             id, product_id, field_key, label, field_type, required, placeholder, help_text, default_value,
-            min_value, max_value, max_length, max_files, depends_on, depends_values, sort_order, active,
+            min_value, max_value, max_length, max_files, depends_on, depends_values, section, sort_order, active,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             field_id,
@@ -401,6 +432,7 @@ def _insert_field(connection: sqlite3.Connection, product_id: str, data: dict[st
             int(data.get("max_files", 1) or 1),
             data.get("depends_on", ""),
             json.dumps(list(data.get("depends_values", []))),
+            data.get("section", ""),
             int(data.get("sort_order", 0)),
             1 if data.get("active", True) else 0,
             now,
@@ -485,7 +517,7 @@ def update_field(field_id: str, updates: dict[str, Any], options: list[dict[str,
     """
     columns = (
         "field_key", "label", "field_type", "required", "placeholder", "help_text", "default_value",
-        "min_value", "max_value", "max_length", "max_files", "depends_on", "depends_values", "active",
+        "min_value", "max_value", "max_length", "max_files", "depends_on", "depends_values", "section", "active",
     )
     values = dict(updates)
     if "depends_values" in values:

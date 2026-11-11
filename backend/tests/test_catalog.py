@@ -30,6 +30,48 @@ PNG = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 
 
 MUG_OPTIONS = {"size": "11-oz", "print_area": "one-side", "inner_color": "white-classic", "packaging": "no-packaging"}
 
+# Package orders still collect the category-specific event details and the wording.
+BIRTHDAY_EVENT_OPTIONS = {
+    "celebrant_name": "Mia Santos",
+    "celebrant_age": 7,
+    "event_date": "2026-12-12",
+    "event_time": "14:00",
+    "venue": "Quezon City",
+    "invitation_wording": "Mia turns 7! RSVP 0917 000 0000",
+}
+WEDDING_EVENT_OPTIONS = {
+    "bride_name": "Maria Santos",
+    "groom_name": "Juan Dela Cruz",
+    "wedding_date": "2026-12-12",
+    "ceremony_time": "15:00",
+    "ceremony_venue": "Manila Cathedral",
+    "reception_venue": "The Peninsula Manila",
+    "invitation_wording": "Together with our families, we invite you.",
+}
+# The full customized (non-package) Birthday form.
+BIRTHDAY_CUSTOM_OPTIONS = {
+    "invitation_size": "5-x-7-in",
+    "paper_type": "premium-cardstock",
+    "paper_finish": "matte",
+    "printing_type": "single-sided-full-color",
+    "orientation": "portrait",
+    "folding_type": "bi-fold",
+    "envelope_option": "plain-white-envelope",
+    "design_source": "shop-will-design-it-for-me",
+    **BIRTHDAY_EVENT_OPTIONS,
+}
+CHRISTENING_NO_EVENT_OPTIONS = {
+    "invitation_size": "4-x-6-in",
+    "paper_type": "premium-cardstock",
+    "paper_finish": "matte",
+    "printing_type": "single-sided-full-color",
+    "orientation": "portrait",
+    "folding_type": "flat-card-no-fold",
+    "envelope_option": "plain-white-envelope",
+    "design_source": "shop-will-design-it-for-me",
+    "invitation_wording": "Please join us on our special day.",
+}
+
 
 def idempotency_key() -> str:
     return uuid.uuid4().hex + uuid.uuid4().hex[:8]
@@ -69,10 +111,14 @@ class CatalogTestCase(unittest.TestCase):
         return admin
 
     def order(self, shopper: TestClient, email: str, product_id: str, quantity: int, options: dict, **extra) -> object:
+        customization = {"quantity": quantity, "options": options, "notes": extra.pop("notes", "")}
+        package_id = extra.pop("package_id", None)
+        if package_id:
+            customization["package_id"] = package_id
         payload = {
             "customer": {"name": "Catalog Customer", "email": email, "phone": "+63 917 123 4567", "messenger": ""},
             "product": {"id": product_id},
-            "customization": {"quantity": quantity, "options": options, "notes": extra.pop("notes", "")},
+            "customization": customization,
             "event": extra.pop("event", {}),
             "has_event": extra.pop("has_event", False),
             "acknowledged": True,
@@ -106,6 +152,23 @@ class SeedTests(CatalogTestCase):
         catalog_repository.initialize()
         after = sum(len(category["products"]) for category in catalog_repository.load_catalog(active_only=False))
         self.assertEqual(before, after)
+
+    def test_invitation_packages_are_seeded_with_published_prices(self) -> None:
+        birthday = self.client.get("/api/catalog/products/birthday-invitation/packages")
+        self.assertEqual(birthday.status_code, 200, birthday.text)
+        sets = birthday.json()["packages"]
+        self.assertEqual([item["name"] for item in sets], ["Set A — Birthday Card"])
+        self.assertEqual(sets[0]["price"], 300.0)
+        self.assertEqual(sets[0]["add_on_price"], 15.0)
+        self.assertEqual(sets[0]["included_quantity"], 20)
+        self.assertIn("Premium photo paper", sets[0]["inclusions"])
+
+        christening = self.client.get("/api/catalog/products/christening-invitation/packages").json()["packages"]
+        self.assertEqual([item["price"] for item in christening], [600.0, 2000.0])
+
+        wedding = self.client.get("/api/catalog/products/wedding-invitation/packages").json()["packages"]
+        self.assertEqual([item["price"] for item in wedding], [1800.0, 3000.0, 2400.0])
+        self.assertEqual(len(wedding), 3)
 
 
 class PricingTests(CatalogTestCase):
@@ -195,30 +258,100 @@ class OrderValidationTests(CatalogTestCase):
 
     def test_conditional_field_is_required_only_when_shown(self) -> None:
         shopper, account = self.customer()
-        options = {
-            "invitation_size": "5-x-7-in",
-            "paper_type": "premium-cardstock",
-            "paper_finish": "matte",
-            "printing_type": "single-sided-full-color",
-            "orientation": "portrait",
-            "folding_type": "bi-fold",
-            "envelope_option": "colored-envelope",
-            "design_preference": "shop-will-design-it-for-me",
-            "invitation_wording": "Mia turns 7! RSVP 0917 000 0000",
-        }
-        event = {"celebrant": "Mia", "event_type": "Birthday", "event_date": "2026-12-12", "event_time": "14:00", "event_location": "Quezon City"}
-        missing_color = self.order(shopper, account["email"], "birthday-invitation", 30, options, event=event)
+        options = {**BIRTHDAY_CUSTOM_OPTIONS, "envelope_option": "colored-envelope"}
+        missing_color = self.order(shopper, account["email"], "birthday-invitation", 30, options)
         self.assertEqual(missing_color.status_code, 422)
         self.assertIn("Envelope color", missing_color.json()["detail"])
 
-        plain = self.order(shopper, account["email"], "birthday-invitation", 30, {**options, "envelope_option": "plain-white-envelope", "envelope_color": "ignored"}, event=event)
+        plain = self.order(shopper, account["email"], "birthday-invitation", 30, {**options, "envelope_option": "plain-white-envelope", "envelope_color": "ignored"})
         self.assertEqual(plain.status_code, 201, plain.text)
         self.assertNotIn("envelope_color", plain.json()["customization"]["options"])
         self.assertTrue(plain.json()["has_event"])
 
     def test_required_event_details_are_enforced(self) -> None:
         shopper, account = self.customer()
-        response = self.order(shopper, account["email"], "christening-invitation", 20, {}, event={})
+        response = self.order(shopper, account["email"], "christening-invitation", 20, CHRISTENING_NO_EVENT_OPTIONS)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Child's name", response.json()["detail"])
+
+    def test_customized_invitation_order_separates_event_details(self) -> None:
+        shopper, account = self.customer()
+        response = self.order(shopper, account["email"], "birthday-invitation", 30, BIRTHDAY_CUSTOM_OPTIONS)
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["order_kind"], "customize")
+        event_labels = [row["label"] for row in body["event_fields"]]
+        self.assertIn("Celebrant name", event_labels)
+        self.assertIn("Invitation wording", event_labels)
+        # Event answers are not repeated in the specification list.
+        spec_labels = [spec["label"] for spec in body["customization"]["specifications"]]
+        self.assertNotIn("Celebrant name", spec_labels)
+        stored = order_repository.get_order(body["reference"])
+        self.assertIsInstance(stored["event_details"], list)
+
+    def test_birthday_package_uses_published_total_and_add_on(self) -> None:
+        shopper, account = self.customer()
+        response = self.order(
+            shopper, account["email"], "birthday-invitation", 25,
+            BIRTHDAY_EVENT_OPTIONS, package_id="birthday-set-a",
+        )
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["order_kind"], "package")
+        self.assertEqual(body["package"]["name"], "Set A — Birthday Card")
+        # ₱300 for the included 20 pcs + 5 additional pcs × ₱15.
+        self.assertEqual(body["pricing"]["estimated_total"], 375.0)
+        labels = {spec["label"]: spec["value"] for spec in body["customization"]["specifications"]}
+        self.assertEqual(labels["Package"], "Set A — Birthday Card")
+        self.assertIn("White envelope", labels["Inclusions"])
+        self.assertEqual([row["label"] for row in body["event_fields"]][0], "Celebrant name")
+
+    def test_admin_order_views_expose_package_and_event_fields(self) -> None:
+        shopper, account = self.customer()
+        created = self.order(
+            shopper, account["email"], "birthday-invitation", 25,
+            BIRTHDAY_EVENT_OPTIONS, package_id="birthday-set-a",
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        reference = created.json()["reference"]
+        admin = self.admin()
+
+        listing = admin.get("/api/admin/orders", params={"kind": "package", "page_size": 100})
+        self.assertEqual(listing.status_code, 200, listing.text)
+        rows = listing.json()["items"]
+        self.assertTrue(rows, "The package order should appear in the filtered list.")
+        self.assertTrue(all(row["order_kind"] == "package" for row in rows))
+        listed = next(row for row in rows if row["reference"] == reference)
+        self.assertEqual(listed["package_name"], "Set A — Birthday Card")
+
+        detail = admin.get(f"/api/admin/orders/{reference}")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        body = detail.json()
+        self.assertEqual(body["order_kind"], "package")
+        self.assertEqual(body["package"]["price"], 300.0)
+        self.assertEqual(body["package"]["inclusions"][0], "20 pcs 4R (4\" × 6\") birthday cards")
+        self.assertEqual(body["event_fields"][0], {"label": "Celebrant name", "value": "Mia Santos"})
+
+    def test_package_without_add_on_is_locked_to_its_quantity(self) -> None:
+        shopper, account = self.customer()
+        wrong = self.order(
+            shopper, account["email"], "wedding-invitation", 25,
+            WEDDING_EVENT_OPTIONS, package_id="wedding-set-b",
+        )
+        self.assertEqual(wrong.status_code, 422)
+        telemetry = self.order(
+            shopper, account["email"], "wedding-invitation", 20,
+            WEDDING_EVENT_OPTIONS, package_id="wedding-set-b",
+        )
+        self.assertEqual(telemetry.status_code, 201, telemetry.text)
+        self.assertEqual(telemetry.json()["pricing"]["estimated_total"], 3000.0)
+
+    def test_package_from_another_category_is_rejected(self) -> None:
+        shopper, account = self.customer()
+        response = self.order(
+            shopper, account["email"], "birthday-invitation", 20,
+            BIRTHDAY_EVENT_OPTIONS, package_id="wedding-set-a",
+        )
         self.assertEqual(response.status_code, 422)
 
     def test_product_upload_field_files_are_saved_and_labelled(self) -> None:
@@ -323,6 +456,56 @@ class AdminCatalogTests(CatalogTestCase):
         self.assertEqual(admin.post("/api/admin/catalog/products", json={"name": "Bad", "category_id": "missing"}).status_code, 422)
         self.assertEqual(admin.post("/api/admin/catalog/products", json={"name": "Bad", "category_id": "sticker", "base_price": -5}).status_code, 422)
         self.assertEqual(admin.post("/api/admin/catalog/products/white-mug/fields", json={"label": "Choice", "field_type": "select", "options": []}).status_code, 422)
+
+    def test_admin_can_manage_invitation_packages(self) -> None:
+        admin = self.admin()
+        listed = admin.get("/api/admin/catalog/products/birthday-invitation/packages")
+        self.assertEqual(listed.status_code, 200, listed.text)
+        name = f"Test Set {uuid.uuid4().hex[:6]}"
+        created = admin.post("/api/admin/catalog/products/birthday-invitation/packages", json={
+            "name": name,
+            "price": 450,
+            "size": '5" × 7"',
+            "material": "Premium cardstock",
+            "inclusions": ["20 pcs invitations", "White envelope"],
+            "included_quantity": 20,
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        made = next(item for item in created.json()["packages"] if item["name"] == name)
+        self.assertEqual(made["price"], 450.0)
+        self.assertIsNone(made["add_on_price"])
+
+        self.assertEqual(admin.post("/api/admin/catalog/products/birthday-invitation/packages", json={"name": "Bad", "price": 0, "inclusions": ["x"]}).status_code, 422)
+        self.assertEqual(admin.post("/api/admin/catalog/products/missing-product/packages", json={"name": "Bad", "price": 10, "inclusions": ["x"]}).status_code, 404)
+
+        renamed = admin.patch(f"/api/admin/catalog/packages/{made['id']}", json={"name": f"{name} edited", "price": 500, "active": False})
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        edited = next(item for item in renamed.json()["packages"] if item["id"] == made["id"])
+        self.assertEqual((edited["name"], edited["price"], edited["active"]), (f"{name} edited", 500.0, False))
+
+        public = self.client.get("/api/catalog/products/birthday-invitation/packages").json()["packages"]
+        self.assertNotIn(made["id"], [item["id"] for item in public])
+
+        shopper, account = self.customer()
+        rejected = self.order(shopper, account["email"], "birthday-invitation", 20, BIRTHDAY_EVENT_OPTIONS, package_id=made["id"])
+        self.assertEqual(rejected.status_code, 422)
+
+        self.assertEqual(admin.delete(f"/api/admin/catalog/packages/{made['id']}").status_code, 200)
+        self.assertEqual(admin.delete(f"/api/admin/catalog/packages/{made['id']}").status_code, 404)
+
+    def test_field_section_is_saved(self) -> None:
+        admin = self.admin()
+        created = admin.post("/api/admin/catalog/products/birthday-invitation/fields", json={
+            "label": "Extra design note", "field_type": "text", "section": "design",
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        field = next(item for item in created.json()["product"]["fields"] if item["label"] == "Extra design note")
+        self.assertEqual(field["section"], "design")
+        invalid = admin.post("/api/admin/catalog/products/birthday-invitation/fields", json={
+            "label": "Bad section", "field_type": "text", "section": "nowhere",
+        })
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(admin.delete(f"/api/admin/catalog/fields/{field['id']}").status_code, 200)
 
     def test_category_with_products_cannot_be_deleted(self) -> None:
         admin = self.admin()

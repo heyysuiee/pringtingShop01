@@ -74,7 +74,7 @@
     let services = [];
 
     const filters = {
-        orders: { search: "", status: "", service: "", payment_status: "", date_from: "", date_to: "" },
+        orders: { search: "", status: "", service: "", payment_status: "", kind: "", date_from: "", date_to: "" },
         customers: { search: "", activity: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
         payments: { search: "", method: "", service: "", payment_status: "", date_from: "", date_to: "" },
         reports: {
@@ -389,6 +389,7 @@
         const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
         const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
         const paymentSelect = selectInput([["", "All payment statuses"], ...PAYMENT_STATUSES.map((status) => [status, status])], f.payment_status, (value) => apply({ payment_status: value }));
+        const kindSelect = selectInput([["", "All order types"], ["package", "Ready-made package"], ["customize", "Customized invitation"]], f.kind, (value) => apply({ kind: value }));
         const fromInput = dateInput(f.date_from, (value) => apply({ date_from: value }));
         const toInput = dateInput(f.date_to, (value) => apply({ date_to: value }));
         const search = searchInput("Search order ID, customer, email, product…", f.search, (value) => apply({ search: value }));
@@ -419,7 +420,10 @@
                     h("span", { className: "table-primary", text: row.reference }),
                     row.image_count ? h("span", { className: "table-chip", text: `🖼 ${row.image_count} image${row.image_count === 1 ? "" : "s"}` }) : null) },
                 { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
-                { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
+                { label: "Service / product", sortKey: "service", render: (row) => h("span", { className: "cell-pair" },
+                    h("span", { className: "table-primary", text: row.product }),
+                    h("span", { className: "table-secondary", text: row.service }),
+                    row.order_kind ? h("span", { className: "table-chip", text: row.order_kind === "package" ? `📦 ${row.package_name || "Package"}` : "✎ Customized invitation" }) : null) },
                 { label: "Request date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
                 { label: "Total", sortKey: "total", align: "right", render: (row) => totalText(row) },
                 { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
@@ -446,7 +450,7 @@
         });
         renderTabs();
         const clear = h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
-            Object.assign(f, { search: "", status: "", service: "", payment_status: "", date_from: "", date_to: "" });
+            Object.assign(f, { search: "", status: "", service: "", payment_status: "", kind: "", date_from: "", date_to: "" });
             renderOrders();
         } });
         body.replaceChildren(
@@ -456,6 +460,7 @@
                 field("Service", serviceSelect),
                 field("Status", statusSelect),
                 field("Payment", paymentSelect),
+                field("Order type", kindSelect),
                 field("Requested from", fromInput),
                 field("Requested to", toInput),
                 clear,
@@ -550,8 +555,51 @@
 
     function specifications(order) {
         const customization = order.customization || {};
-        if (Array.isArray(customization.specifications)) return customization.specifications.map((spec) => [spec.label, spec.value]);
+        if (Array.isArray(customization.specifications)) {
+            // Package details are shown in their own card; keep only the remaining rows here.
+            const rows = order.package
+                ? customization.specifications.filter((spec) => !String(spec.key || "").startsWith("package"))
+                : customization.specifications;
+            return rows.map((spec) => [spec.label, spec.value]);
+        }
         return [["Size", customization.size], ["Material / variant", customization.material], ["Customization", customization.details]].filter(([, value]) => value);
+    }
+
+    /** Event rows from the catalog fields, with a fallback for older orders that stored a fixed object. */
+    function eventRows(order) {
+        if (Array.isArray(order.event_fields) && order.event_fields.length) {
+            return order.event_fields.map((row) => [row.label, row.value]);
+        }
+        const legacy = order.event_details && !Array.isArray(order.event_details) ? order.event_details : {};
+        return [
+            ["Celebrant", legacy.celebrant],
+            ["Event type", legacy.event_type],
+            ["Event date", legacy.event_date ? date(legacy.event_date) : ""],
+            ["Event time", legacy.event_time],
+            ["Event location", legacy.event_location],
+        ].filter(([, value]) => value);
+    }
+
+    function packageCard(order) {
+        const pkg = order.package;
+        if (!pkg) return null;
+        const hasAddOn = pkg.add_on_price !== null && pkg.add_on_price !== undefined;
+        return h("section", { className: "fact-card", dataset: { focus: "package" } },
+            h("h3", { text: "Selected package" }),
+            detailList([
+                ["Package", pkg.name],
+                ["Package price", money(pkg.price)],
+                ["Size", pkg.size],
+                ["Material", pkg.material],
+                ["Included quantity", `${number(pkg.included_quantity)} pcs`],
+                ["Add-on", hasAddOn
+                    ? `${pkg.add_on_label || "Additional pieces"} — ${money(pkg.add_on_price)} per piece beyond ${number(pkg.included_quantity)} pcs`
+                    : `Fixed set of ${number(pkg.included_quantity)} pcs (no add-on)`],
+            ]),
+            pkg.inclusions?.length
+                ? h("div", { className: "package-inclusions-detail" }, h("strong", { text: "Inclusions" }), h("ul", { className: "plain-list" }, ...pkg.inclusions.map((item) => h("li", { text: item }))))
+                : null,
+        );
     }
 
     function orderModalContent(order, { back, focus }) {
@@ -579,6 +627,8 @@
                 ["Order ID", order.reference],
                 ["Service", summary.service],
                 ["Product", summary.product],
+                order.order_kind ? ["Order type", order.order_kind === "package" ? "Ready-made package" : "Customized invitation"] : null,
+                order.package?.name ? ["Package", order.package.name] : null,
                 ["Quantity", number(order.customization?.quantity)],
                 ["Request date", dateTime(order.created_at)],
                 ["Completion date", summary.completed_at ? dateTime(summary.completed_at) : "Not completed"],
@@ -586,7 +636,7 @@
             ])),
             h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: "Payment" }), detailList([
                 ["Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
-                ["Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
+                [order.order_kind === "package" ? "Package total" : "Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
                 ["Amount paid", money(summary.amount_paid)],
                 ["Balance", summary.balance === null ? "—" : money(summary.balance)],
                 ["Payment status", badge(summary.payment_status)],
@@ -594,18 +644,14 @@
         );
 
         const specs = specifications(order);
+        const events = eventRows(order);
         const details = h("div", { className: "order-detail-sections" },
             specs.length ? h("section", { className: "fact-card" }, h("h3", { text: "Customer specifications" }), detailList(specs)) : null,
+            packageCard(order),
             h("section", { className: "fact-card" }, h("h3", { text: "Special instructions" }),
                 h("p", { className: "prewrap", text: order.customization?.notes || order.customization?.instructions || "None provided." })),
-            order.has_event ? h("section", { className: "fact-card" }, h("h3", { text: "Event details" }), detailList([
-                ["Celebrant", order.event_details.celebrant],
-                ["Event type", order.event_details.event_type],
-                ["Event date", order.event_details.event_date ? date(order.event_details.event_date) : ""],
-                ["Event time", order.event_details.event_time],
-                ["Location", order.event_details.event_location],
-            ])) : null,
-            pricingCard(order.pricing),
+            events.length ? h("section", { className: "fact-card" }, h("h3", { text: "Event details" }), detailList(events)) : null,
+            pricingCard(order.pricing, order),
             order.admin_notes ? h("section", { className: "fact-card" }, h("h3", { text: "Latest note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
         );
 
@@ -632,8 +678,9 @@
         ];
     }
 
-    function pricingCard(pricing) {
+    function pricingCard(pricing, order = null) {
         if (!pricing || !Object.keys(pricing).length) return null;
+        const packageOrder = order?.order_kind === "package" || pricing.pricing_mode === "package";
         const items = pricing.requires_quote
             ? (pricing.quote_reasons || []).map((reason) => h("li", { text: reason }))
             : [
@@ -641,7 +688,11 @@
                 pricing.area_sqft ? h("li", { text: `Print area: ${pricing.area_sqft} sq ft per piece` }) : null,
                 h("li", { className: "strong", text: pricing.estimated_total === null ? "No total calculated." : `Estimated total: ${money(pricing.estimated_total)}` }),
             ];
-        return h("section", { className: "fact-card" }, h("h3", { text: "Price estimate from catalog prices" }), h("ul", { className: "plain-list" }, ...items));
+        return h("section", { className: "fact-card" },
+            h("h3", { text: packageOrder ? "Package price" : "Price estimate from catalog prices" }),
+            h("ul", { className: "plain-list" }, ...items),
+            packageOrder ? h("p", { className: "field-note", text: "Calculated from the shop's published package price and add-on charge. Confirm or adjust it in the quotation below." }) : null,
+        );
     }
 
     function actionsPanel(order, reload) {
@@ -720,7 +771,11 @@
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Send quotation" });
         const form = h("form", { className: "action-form" },
             h("h4", { text: "Confirm quotation" }),
-            h("p", { className: "field-note", text: estimate === null ? "No catalog estimate: enter a custom quotation." : `Prefilled with the catalog estimate of ${money(estimate)}. Adjust it if needed.` }),
+            h("p", { className: "field-note", text: estimate === null
+                ? "No catalog estimate: enter a custom quotation."
+                : order.order_kind === "package"
+                    ? `Prefilled with the package total of ${money(estimate)}. Adjust it if needed.`
+                    : `Prefilled with the catalog estimate of ${money(estimate)}. Adjust it if needed.` }),
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: "quote-amount", text: "Total order amount (PHP)" }), amount),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-instructions", text: "Payment instructions" }), instructions)),

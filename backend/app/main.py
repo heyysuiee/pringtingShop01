@@ -10,7 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.app.core.config import settings
 from backend.app.core.security import session_claims
-from backend.app.repositories import auth_throttle_repository, catalog_repository, customer_repository, order_repository
+from backend.app.repositories import auth_throttle_repository, catalog_repository, customer_repository, order_repository, package_repository
 from backend.app.routes.admin import router as admin_router
 from backend.app.routes.auth import router as auth_router
 from backend.app.routes.catalog import router as catalog_router
@@ -70,6 +70,8 @@ async def lifespan(app: FastAPI):
     auth_throttle_repository.initialize()
     order_repository.initialize()
     catalog_repository.initialize()
+    # Packages reference catalog products, so this runs after the catalog is seeded/migrated.
+    package_repository.initialize()
     app.state.database_ready = True
     try:
         yield

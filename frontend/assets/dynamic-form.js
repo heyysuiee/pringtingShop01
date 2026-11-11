@@ -4,11 +4,14 @@
  * PrintShopDynamicForm — renders the order-form questions configured for one catalog product.
  *
  * Usage:
- *   const form = PrintShopDynamicForm.create(container, product, { onChange });
+ *   const form = PrintShopDynamicForm.create(container, product, { onChange, includeSections });
  *   form.values()    → { field_key: value } for visible fields (numbers as numbers, checkboxes as arrays)
  *   form.files()     → { field_key: [File, ...] } for visible upload fields
  *   form.validate()  → true when every visible required field is valid (shows messages otherwise)
- *   form.summary()   → [{ label, value }] readable rows for the review step
+ *   form.summary()   → [{ key, label, value }] readable rows for the review step
+ *
+ * ``includeSections`` limits the form to fields whose catalog section is in the given array (for example
+ * [""] for basic specifications, or ["event", "upload"] for a package order). Omit it to render every field.
  *
  * Fields and options come from /api/catalog, so administrator changes appear here without code changes.
  */
@@ -48,8 +51,9 @@
         return `${sign}${money(Math.abs(option.price_adjustment))} ${charge}`;
     }
 
-    function create(container, product, { onChange = () => {}, idPrefix = "opt" } = {}) {
-        const fields = product.fields || [];
+    function create(container, product, { onChange = () => {}, idPrefix = "opt", includeSections = null } = {}) {
+        const sections = Array.isArray(includeSections) ? new Set(includeSections) : null;
+        const fields = (product.fields || []).filter((field) => !sections || sections.has(field.section || ""));
         const byKey = new Map(fields.map((field) => [field.field_key, field]));
         const wrappers = new Map();
         const uploads = new Map(); // field_key -> File[]
@@ -178,6 +182,7 @@
         function renderFile(field) {
             const id = fieldId(field);
             const files = [];
+            let replaceIndex = -1;
             uploads.set(field.field_key, files);
             const input = el("input", {
                 id,
@@ -193,7 +198,19 @@
                 el("strong", { text: field.max_files > 1 ? `Choose up to ${field.max_files} files` : "Choose a file" }),
                 el("small", { text: "JPG, PNG, WebP, or PDF · 5 MB maximum each" }),
             );
+            // Opening the normal picker should add files, not replace the last one the customer chose to replace.
+            zone.addEventListener("click", () => {
+                replaceIndex = -1;
+            });
             const previews = el("div", { className: "upload-previews" });
+
+            function previewProblem(chosen) {
+                const invalid = chosen.find((file) => !ALLOWED_UPLOADS.has(file.type) || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name));
+                if (invalid) return `${invalid.name}: choose a JPG, PNG, WebP, or PDF file.`;
+                const oversized = chosen.find((file) => file.size > MAX_UPLOAD_BYTES);
+                if (oversized) return `${oversized.name}: each file must be 5 MB or smaller.`;
+                return "";
+            }
 
             function renderPreviews() {
                 previews.replaceChildren();
@@ -205,6 +222,11 @@
                         media.src = URL.createObjectURL(file);
                         media.addEventListener("load", () => URL.revokeObjectURL(media.src), { once: true });
                     }
+                    const replace = el("button", { type: "button", className: "text-button", "aria-label": `Replace ${file.name}`, text: "Replace" });
+                    replace.addEventListener("click", () => {
+                        replaceIndex = index;
+                        input.click();
+                    });
                     const remove = el("button", { type: "button", className: "text-button", "aria-label": `Remove ${file.name}`, text: "Remove" });
                     remove.addEventListener("click", () => {
                         files.splice(index, 1);
@@ -216,7 +238,7 @@
                         { className: "upload-preview" },
                         media,
                         el("span", { className: "upload-preview-info" }, el("strong", { text: file.name }), el("small", { text: formatBytes(file.size) })),
-                        remove,
+                        el("span", { className: "upload-preview-actions" }, replace, remove),
                     ));
                 });
                 zone.hidden = files.length >= field.max_files;
@@ -225,10 +247,23 @@
             input.addEventListener("change", () => {
                 const chosen = [...input.files];
                 input.value = "";
-                const invalid = chosen.find((file) => !ALLOWED_UPLOADS.has(file.type) || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name));
-                const oversized = chosen.find((file) => file.size > MAX_UPLOAD_BYTES);
-                if (invalid) return setError(field, `${invalid.name}: choose a JPG, PNG, WebP, or PDF file.`);
-                if (oversized) return setError(field, `${oversized.name}: each file must be 5 MB or smaller.`);
+                if (!chosen.length) {
+                    replaceIndex = -1;
+                    return;
+                }
+                const problem = previewProblem(chosen);
+                if (problem) {
+                    replaceIndex = -1;
+                    return setError(field, problem);
+                }
+                if (replaceIndex >= 0) {
+                    // Replace the chosen preview in place, keeping the position in the list.
+                    if (replaceIndex < files.length) files[replaceIndex] = chosen[0];
+                    replaceIndex = -1;
+                    renderPreviews();
+                    changed(field);
+                    return;
+                }
                 if (files.length + chosen.length > field.max_files) {
                     return setError(field, `Attach up to ${field.max_files} file${field.max_files === 1 ? "" : "s"} here.`);
                 }
@@ -332,19 +367,19 @@
                 for (const field of visibleFields()) {
                     const value = rawValue(field);
                     if (field.field_type === "file") {
-                        if (value.length) rows.push({ label: field.label, value: value.map((file) => file.name).join(", ") });
+                        if (value.length) rows.push({ key: field.field_key, label: field.label, value: value.map((file) => file.name).join(", ") });
                         continue;
                     }
                     if (Array.isArray(value) ? !value.length : value === "") continue;
                     if (OPTION_TYPES.has(field.field_type)) {
                         const labels = (Array.isArray(value) ? value : [value])
                             .map((item) => field.options.find((option) => option.value === item)?.label || item);
-                        rows.push({ label: field.label, value: labels.join(", ") });
+                        rows.push({ key: field.field_key, label: field.label, value: labels.join(", ") });
                     } else if (field.field_type === "number" && ["width", "height"].includes(field.field_key)) {
                         const unit = rawValue(byKey.get("measurement_unit") || {}) || "";
-                        rows.push({ label: field.label, value: `${value} ${unit}`.trim() });
+                        rows.push({ key: field.field_key, label: field.label, value: `${value} ${unit}`.trim() });
                     } else {
-                        rows.push({ label: field.label, value });
+                        rows.push({ key: field.field_key, label: field.label, value });
                     }
                 }
                 return rows;

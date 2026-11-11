@@ -149,6 +149,22 @@ IMG = "/frontend/image"
 
 ORIENTATION = choice("orientation", "Orientation", ["Portrait", "Landscape"], kind="radio", default="portrait")
 
+INVITATION_WORDING = text(
+    "invitation_wording",
+    "Invitation wording",
+    multiline=True,
+    required=True,
+    placeholder="Names, program, RSVP contact, dress code, and any other text to print",
+)
+
+
+def date_field(key: str, label: str) -> dict[str, Any]:
+    return {"field_key": key, "label": label, "field_type": "date", "required": True}
+
+
+def time_field(key: str, label: str) -> dict[str, Any]:
+    return {"field_key": key, "label": label, "field_type": "time", "required": True}
+
 
 def invitation_fields(
     *,
@@ -157,15 +173,22 @@ def invitation_fields(
     printing: Sequence[OptionSpec],
     sizes: Sequence[OptionSpec],
     envelopes: Sequence[OptionSpec],
+    event_fields: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    return [
+    """The Invitation order form, grouped into the sections the order page renders.
+
+    ``""`` basic specifications, ``"design"`` customization, ``"event"`` category-specific event
+    details (including the wording), and ``"upload"`` photo/reference files. A package order skips
+    the basic and design sections; the server re-validates only the event and upload sections.
+    """
+    basics = [
         choice("invitation_size", "Invitation size", sizes),
         choice("paper_type", "Paper type", paper),
         choice("paper_finish", "Paper finish", ["Matte", "Glossy", "Satin", "Uncoated (natural texture)"]),
         choice("printing_type", "Printing type", printing),
         ORIENTATION,
-        choice("folding_type", "Folding type", folds),
-        choice("envelope_option", "Envelope option", envelopes, default="no-envelope"),
+        choice("folding_type", "Style / format", folds),
+        choice("envelope_option", "Envelope preference", envelopes, default="no-envelope"),
         text(
             "envelope_color",
             "Envelope color",
@@ -174,32 +197,81 @@ def invitation_fields(
             depends_on="envelope_option",
             depends_values=["colored-envelope"],
         ),
+        number(
+            "insert_count",
+            "Number of photo / page inserts",
+            minimum=0,
+            maximum=20,
+            required=False,
+            help_text="Leave blank if you are not sure yet.",
+        ),
+    ]
+    design = [
         choice(
-            "design_preference",
-            "Design preference",
+            "design_source",
+            "Design customization",
             ["I will upload my own design", "Shop will design it for me", "Use a sample design as reference"],
             kind="radio",
         ),
         upload(
-            "design_upload",
+            "design_file",
             "Your design file",
             required=True,
+            max_files=2,
             help_text="Upload your print-ready design. JPG, PNG, or PDF · up to 5 MB each.",
-            depends_on="design_preference",
+            depends_on="design_source",
             depends_values=["i-will-upload-my-own-design"],
         ),
-        text(
-            "invitation_wording",
-            "Invitation wording",
-            multiline=True,
-            required=True,
-            placeholder="Names, program, RSVP contact, dress code, and any other text to print",
-        ),
-        text("design_notes", "Theme, colors, and design notes", multiline=True, placeholder="Motif, color palette, fonts, or styles you like"),
+        text("design_theme", "Theme", placeholder="e.g. Floral garden, geometric, minimalist"),
+        text("color_combination", "Color combination", placeholder="e.g. Sage green, cream, and gold"),
+        text("design_inspiration", "Design inspiration", multiline=True, placeholder="Styles, motifs, samples, or fonts you like"),
     ]
+    uploads = [
+        upload("photo_upload", "Photos of the celebrant / couple", max_files=6, help_text="JPG, PNG, or PDF · up to 5 MB each. Up to 6 photos."),
+        upload("reference_design", "Reference designs", max_files=3, help_text="Existing invitations or layouts you want us to follow."),
+        upload("inspiration_images", "Inspiration images", max_files=3, help_text="Pinterest screenshots, color pegs, or any idea you like."),
+    ]
+    fields: list[dict[str, Any]] = []
+    for field in basics:
+        fields.append({**field, "section": ""})
+    for field in design:
+        fields.append({**field, "section": "design"})
+    for field in [*event_fields, INVITATION_WORDING]:
+        fields.append({**field, "section": "event"})
+    for field in uploads:
+        fields.append({**field, "section": "upload"})
+    return fields
 
 
 INVITATION_SIZES = ["4 x 6 in", "5 x 7 in", "A5 (5.8 x 8.3 in)", "Square 5 x 5 in", opt("Custom size", quote=True)]
+
+BIRTHDAY_EVENT = [
+    text("celebrant_name", "Celebrant name", required=True, placeholder="e.g. Mia Santos"),
+    number("celebrant_age", "Age to celebrate", minimum=1, maximum=120, required=True, placeholder="e.g. 7"),
+    date_field("event_date", "Event date"),
+    time_field("event_time", "Event time"),
+    text("venue", "Venue", required=True, placeholder="e.g. Quezon City"),
+]
+
+CHRISTENING_EVENT = [
+    text("child_name", "Child's name", required=True, placeholder="e.g. Noah Miguel Santos"),
+    text("parents_names", "Parents' names", required=True, placeholder="e.g. Mark and Anna Santos"),
+    text("godparents_names", "Godparents", multiline=True, placeholder="One name per line or separated by commas"),
+    date_field("baptism_date", "Baptism date"),
+    time_field("baptism_time", "Baptism time"),
+    text("church", "Church", required=True, placeholder="e.g. St. Joseph Parish"),
+    text("reception_venue", "Reception venue", placeholder="e.g. Santos Residence, Pasig City"),
+]
+
+WEDDING_EVENT = [
+    text("bride_name", "Bride's name", required=True, placeholder="e.g. Maria Santos"),
+    text("groom_name", "Groom's name", required=True, placeholder="e.g. Juan Dela Cruz"),
+    date_field("wedding_date", "Wedding date"),
+    time_field("ceremony_time", "Ceremony time"),
+    text("ceremony_venue", "Ceremony venue", required=True, placeholder="e.g. Manila Cathedral"),
+    text("reception_venue", "Reception venue", required=True, placeholder="e.g. The Peninsula Manila"),
+    text("entourage", "Entourage", multiline=True, placeholder="Principal sponsors, bridesmaids, groomsmen, and other names"),
+]
 
 INVITATIONS = [
     product(
@@ -212,6 +284,7 @@ INVITATIONS = [
             folds=["Flat card (no fold)", "Bi-fold", "Tri-fold"],
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope"],
+            event_fields=BIRTHDAY_EVENT,
         ),
         image=f"{IMG}/invitation/Bdayinvitation.jpg",
         event_mode="required",
@@ -227,6 +300,7 @@ INVITATIONS = [
             folds=["Flat card (no fold)", "Bi-fold", "Gatefold", "Tri-fold", opt("Pocket fold", quote=True)],
             printing=["Single-sided, full color", "Double-sided, full color", "Full color with foil accents"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope", "Vellum envelope"],
+            event_fields=WEDDING_EVENT,
         ),
         image=f"{IMG}/invitation/weddinginvitationj.jpg",
         event_mode="required",
@@ -242,11 +316,141 @@ INVITATIONS = [
             folds=["Flat card (no fold)", "Bi-fold"],
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope"],
+            event_fields=CHRISTENING_EVENT,
         ),
         image=f"{IMG}/invitation/christening.jpg",
         event_mode="required",
         min_quantity=10,
     ),
+]
+
+# ---------------------------------------------------------------- Invitation packages
+
+# The exact sets offered for the three invitation categories. ``add_on_price`` is the charge for each
+# additional piece beyond ``included_quantity``; when it is None the set is ordered at exactly that
+# quantity. Prices are the shop's published package prices.
+INVITATION_PACKAGES: list[dict[str, Any]] = [
+    {
+        "id": "birthday-set-a",
+        "product_id": "birthday-invitation",
+        "name": "Set A — Birthday Card",
+        "price": 300.00,
+        "size": '4R (4" × 6")',
+        "material": "Premium photo paper",
+        "inclusions": [
+            "20 pcs 4R (4\" × 6\") birthday cards",
+            "1 photo insert",
+            "White envelope",
+            "Sticker lock",
+            "Premium photo paper",
+        ],
+        "add_on_label": "Additional set (20 pcs)",
+        "add_on_price": 15.00,
+        "included_quantity": 20,
+        "image": f"{IMG}/invitation/Bdayinvitation.jpg",
+        "sort_order": 0,
+    },
+    {
+        "id": "christening-set-a",
+        "product_id": "christening-invitation",
+        "name": "Set A — Christening Card",
+        "price": 600.00,
+        "size": '4R (4" × 6")',
+        "material": "Premium photo paper",
+        "inclusions": [
+            "20 pcs 4R (4\" × 6\") christening cards",
+            "2 photo inserts",
+            "White envelope",
+            "Sticker lock",
+            "Premium photo paper",
+        ],
+        "add_on_label": "Additional set (20 pcs)",
+        "add_on_price": 30.00,
+        "included_quantity": 20,
+        "image": f"{IMG}/invitation/christening.jpg",
+        "sort_order": 0,
+    },
+    {
+        "id": "christening-set-b",
+        "product_id": "christening-invitation",
+        "name": "Set B — Geometric Flip Invitation",
+        "price": 2000.00,
+        "size": '5" × 7"',
+        "material": "",
+        "inclusions": [
+            "20 pcs 5\" × 7\" invitations",
+            "20 geometric covers with glittered finish",
+            "Tag and parchment",
+            "3 page inserts",
+            "Free layout",
+            "2 revisions",
+        ],
+        "add_on_label": "",
+        "add_on_price": None,
+        "included_quantity": 20,
+        "image": f"{IMG}/invitation/christening.jpg",
+        "sort_order": 1,
+    },
+    {
+        "id": "wedding-set-a",
+        "product_id": "wedding-invitation",
+        "name": "Set A — Floral Theme + Premium Envelope",
+        "price": 1800.00,
+        "size": '5" × 7"',
+        "material": "",
+        "inclusions": [
+            "20 pcs 5\" × 7\" invitations",
+            "20 premium envelopes",
+            "Pearl, ribbon, and parchment details",
+            "3 page inserts",
+            "Free layout",
+            "2 revisions",
+        ],
+        "add_on_label": "",
+        "add_on_price": None,
+        "included_quantity": 20,
+        "image": f"{IMG}/invitation/weddinginvitationj.jpg",
+        "sort_order": 0,
+    },
+    {
+        "id": "wedding-set-b",
+        "product_id": "wedding-invitation",
+        "name": "Set B — Passport Theme",
+        "price": 3000.00,
+        "size": "",
+        "material": "",
+        "inclusions": [
+            "20 invitations",
+            "Free layout",
+            "2 revisions",
+        ],
+        "add_on_label": "",
+        "add_on_price": None,
+        "included_quantity": 20,
+        "image": f"{IMG}/invitation/weddinginvitationj.jpg",
+        "sort_order": 1,
+    },
+    {
+        "id": "wedding-set-c",
+        "product_id": "wedding-invitation",
+        "name": "Set C — Laser Cut Floral",
+        "price": 2400.00,
+        "size": '5" × 7"',
+        "material": "",
+        "inclusions": [
+            "20 pcs 5\" × 7\" invitations",
+            "20 laser-cut envelopes",
+            "Tag and ribbon",
+            "2 page inserts",
+            "Free layout",
+            "2 revisions",
+        ],
+        "add_on_label": "",
+        "add_on_price": None,
+        "included_quantity": 20,
+        "image": f"{IMG}/invitation/weddinginvitationj.jpg",
+        "sort_order": 2,
+    },
 ]
 
 # ---------------------------------------------------------------- Souvenir

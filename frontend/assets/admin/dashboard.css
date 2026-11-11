@@ -2354,14 +2354,16 @@ textarea:focus-visible {
 }
 
 .catalog-fields,
-.catalog-options {
+.catalog-options,
+.catalog-packages {
     margin-top: 20px;
     padding-top: 16px;
     border-top: 1px solid var(--line);
 }
 
 .catalog-fields > .field-note,
-.catalog-options > .field-note {
+.catalog-options > .field-note,
+.catalog-packages > .field-note {
     display: block;
     margin: 6px 0 12px;
 }

@@ -1,0 +1,5 @@
+# Used by Vercel's Python runtime. Keep in sync with backend/app/requirements.txt.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+openpyxl>=3.1,<4
+reportlab>=4.2,<5

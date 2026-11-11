@@ -26,6 +26,7 @@ from backend.app.models.catalog import (
     AREA_WIDTH_KEY,
     EVENT_MODES,
     FEET_PER_UNIT,
+    FIELD_SECTIONS,
     FIELD_TYPES,
     OPTION_FIELD_TYPES,
     PRICE_TYPES,
@@ -33,6 +34,7 @@ from backend.app.models.catalog import (
     CatalogField,
     CatalogProduct,
     FieldOption,
+    InvitationPackage,
 )
 from backend.app.repositories import catalog_repository
 
@@ -88,6 +90,7 @@ def admin_catalog() -> dict[str, Any]:
         "pricing_modes": list(PRICING_MODES),
         "price_types": list(PRICE_TYPES),
         "event_modes": list(EVENT_MODES),
+        "field_sections": list(FIELD_SECTIONS),
     }
 
 
@@ -407,16 +410,94 @@ def _display_value(field: CatalogField, value: Any, selections: dict[str, Any]) 
     return str(value)
 
 
+def product_has_event_section(product: CatalogProduct) -> bool:
+    """True for products whose order form collects event details as catalog fields (Invitation)."""
+    return any(field["section"] == "event" for field in product["fields"])
+
+
+def _section_scoped(product: CatalogProduct, sections: set[str] | None) -> CatalogProduct:
+    """A shallow copy holding only the fields of the requested form sections."""
+    if sections is None:
+        return product
+    return {**product, "fields": [field for field in product["fields"] if field["section"] in sections]}
+
+
+def _package_specifications(package: InvitationPackage) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = [
+        {"key": "package", "label": "Package", "value": package["name"], "type": "package"},
+        {"key": "package_price", "label": "Package price", "value": money(package["price"]), "type": "money"},
+    ]
+    if package["size"]:
+        rows.append({"key": "package_size", "label": "Size", "value": package["size"], "type": "text"})
+    if package["material"]:
+        rows.append({"key": "package_material", "label": "Material", "value": package["material"], "type": "text"})
+    if package["inclusions"]:
+        rows.append({"key": "package_inclusions", "label": "Inclusions", "value": "; ".join(package["inclusions"]), "type": "text"})
+    if package["add_on_price"] is not None:
+        label = package["add_on_label"] or "Additional pieces"
+        rows.append({
+            "key": "package_add_on",
+            "label": "Add-on",
+            "value": f"{label}: {money(package['add_on_price'])} per additional piece beyond {package['included_quantity']:,} pcs",
+            "type": "money",
+        })
+    return rows
+
+
+def _package_pricing(package: InvitationPackage, quantity: int) -> dict[str, Any]:
+    """Price a package order from the package's published price and add-on charge only."""
+    included = package["included_quantity"]
+    price = round(package["price"], 2)
+    add_on = package["add_on_price"]
+    lines = [{"label": package["name"], "detail": f"{included:,} pcs included", "amount": price}]
+    if add_on is None:
+        if quantity != included:
+            raise _bad(f"{package['name']} is ordered at exactly {included:,} pieces. Change the quantity to {included:,}.")
+        total = price
+    else:
+        extra = max(0, quantity - included)
+        total = round(price + extra * float(add_on), 2)
+        if extra:
+            lines.append({
+                "label": package["add_on_label"] or "Additional pieces",
+                "detail": f"{extra:,} additional pcs × {money(float(add_on))}",
+                "amount": round(extra * float(add_on), 2),
+            })
+    return {
+        "currency": CURRENCY,
+        "pricing_mode": "package",
+        "base_price": None,
+        "quantity": quantity,
+        "area_sqft": None,
+        "unit_price": None,
+        "lines": lines,
+        "estimated_total": total,
+        "requires_quote": False,
+        "quote_reasons": [],
+        "incomplete": [],
+        "package_id": package["id"],
+        "package_name": package["name"],
+        "package_price": price,
+        "included_quantity": included,
+        "add_on_price": add_on,
+    }
+
+
 def evaluate_order(
     product: CatalogProduct,
     quantity: Any,
     raw_selections: Any,
     file_names: dict[str, list[str]],
-) -> tuple[int, dict[str, Any], list[dict[str, str]], dict[str, Any]]:
+    *,
+    sections: set[str] | None = None,
+    package: InvitationPackage | None = None,
+) -> tuple[int, dict[str, Any], list[dict[str, str]], list[dict[str, str]], dict[str, Any]]:
     """Validate a submitted product configuration and price it.
 
-    Returns (quantity, selections, specifications, pricing). ``specifications`` is the human-readable,
-    ordered list the admin dashboard and the customer portal display.
+    Returns (quantity, selections, specifications, event_rows, pricing). ``specifications`` and
+    ``event_rows`` are the human-readable, ordered label/value lists the admin dashboard and the
+    customer portal display. ``sections`` limits validation to the form sections a package order
+    still shows; ``package`` prices from the package instead of the product's option prices.
     """
     if isinstance(quantity, bool) or not isinstance(quantity, int):
         raise _bad("Quantity must be a whole number.")
@@ -425,22 +506,34 @@ def evaluate_order(
         raise _bad(f"Quantity for {product['name']} must be between {low:,} and {high:,}.")
     if not isinstance(raw_selections, dict):
         raw_selections = {}
+    scoped = _section_scoped(product, sections)
     counts = {key: len(names) for key, names in file_names.items()}
-    selections = _parse_selections(product, raw_selections, strict=True, file_counts=counts)
+    selections = _parse_selections(scoped, raw_selections, strict=True, file_counts=counts)
     specifications: list[dict[str, str]] = []
-    for field in _visible_fields(product, selections):
+    event_rows: list[dict[str, str]] = []
+    for field in _visible_fields(scoped, selections):
         key = field["field_key"]
+        value: str | None = None
         if field["field_type"] == "file":
             names = file_names.get(key, [])
             if names:
-                specifications.append({"key": key, "label": field["label"], "value": ", ".join(names), "type": "file"})
+                value = ", ".join(names)
+        elif key in selections:
+            value = _display_value(field, selections[key], selections)
+        if value is None:
             continue
-        if key in selections:
-            specifications.append({"key": key, "label": field["label"], "value": _display_value(field, selections[key], selections), "type": field["field_type"]})
-    pricing = calculate_price(product, quantity, selections)
-    if pricing["area_sqft"] is not None:
-        specifications.append({"key": "area_sqft", "label": "Print area", "value": f"{_format_number(pricing['area_sqft'])} sq ft per piece", "type": "computed"})
-    return quantity, selections, specifications, pricing
+        if field["section"] == "event":
+            event_rows.append({"label": field["label"], "value": value})
+            continue
+        specifications.append({"key": key, "label": field["label"], "value": value, "type": field["field_type"]})
+    if package is not None:
+        pricing = _package_pricing(package, quantity)
+        specifications = _package_specifications(package) + specifications
+    else:
+        pricing = calculate_price(scoped, quantity, selections)
+        if pricing["area_sqft"] is not None:
+            specifications.append({"key": "area_sqft", "label": "Print area", "value": f"{_format_number(pricing['area_sqft'])} sq ft per piece", "type": "computed"})
+    return quantity, selections, specifications, event_rows, pricing
 
 
 def file_field(product: CatalogProduct, key: str) -> CatalogField | None:
@@ -733,6 +826,8 @@ def _field_values(product: CatalogProduct, payload: dict[str, Any], current: Cat
         values["field_type"] = field_type
     if wants("required"):
         values["required"] = _bool(payload, "required", False)
+    if wants("section"):
+        values["section"] = _choice(payload, "section", "Form section", FIELD_SECTIONS, "")
     if wants("placeholder"):
         values["placeholder"] = _text(payload, "placeholder", "Placeholder", 160)
     if wants("help_text"):

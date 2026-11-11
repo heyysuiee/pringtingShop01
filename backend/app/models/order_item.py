@@ -32,6 +32,10 @@ class OrderCustomization(TypedDict):
     options: NotRequired[dict[str, Any]]
     specifications: NotRequired[list[OrderSpecification]]
     notes: NotRequired[str]
+    # "package" when a ready-made invitation set was chosen, "customize" for a built-from-scratch order.
+    order_kind: NotRequired[str]
+    # Snapshot of the chosen invitation package at submission time (name, price, inclusions, ...).
+    package: NotRequired[dict[str, Any]]
     size: NotRequired[str]
     material: NotRequired[str]
     details: NotRequired[str]

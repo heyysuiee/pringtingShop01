@@ -258,6 +258,8 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
     total = order["total_amount"]
     estimate = (order.get("pricing") or {}).get("estimated_total")
     images = [item for item in order["attachments"] if str(item.get("mime_type", "")).startswith("image/")]
+    customization = order.get("customization") or {}
+    package = customization.get("package") if isinstance(customization.get("package"), dict) else {}
     return {
         "reference": order["reference"],
         "customer_id": order.get("customer_id"),
@@ -268,6 +270,8 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "service": service["label"],
         "product": (order.get("product") or {}).get("name", ""),
         "product_image": (order.get("product") or {}).get("image", ""),
+        "order_kind": customization.get("order_kind", ""),
+        "package_name": package.get("name", ""),
         "description": description(order),
         "quantity": (order.get("customization") or {}).get("quantity"),
         "created_at": order["created_at"],
@@ -400,10 +404,15 @@ def order_rows(params: Mapping[str, Any], orders: list[OrderRecord] | None = Non
     status = param_text(params, "status", 60)
     service = param_text(params, "service", 80)
     pay = param_text(params, "payment_status", 40)
+    kind = param_text(params, "kind", 20)
+    if kind and kind not in {"package", "customize"}:
+        raise bad_request("Select a valid order type.")
     start, end = date_range(params, "date_from", "date_to", "Request date")
     rows = []
     for order in orders:
         row = order_row(order, services)
+        if kind and row["order_kind"] != kind:
+            continue
         if status:
             group = STATUS_GROUPS.get(status)
             if (group is not None and row["status"] not in group) or (group is None and row["status"] != status):

@@ -43,7 +43,8 @@ class OrderRecord(TypedDict):
     customer: dict[str, str]
     product: OrderItem
     customization: OrderCustomization
-    event_details: dict[str, str]
+    # Invitation orders store an ordered list of {label, value}; older orders store the five fixed keys.
+    event_details: dict[str, str] | list[dict[str, str]]
     has_event: bool
     acknowledged: bool
     status: str

@@ -9,6 +9,11 @@ VALUE_FIELD_TYPES = ("text", "textarea", "number", "date", "time")
 FILE_FIELD_TYPES = ("file",)
 FIELD_TYPES = OPTION_FIELD_TYPES + VALUE_FIELD_TYPES + FILE_FIELD_TYPES
 
+# Which part of the order form a field belongs to. "" is the basic specification section.
+# The Invitation ordering process uses these to build its multi-part form and to let a package
+# order skip the specification/design sections while still collecting the event and uploads.
+FIELD_SECTIONS = ("", "design", "event", "upload")
+
 # unit: price per piece. area: price per square foot (needs width/height fields). quote: always quoted by the shop.
 PRICING_MODES = ("unit", "area", "quote")
 # How an option's price adjustment is applied.
@@ -52,6 +57,7 @@ class CatalogField(TypedDict):
     max_files: int
     depends_on: str
     depends_values: list[str]
+    section: str
     sort_order: int
     active: bool
     options: list[FieldOption]
@@ -81,3 +87,21 @@ class CatalogCategory(TypedDict):
     sort_order: int
     active: bool
     products: list[CatalogProduct]
+
+
+class InvitationPackage(TypedDict):
+    """A ready-made invitation set with a fixed price and its own inclusions/add-on."""
+
+    id: str
+    product_id: str
+    name: str
+    price: float
+    size: str
+    material: str
+    inclusions: list[str]
+    add_on_label: str
+    add_on_price: float | None
+    included_quantity: int
+    image: str
+    sort_order: int
+    active: bool

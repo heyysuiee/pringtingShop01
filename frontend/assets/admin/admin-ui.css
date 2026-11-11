@@ -956,6 +956,16 @@ button.hbar-row {
     font-weight: 700;
 }
 
+.package-inclusions-detail {
+    margin-top: 10px;
+}
+
+.package-inclusions-detail > strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
 .timeline {
     display: grid;
     gap: 0;

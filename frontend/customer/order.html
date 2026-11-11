@@ -67,20 +67,13 @@
                 </div>
             </section>
 
-            <ol class="stepper" id="stepper" hidden aria-label="Order progress">
-                <li class="stepper-item active" data-step-indicator="1"><span class="stepper-num">1</span><span
-                        class="stepper-label">Product</span></li>
-                <li class="stepper-item" data-step-indicator="2"><span class="stepper-num">2</span><span
-                        class="stepper-label">Customize</span></li>
-                <li class="stepper-item" data-step-indicator="3"><span class="stepper-num">3</span><span
-                        class="stepper-label">Contact</span></li>
-                <li class="stepper-item" data-step-indicator="4"><span class="stepper-num">4</span><span
-                        class="stepper-label">Review</span></li>
-            </ol>
+            <ol class="stepper" id="stepper" hidden aria-label="Order progress"></ol>
 
             <form id="order-form" class="card order-card" novalidate hidden>
                 <div class="order-error" id="order-error" role="alert" hidden></div>
-                <section class="wizard-step active" data-step="1" aria-labelledby="step1-title">
+
+                <!-- 01 · Product -->
+                <section class="wizard-step active" data-step="1" data-wizard-section="product" aria-labelledby="step1-title">
                     <p class="order-step-kicker">01 · Start with a product</p>
                     <h2 id="step1-title" class="step-title">What would you like printed?</h2>
                     <p class="order-step-lead">Choose a service and product. The next step shows the options for that
@@ -102,56 +95,154 @@
                     </div>
                 </section>
 
-                <section class="wizard-step" data-step="2" aria-labelledby="step2-title">
-                    <p class="order-step-kicker">02 · Make it yours</p>
-                    <h2 id="step2-title" class="step-title">Customize your <span id="step2-product">product</span></h2>
-                    <p class="order-step-lead">Only the options for this product are shown. Fields marked “optional” can
-                        be left blank.</p>
-                    <div class="field quantity-field">
-                        <label for="quantity" class="field-label">Quantity</label>
+                <!-- 02 · Ordering option (Invitation) or Customize (all other products) -->
+                <section class="wizard-step" data-step="2" data-wizard-section="option" aria-labelledby="step2-title">
+                    <div id="invitation-option" hidden>
+                        <p class="order-step-kicker">02 · Choose how to order</p>
+                        <h2 id="step2-title" class="step-title">How would you like your <span id="step2-product">invitation</span>?</h2>
+                        <p class="order-step-lead">Choose a ready-made package with everything included, or customize
+                            the size, paper, design, and details yourself. The shop confirms the final amount before
+                            payment is requested.</p>
+                        <div class="order-mode-grid" role="group" aria-label="Ordering option">
+                            <button type="button" class="order-mode-card" data-order-mode="package" aria-pressed="false">
+                                <span class="order-mode-icon" aria-hidden="true">▤</span>
+                                <span class="order-mode-copy">
+                                    <strong>Order by Package</strong>
+                                    <small>Pick a published set with its exact price and inclusions. Best when you
+                                        want a ready-made design.</small>
+                                </span>
+                            </button>
+                            <button type="button" class="order-mode-card" data-order-mode="customize" aria-pressed="false">
+                                <span class="order-mode-icon" aria-hidden="true">✎</span>
+                                <span class="order-mode-copy">
+                                    <strong>Customize Your Own Invitation</strong>
+                                    <small>Set your own size, paper, quantity, design direction, and event details.
+                                        Priced by quotation.</small>
+                                </span>
+                            </button>
+                        </div>
+                        <div id="package-section" hidden>
+                            <h3 class="invitation-subtitle">Choose a package</h3>
+                            <p class="field-hint">Select one set to continue. The package order form opens after a
+                                package is chosen.</p>
+                            <div class="package-list" id="package-list" aria-live="polite"></div>
+                            <p class="field-error" id="package-error" role="alert"></p>
+                        </div>
+                        <p class="field-error" id="order-mode-error" role="alert"></p>
+                    </div>
+
+                    <div id="general-customize" hidden>
+                        <p class="order-step-kicker">02 · Make it yours</p>
+                        <h2 class="step-title">Customize your <span id="step2-general-product">product</span></h2>
+                        <p class="order-step-lead">Only the options for this product are shown. Fields marked “optional”
+                            can be left blank.</p>
+                        <div class="field quantity-field" id="general-quantity-field">
+                            <label for="quantity" class="field-label">Quantity</label>
+                            <div class="quantity-control">
+                                <button type="button" class="quantity-step" data-quantity-step="-1"
+                                    aria-label="Decrease quantity">−</button>
+                                <input id="quantity" class="input" type="number" inputmode="numeric" step="1" min="1"
+                                    value="1" required>
+                                <button type="button" class="quantity-step" data-quantity-step="1"
+                                    aria-label="Increase quantity">+</button>
+                            </div>
+                            <p class="field-hint" id="quantity-hint"></p>
+                        </div>
+                        <div id="general-dynamic-fields" aria-live="polite"></div>
+                        <div class="field">
+                            <label for="notes" class="field-label">Special instructions <span
+                                    class="optional">(optional)</span></label>
+                            <textarea id="notes" class="input" rows="3" maxlength="2000"
+                                placeholder="Anything else our team should know?"></textarea>
+                        </div>
+                        <div class="field">
+                            <label for="artwork" class="field-label">Other reference images or files <span
+                                    class="optional">(optional · up to 3 files)</span></label>
+                            <label class="upload-zone upload-zone-compact" for="artwork"><span class="upload-icon"
+                                    aria-hidden="true">↥</span><strong>Choose JPG, PNG, WebP, or PDF files</strong><small>5 MB
+                                    maximum per file.</small></label>
+                            <input id="artwork" class="visually-hidden" type="file"
+                                accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" multiple>
+                            <div class="upload-previews" id="upload-previews"></div>
+                            <p class="field-hint">For the best print quality, you may also email your original,
+                                high-resolution images to the shop.</p>
+                        </div>
+                        <aside class="estimate-panel" id="estimate-panel" aria-live="polite"
+                            aria-labelledby="estimate-title">
+                            <div class="estimate-head">
+                                <span class="order-step-kicker" id="estimate-title">Price estimate</span>
+                                <strong class="estimate-total" id="estimate-total">—</strong>
+                            </div>
+                            <p class="estimate-status" id="estimate-status"></p>
+                            <ul class="estimate-lines" id="estimate-lines"></ul>
+                        </aside>
+                    </div>
+                </section>
+
+                <!-- 03 · Configure (Invitation only) -->
+                <section class="wizard-step" data-step="3" data-wizard-section="configure" aria-labelledby="step3-title">
+                    <p class="order-step-kicker">03 · Build your invitation</p>
+                    <h2 id="step3-title" class="step-title">Set the details</h2>
+                    <p class="order-step-lead" id="configure-lead"></p>
+
+                    <div id="selected-package-summary" class="selected-package-summary" hidden></div>
+
+                    <div id="customize-section" hidden>
+                        <h3 class="invitation-subtitle">Basic specifications</h3>
+                        <div id="invitation-basics-fields" aria-live="polite"></div>
+                        <h3 class="invitation-subtitle">Design customization</h3>
+                        <p class="field-hint">Tell us your design direction. Choose “Shop will design it for me” if you
+                            do not have a print-ready file yet.</p>
+                        <div id="invitation-design-fields" aria-live="polite"></div>
+                    </div>
+
+                    <div class="field quantity-field" id="invitation-quantity-field">
+                        <label for="invitation-quantity" class="field-label">Total pieces</label>
                         <div class="quantity-control">
                             <button type="button" class="quantity-step" data-quantity-step="-1"
                                 aria-label="Decrease quantity">−</button>
-                            <input id="quantity" class="input" type="number" inputmode="numeric" step="1" min="1"
-                                value="1" required>
+                            <input id="invitation-quantity" class="input" type="number" inputmode="numeric" step="1"
+                                min="10" value="10" required>
                             <button type="button" class="quantity-step" data-quantity-step="1"
                                 aria-label="Increase quantity">+</button>
                         </div>
-                        <p class="field-hint" id="quantity-hint"></p>
+                        <p class="field-hint" id="invitation-quantity-hint"></p>
                     </div>
-                    <div id="dynamic-fields" aria-live="polite"></div>
-                    <div class="field">
-                        <label for="notes" class="field-label">Special instructions <span
-                                class="optional">(optional)</span></label>
-                        <textarea id="notes" class="input" rows="3" maxlength="2000"
-                            placeholder="Anything else our team should know?"></textarea>
-                    </div>
-                    <div class="field">
-                        <label for="artwork" class="field-label">Other reference images or files <span
-                                class="optional">(optional · up to 3 files)</span></label>
-                        <label class="upload-zone upload-zone-compact" for="artwork"><span class="upload-icon"
-                                aria-hidden="true">↥</span><strong>Choose JPG, PNG, WebP, or PDF files</strong><small>5 MB
-                                maximum per file.</small></label>
-                        <input id="artwork" class="visually-hidden" type="file"
-                            accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" multiple>
-                        <div class="upload-previews" id="upload-previews"></div>
-                        <p class="field-hint">For the best print quality, you may also email your original,
-                            high-resolution images to the shop.</p>
-                    </div>
-                    <aside class="estimate-panel" id="estimate-panel" aria-live="polite"
-                        aria-labelledby="estimate-title">
+
+                    <aside class="estimate-panel" id="invitation-estimate-panel" aria-live="polite"
+                        aria-labelledby="invitation-estimate-title">
                         <div class="estimate-head">
-                            <span class="order-step-kicker" id="estimate-title">Price estimate</span>
-                            <strong class="estimate-total" id="estimate-total">—</strong>
+                            <span class="order-step-kicker" id="invitation-estimate-title">Price estimate</span>
+                            <strong class="estimate-total" id="invitation-estimate-total">—</strong>
                         </div>
-                        <p class="estimate-status" id="estimate-status"></p>
-                        <ul class="estimate-lines" id="estimate-lines"></ul>
+                        <p class="estimate-status" id="invitation-estimate-status"></p>
+                        <ul class="estimate-lines" id="invitation-estimate-lines"></ul>
                     </aside>
                 </section>
 
-                <section class="wizard-step" data-step="3" aria-labelledby="step3-title">
-                    <p class="order-step-kicker">03 · How we can reach you</p>
-                    <h2 id="step3-title" class="step-title">Your contact details</h2>
+                <!-- 04 · Event details & files (Invitation only) -->
+                <section class="wizard-step" data-step="4" data-wizard-section="event-files" aria-labelledby="step4-title">
+                    <p class="order-step-kicker">04 · Event details &amp; files</p>
+                    <h2 id="step4-title" class="step-title">Tell us about the celebration</h2>
+                    <p class="order-step-lead">These details guide your invitation layout and wording. Required fields
+                        are marked; everything you share is reviewed by the shop before printing.</p>
+                    <div id="invitation-event-fields" aria-live="polite"></div>
+                    <h3 class="invitation-subtitle">Photos &amp; references</h3>
+                    <p class="field-hint">Attach up to 15 files in total. JPG, PNG, WebP, or PDF · 5 MB maximum each.
+                        You can preview, replace, or remove a file before submitting.</p>
+                    <div id="invitation-upload-fields" aria-live="polite"></div>
+                    <div class="field">
+                        <label for="invitation-notes" class="field-label">Special instructions <span
+                                class="optional">(optional)</span></label>
+                        <textarea id="invitation-notes" class="input" rows="3" maxlength="2000"
+                            placeholder="Anything else our team should know?"></textarea>
+                    </div>
+                </section>
+
+                <!-- 05 · Contact -->
+                <section class="wizard-step" data-step="5" data-wizard-section="contact" aria-labelledby="step5-title">
+                    <p class="order-step-kicker">05 · How we can reach you</p>
+                    <h2 id="step5-title" class="step-title">Your contact details</h2>
                     <div class="form-grid">
                         <div class="field"><label for="name" class="field-label">Full name</label><input id="name"
                                 class="input" autocomplete="name" maxlength="120" required></div>
@@ -189,10 +280,11 @@
                     </fieldset>
                 </section>
 
-                <section class="wizard-step" data-step="4" aria-labelledby="step4-title">
-                    <p class="order-step-kicker">04 · Check before you send</p>
-                    <h2 id="step4-title" class="step-title">Review your order request</h2>
-                    <button class="text-button" type="button" id="edit-order">← Edit product options</button>
+                <!-- 06 · Review -->
+                <section class="wizard-step" data-step="6" data-wizard-section="review" aria-labelledby="step6-title">
+                    <p class="order-step-kicker">06 · Check before you send</p>
+                    <h2 id="step6-title" class="step-title">Review your order request</h2>
+                    <button class="text-button" type="button" id="edit-order">← Edit order options</button>
                     <div class="order-summary-groups" id="summary"></div>
                     <section class="order-instructions" aria-labelledby="instructions-title">
                         <h3 id="instructions-title">Before you place your order</h3>

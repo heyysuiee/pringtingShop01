@@ -18,7 +18,7 @@ from backend.app.core.security import session_claims
 from backend.app.models.order import OrderAttachment, OrderHistoryEntry, OrderRecord, OrderUpdates
 from backend.app.repositories import customer_repository, order_repository
 from backend.app.schemas.user import normalize_email, validate_phone
-from backend.app.services import auth_services, catalog_services
+from backend.app.services import auth_services, catalog_services, package_services
 from backend.app.utils.clock import now_iso
 from backend.app.utils.images import optimized_image
 
@@ -144,12 +144,38 @@ def _write_uploads(decoded: list[tuple[OrderAttachment, bytes]]) -> list[OrderAt
     return saved
 
 
+EVENT_LABELS = (
+    ("celebrant", "Celebrant"),
+    ("event_type", "Event type"),
+    ("event_date", "Event date"),
+    ("event_time", "Event time"),
+    ("event_location", "Event location"),
+)
+
+
+def _event_fields(details: Any) -> list[dict[str, str]]:
+    """Normalize either stored event shape into an ordered list of label/value rows."""
+    if isinstance(details, list):
+        return [
+            {"label": str(item.get("label", "")), "value": str(item.get("value", ""))}
+            for item in details
+            if isinstance(item, dict) and item.get("value")
+        ]
+    if isinstance(details, dict):
+        return [{"label": label, "value": str(details[key])} for key, label in EVENT_LABELS if details.get(key)]
+    return []
+
+
 def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     result = dict(order)
     result.pop("customer_id", None)
     result.pop("idempotency_key", None)
     # Sent back with admin actions so an out-of-date screen cannot apply the same action twice.
     result["version"] = len(order["history"])
+    customization = order.get("customization") or {}
+    result["order_kind"] = customization.get("order_kind", "")
+    result["package"] = customization.get("package")
+    result["event_fields"] = _event_fields(order.get("event_details"))
     product = dict(order["product"])
     product["image"] = optimized_image(product.get("image", ""))
     result["product"] = product
@@ -260,37 +286,49 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
 
     # The product, its form fields, and its prices come from the database, never from the client.
     product = catalog_services.orderable_product(product_payload.get("id"))
+    has_event_fields = catalog_services.product_has_event_section(product)
+    package_id = customization_payload.get("package_id")
+    if package_id not in (None, "") and not has_event_fields:
+        raise HTTPException(status_code=422, detail="Packages are only available for invitation orders.")
+    package = package_services.orderable_package(product, package_id) if package_id not in (None, "") else None
     decoded_uploads = _decode_order_uploads(product, payload.get("files", []), payload.get("field_files"))
     field_file_names: dict[str, list[str]] = {}
     for metadata, _ in decoded_uploads:
         if metadata.get("field_key"):
             field_file_names.setdefault(metadata["field_key"], []).append(metadata["name"])
-    quantity, selections, specifications, pricing = catalog_services.evaluate_order(
+    quantity, selections, specifications, event_rows, pricing = catalog_services.evaluate_order(
         product,
         customization_payload.get("quantity"),
         customization_payload.get("options"),
         field_file_names,
+        sections={"event", "upload"} if package else None,
+        package=package,
     )
     notes = _text(customization_payload.get("notes", ""), "Special instructions", 2000)
 
-    event_mode = product["event_mode"]
-    has_event = event_mode == "required" or (event_mode == "optional" and payload.get("has_event") is True)
-    event_details = {
-        "celebrant": _text(event_payload.get("celebrant", ""), "Celebrant name", 120),
-        "event_type": _text(event_payload.get("event_type", ""), "Event type", 120),
-        "event_date": _text(event_payload.get("event_date", ""), "Event date", 20),
-        "event_time": _text(event_payload.get("event_time", ""), "Event time", 20),
-        "event_location": _text(event_payload.get("event_location", ""), "Event location", 240),
-    }
-    if has_event and (not event_details["celebrant"] or not event_details["event_type"]):
-        raise HTTPException(status_code=422, detail="Celebrant name and event type are required for event orders.")
-    if event_mode == "required" and not event_details["event_date"]:
-        raise HTTPException(status_code=422, detail=f"Enter the event date for this {product['name']}.")
-    if has_event and event_details["event_date"]:
-        try:
-            date.fromisoformat(event_details["event_date"])
-        except ValueError as error:
-            raise HTTPException(status_code=422, detail="Enter a valid event date.") from error
+    if has_event_fields:
+        # Invitation event details (celebrant, baptism, wedding) are catalog fields in the "event" section.
+        has_event = True
+        event_details: dict[str, str] | list[dict[str, str]] = event_rows
+    else:
+        event_mode = product["event_mode"]
+        has_event = event_mode == "required" or (event_mode == "optional" and payload.get("has_event") is True)
+        event_details = {
+            "celebrant": _text(event_payload.get("celebrant", ""), "Celebrant name", 120),
+            "event_type": _text(event_payload.get("event_type", ""), "Event type", 120),
+            "event_date": _text(event_payload.get("event_date", ""), "Event date", 20),
+            "event_time": _text(event_payload.get("event_time", ""), "Event time", 20),
+            "event_location": _text(event_payload.get("event_location", ""), "Event location", 240),
+        }
+        if has_event and (not event_details["celebrant"] or not event_details["event_type"]):
+            raise HTTPException(status_code=422, detail="Celebrant name and event type are required for event orders.")
+        if event_mode == "required" and not event_details["event_date"]:
+            raise HTTPException(status_code=422, detail=f"Enter the event date for this {product['name']}.")
+        if has_event and event_details["event_date"]:
+            try:
+                date.fromisoformat(event_details["event_date"])
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail="Enter a valid event date.") from error
     files = _write_uploads(decoded_uploads)
 
     customization: dict[str, Any] = {
@@ -298,17 +336,33 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         "options": selections,
         "specifications": specifications,
         "notes": notes,
+        "order_kind": "package" if package else "customize",
     }
+    if package:
+        customization["package"] = {
+            "id": package["id"],
+            "name": package["name"],
+            "price": package["price"],
+            "size": package["size"],
+            "material": package["material"],
+            "inclusions": package["inclusions"],
+            "add_on_label": package["add_on_label"],
+            "add_on_price": package["add_on_price"],
+            "included_quantity": package["included_quantity"],
+            "image": package["image"],
+        }
     now = now_iso()
     estimate = pricing.get("estimated_total")
-    history_entry: OrderHistoryEntry = {
-        "at": now,
-        "text": (
-            f"Customer submitted an order request. Catalog estimate PHP {estimate:,.2f}; awaiting administrator confirmation."
-            if estimate is not None
-            else "Customer submitted an order request. Awaiting administrator quotation."
-        ),
-    }
+    if package and estimate is not None:
+        history_text = (
+            f"Customer submitted a {package['name']} package order. Package total PHP {estimate:,.2f}; "
+            "awaiting administrator confirmation."
+        )
+    elif estimate is not None:
+        history_text = f"Customer submitted an order request. Catalog estimate PHP {estimate:,.2f}; awaiting administrator confirmation."
+    else:
+        history_text = "Customer submitted an order request. Awaiting administrator quotation."
+    history_entry: OrderHistoryEntry = {"at": now, "text": history_text}
     order: OrderRecord = {
         # Assigned by order_repository.create_order (XXX-MM-DD-YY), never by the client.
         "reference": "",

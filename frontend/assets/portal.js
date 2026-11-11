@@ -113,7 +113,10 @@
         orders.forEach((order) => {
             const card = make("article", "card order-history-card");
             const main = make("div", "order-history-main");
-            main.append(make("span", "service-tag", order.product.category), make("h2", "", order.product.name), make("p", "field-hint", `${order.reference} · Submitted ${formatDate(order.created_at)}`));
+            const kind = order.order_kind === "package"
+                ? (order.package?.name ? `Package: ${order.package.name}` : "Ready-made package")
+                : order.order_kind === "customize" ? "Customized invitation" : "";
+            main.append(make("span", "service-tag", order.product.category), make("h2", "", order.product.name), make("p", "field-hint", [order.reference, `Submitted ${formatDate(order.created_at)}`, kind].filter(Boolean).join(" · ")));
             const meta = make("div", "order-history-meta");
             meta.append(make("span", "order-status-pill", order.status), make("span", "payment-status", paymentSummary(order)));
             if (order.total_amount !== null) {
@@ -148,6 +151,21 @@
             ["Material / variant", customization.material],
             ["Customization", customization.details],
         ];
+    }
+
+    /** Event rows from the invitation order form, with a fallback for older fixed event details. */
+    function eventRows(order) {
+        if (Array.isArray(order.event_fields) && order.event_fields.length) {
+            return order.event_fields.map((row) => [row.label, row.value]);
+        }
+        const legacy = order.event_details && !Array.isArray(order.event_details) ? order.event_details : {};
+        return [
+            ["Celebrant", legacy.celebrant],
+            ["Event type", legacy.event_type],
+            ["Event date", legacy.event_date],
+            ["Event time", legacy.event_time],
+            ["Event location", legacy.event_location],
+        ].filter(([, value]) => value);
     }
 
     function renderTimeline(order) {
@@ -199,6 +217,7 @@
 
         const summary = document.querySelector("#detail-summary");
         summary.replaceChildren();
+        if (order.order_kind) appendSummaryRow(summary, "Order type", order.order_kind === "package" ? "Ready-made package" : "Customized invitation");
         appendSummaryRow(summary, "Quantity", String(order.customization.quantity));
         specificationRows(order).forEach(([label, value]) => appendSummaryRow(summary, label, value));
         appendSummaryRow(summary, "Special instructions", order.customization.notes ?? order.customization.instructions);
@@ -207,11 +226,7 @@
         appendSummaryRow(summary, "Contact number", order.customer.phone);
         appendSummaryRow(summary, "Messenger name", order.customer.messenger);
         if (order.has_event) {
-            appendSummaryRow(summary, "Celebrant", order.event_details.celebrant);
-            appendSummaryRow(summary, "Event type", order.event_details.event_type);
-            appendSummaryRow(summary, "Event date", order.event_details.event_date);
-            appendSummaryRow(summary, "Event time", order.event_details.event_time);
-            appendSummaryRow(summary, "Event location", order.event_details.event_location);
+            eventRows(order).forEach(([label, value]) => appendSummaryRow(summary, label, value));
         }
         if (order.total_amount === null && estimateOf(order) !== null) {
             appendSummaryRow(summary, "Estimated total", `${money(estimateOf(order))} (from shop prices; not yet confirmed)`);

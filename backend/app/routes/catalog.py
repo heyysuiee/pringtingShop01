@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin
-from backend.app.services import catalog_services
+from backend.app.services import catalog_services, package_services
 
 
 router = APIRouter(tags=["catalog"])
@@ -33,6 +33,12 @@ def read_catalog_full(response: Response) -> dict[str, Any]:
 def read_product(product_id: str, response: Response) -> dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
     return {"product": catalog_services.public_product(product_id)}
+
+
+@router.get("/api/catalog/products/{product_id}/packages")
+def read_packages(product_id: str, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return package_services.public_packages(product_id)
 
 
 @router.post("/api/catalog/quote")
@@ -96,6 +102,30 @@ def admin_delete_product(product_id: str, request: Request) -> Response:
     require_admin(request)
     catalog_services.delete_product(product_id)
     return Response(status_code=204)
+
+
+@router.get("/api/admin/catalog/products/{product_id}/packages")
+def admin_read_packages(product_id: str, request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return package_services.admin_packages(product_id)
+
+
+@router.post("/api/admin/catalog/products/{product_id}/packages", status_code=201)
+def admin_create_package(product_id: str, request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    require_admin(request)
+    return package_services.create_package(product_id, payload)
+
+
+@router.patch("/api/admin/catalog/packages/{package_id}")
+def admin_update_package(package_id: str, request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    require_admin(request)
+    return package_services.update_package(package_id, payload)
+
+
+@router.delete("/api/admin/catalog/packages/{package_id}")
+def admin_delete_package(package_id: str, request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return package_services.delete_package(package_id)
 
 
 @router.post("/api/admin/catalog/products/{product_id}/pricing")

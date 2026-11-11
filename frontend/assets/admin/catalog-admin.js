@@ -21,6 +21,7 @@
     const PRICING_LABELS = { unit: "Per piece", area: "Per square foot (by size)", quote: "Always by quotation" };
     const PRICE_TYPE_LABELS = { per_unit: "per piece", per_order: "per order", per_sqft: "per sq ft" };
     const EVENT_LABELS = { none: "Not collected", optional: "Optional", required: "Required" };
+    const SECTION_LABELS = { "": "Basic specifications", design: "Design customization", event: "Event details", upload: "Uploads" };
 
     const state = { catalog: null, loading: null, error: "" };
 
@@ -513,7 +514,10 @@
             h("h3", { className: "catalog-section-title", text: "Product details" }),
             form,
         );
-        if (product) body.append(fieldListSection(product));
+        if (product) {
+            body.append(fieldListSection(product));
+            if (isInvitationProduct(product)) body.append(packageListSection(product));
+        }
         openDialog(body);
     }
 
@@ -535,6 +539,7 @@
                 h("strong", { text: field.label }),
                 h("span", { className: "catalog-chip", text: FIELD_TYPE_LABELS[field.field_type] || field.field_type }),
                 h("span", { className: "catalog-chip", text: field.required ? "Required" : "Optional" }),
+                h("span", { className: "catalog-chip", text: SECTION_LABELS[field.section] || field.section || SECTION_LABELS[""] }),
                 field.active ? null : h("span", { className: "catalog-chip catalog-chip-muted", text: "Hidden" }),
                 optionText ? h("small", { text: optionText }) : null,
                 field.depends_on ? h("small", { text: describeCondition(product, field) }) : null,
@@ -574,6 +579,154 @@
             h("p", { className: "field-note", text: "Customers see these questions, in this order, after choosing this product. Quantity and contact details are always asked." }),
             product.fields.length ? list : h("p", { className: "empty-state", text: "No fields yet. Add the sizes, materials, and other options customers should choose." }),
         );
+    }
+
+    // ================================================================ invitation packages
+
+    function isInvitationProduct(product) {
+        return product.category_id === "invitation" || product.fields.some((field) => Boolean(field.section));
+    }
+
+    function packageListSection(product) {
+        const listHost = h("div");
+        const add = h("button", { className: "button button-primary button-small", type: "button", text: "＋ Add package" });
+        add.addEventListener("click", () => openPackageEditor(product, null));
+        const section = h("section", { className: "catalog-packages" },
+            h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: "Order packages" }), add),
+            h("p", { className: "field-note", text: "Ready-made sets customers can order with one click. The price, inclusions, and availability here are shown on the customer order page." }),
+            listHost,
+        );
+        const reload = async () => {
+            listHost.replaceChildren(h("p", { className: "empty-state", text: "Loading packages…" }));
+            try {
+                const result = await api("GET", `/api/admin/catalog/products/${encodeURIComponent(product.id)}/packages`);
+                const packages = result.packages || [];
+                if (!packages.length) {
+                    listHost.replaceChildren(h("p", { className: "empty-state", text: "No packages yet. Add the ready-made sets customers can order." }));
+                    return;
+                }
+                listHost.replaceChildren(h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
+                    h("thead", {}, h("tr", {}, ...["Package", "Price", "Included", "Add-on", "Availability", ""].map((text) => h("th", { scope: "col", text })))),
+                    h("tbody", {}, ...packages.map((pkg) => packageRow(product, pkg, reload))),
+                )));
+            } catch (error) {
+                listHost.replaceChildren(h("p", { className: "empty-state", text: error instanceof Error ? error.message : "Packages could not be loaded." }));
+            }
+        };
+        void reload();
+        return section;
+    }
+
+    function packageRow(product, pkg, reload) {
+        const toggle = h("button", { className: "button button-small", type: "button", text: pkg.active ? "Hide" : "Show", title: pkg.active ? "Stop offering this package" : "Offer this package again" });
+        toggle.addEventListener("click", () => {
+            void guarded(toggle, async () => {
+                await api("PATCH", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`, { active: !pkg.active });
+                toast(pkg.active ? "Package hidden from customers." : "Package is available to order again.");
+                await reload();
+            });
+        });
+        const edit = h("button", { className: "button button-small", type: "button", text: "Edit" });
+        edit.addEventListener("click", () => openPackageEditor(product, pkg));
+        const remove = h("button", { className: "button button-small button-danger", type: "button", text: "Delete" });
+        remove.addEventListener("click", () => {
+            if (!window.confirm(`Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, mark it Unavailable instead.`)) return;
+            void guarded(remove, async () => {
+                await api("DELETE", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`);
+                toast("Package deleted.");
+                await reload();
+            });
+        });
+        const addOn = pkg.add_on_price === null || pkg.add_on_price === undefined
+            ? "—"
+            : `${pkg.add_on_label || "Add-on"} ${money(pkg.add_on_price)}`;
+        return h("tr", {},
+            h("td", {}, h("span", { className: "table-primary", text: pkg.name }), h("span", { className: "table-secondary", text: `${pkg.inclusions.length} inclusion${pkg.inclusions.length === 1 ? "" : "s"}${pkg.size ? ` · ${pkg.size}` : ""}` })),
+            h("td", { text: money(pkg.price) }),
+            h("td", { text: `${pkg.included_quantity} pcs` }),
+            h("td", { text: addOn }),
+            h("td", {}, statusBadge(pkg.active, "Available", "Unavailable")),
+            h("td", {}, h("div", { className: "catalog-row-actions" }, toggle, edit, remove)),
+        );
+    }
+
+    function openPackageEditor(product, pkg) {
+        const form = h("form", { className: "catalog-form", novalidate: true });
+        const name = h("input", { name: "name", required: true, maxlength: 120, value: pkg?.name || "" });
+        const price = h("input", { name: "price", type: "number", min: "0.01", step: "0.01", required: true, value: pkg?.price ?? "" });
+        const size = h("input", { name: "size", maxlength: 80, value: pkg?.size || "", placeholder: 'e.g. 5" × 7"' });
+        const material = h("input", { name: "material", maxlength: 120, value: pkg?.material || "", placeholder: "e.g. Premium photo paper" });
+        const included = h("input", { name: "included_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: pkg?.included_quantity ?? 20 });
+        const addOnLabel = h("input", { name: "add_on_label", maxlength: 120, value: pkg?.add_on_label || "", placeholder: "e.g. Additional set" });
+        const addOnPrice = h("input", { name: "add_on_price", type: "number", min: 0, step: "0.01", value: pkg?.add_on_price ?? "", placeholder: "Leave blank for no add-on" });
+        const inclusions = h("textarea", { name: "inclusions", required: true, maxlength: 10000, rows: 6, placeholder: "One inclusion per line" });
+        inclusions.value = (pkg?.inclusions || []).join("\n");
+        const image = h("input", { name: "image", maxlength: 300, value: pkg?.image || "", placeholder: "/frontend/image/…" });
+        const active = selectOf("active", [["true", "Available to order"], ["false", "Hidden"]], pkg ? String(pkg.active) : "true");
+        const sortOrder = h("input", { name: "sort_order", type: "number", min: 0, max: 10000, step: 1, value: pkg?.sort_order ?? "", placeholder: "Automatic" });
+
+        form.append(h("div", { className: "form-grid" },
+            formField("Package name", name),
+            formField("Package price (PHP)", price),
+            formField("Size", size),
+            formField("Material", material),
+            formField("Included quantity", included),
+            formField("Add-on label", addOnLabel, { note: "Shown when customers order more than the included quantity." }),
+            formField("Add-on price per extra piece (PHP)", addOnPrice, { note: "Leave blank to lock the order at exactly the included quantity." }),
+            formField("Availability", active),
+            formField("Sort order", sortOrder, { note: "Lower numbers appear first. Leave blank to add the package at the end." }),
+            formField("Image path", image, { full: true, note: "Optional site path, e.g. /frontend/image/invitation/Bdayinvitation.jpg." }),
+            formField("Inclusions", inclusions, { full: true, note: "One inclusion per line. Customers see exactly these lines on the package card." }),
+        ));
+
+        const back = h("button", { className: "button", type: "button", text: "← Back to product" });
+        back.addEventListener("click", () => openProductEditor(product.id));
+        const save = h("button", { className: "button button-primary", type: "submit", text: pkg ? "Save package" : "Add package" });
+        form.append(h("div", { className: "dialog-actions" }, back, save));
+
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            if (!form.reportValidity()) return;
+            const lines = inclusions.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+            if (!lines.length) {
+                toast("Add at least one inclusion for this package.");
+                return;
+            }
+            const priceValue = Number(price.value);
+            if (!(priceValue > 0)) {
+                toast("Package price must be greater than zero.");
+                return;
+            }
+            const payload = {
+                name: name.value.trim(),
+                price: priceValue,
+                size: size.value.trim(),
+                material: material.value.trim(),
+                included_quantity: Number(included.value),
+                add_on_label: addOnLabel.value.trim(),
+                add_on_price: addOnPrice.value.trim() === "" ? null : Number(addOnPrice.value),
+                inclusions: lines,
+                image: image.value.trim(),
+                active: active.value === "true",
+            };
+            if (sortOrder.value.trim() !== "") payload.sort_order = Number(sortOrder.value);
+            void guarded(save, async () => {
+                if (pkg) {
+                    await api("PATCH", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`, payload);
+                } else {
+                    await api("POST", `/api/admin/catalog/products/${encodeURIComponent(product.id)}/packages`, payload);
+                }
+                toast(pkg ? "Package saved." : "Package added.");
+                openProductEditor(product.id);
+            });
+        });
+
+        openDialog(h("div", { className: "catalog-editor" },
+            h("p", { className: "catalog-breadcrumb", text: `${product.category_label} / ${product.name}` }),
+            h("h2", { className: "dialog-heading", text: pkg ? `Edit “${pkg.name}”` : "Add a package" }),
+            h("p", { className: "dialog-subtitle", text: "Customers can order this ready-made set without customizing. Use only prices and inclusions approved by the shop." }),
+            form,
+        ));
     }
 
     // ================================================================ field editor
@@ -617,6 +770,7 @@
         const key = h("input", { name: "field_key", maxlength: 40, pattern: "[a-z][a-z0-9_]{0,39}", placeholder: "Generated from the label", value: field?.field_key || "" });
         const type = selectOf("field_type", Object.entries(FIELD_TYPE_LABELS), field?.field_type || "select");
         const required = selectOf("required", [["true", "Required"], ["false", "Optional"]], field ? String(field.required) : "true");
+        const section = selectOf("section", Object.entries(SECTION_LABELS), field?.section || "");
         const active = selectOf("active", [["true", "Shown"], ["false", "Hidden"]], field ? String(field.active) : "true");
         const placeholder = h("input", { name: "placeholder", maxlength: 160, value: field?.placeholder || "" });
         const help = h("input", { name: "help_text", maxlength: 300, value: field?.help_text || "" });
@@ -705,6 +859,7 @@
                 formField("Field key", key, { note: "Stored with orders. Lowercase letters, numbers, and underscores." }),
                 formField("Field type", type),
                 formField("Required?", required),
+                formField("Form section", section, { note: "Invitation orders group fields into basic specs, design, event, and uploads. Other products show all fields together." }),
                 formField("Help text", help, { full: true }),
                 formField("Visibility", active),
                 groups.placeholder,
@@ -734,6 +889,7 @@
                 field_type: kind,
                 required: required.value === "true",
                 active: active.value === "true",
+                section: section.value,
                 help_text: help.value.trim(),
                 placeholder: ["text", "textarea", "number"].includes(kind) ? placeholder.value.trim() : "",
                 min_value: kind === "number" ? numberOrNull(minValue.value) : null,
