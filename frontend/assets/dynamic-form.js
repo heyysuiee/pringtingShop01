@@ -12,6 +12,8 @@
  *
  * ``includeSections`` limits the form to fields whose catalog section is in the given array (for example
  * [""] for basic specifications, or ["event", "upload"] for a package order). Omit it to render every field.
+ * ``fieldFilter(field)`` can narrow the fields further (a package order of a non-invitation product shows
+ * only the field keys listed in ``product.package_field_keys``).
  *
  * Fields and options come from /api/catalog, so administrator changes appear here without code changes.
  */
@@ -51,9 +53,10 @@
         return `${sign}${money(Math.abs(option.price_adjustment))} ${charge}`;
     }
 
-    function create(container, product, { onChange = () => {}, idPrefix = "opt", includeSections = null } = {}) {
+    function create(container, product, { onChange = () => {}, idPrefix = "opt", includeSections = null, fieldFilter = null } = {}) {
         const sections = Array.isArray(includeSections) ? new Set(includeSections) : null;
-        const fields = (product.fields || []).filter((field) => !sections || sections.has(field.section || ""));
+        const fields = (product.fields || []).filter((field) => (!sections || sections.has(field.section || ""))
+            && (typeof fieldFilter !== "function" || fieldFilter(field)));
         const byKey = new Map(fields.map((field) => [field.field_key, field]));
         const wrappers = new Map();
         const uploads = new Map(); // field_key -> File[]
@@ -326,6 +329,7 @@
 
         return {
             product,
+            fieldCount: fields.length,
             values() {
                 const result = {};
                 for (const field of visibleFields()) {

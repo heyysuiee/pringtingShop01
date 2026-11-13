@@ -149,54 +149,45 @@ IMG = "/frontend/image"
 
 ORIENTATION = choice("orientation", "Orientation", ["Portrait", "Landscape"], kind="radio", default="portrait")
 
-INVITATION_WORDING = text(
-    "invitation_wording",
-    "Invitation wording",
-    multiline=True,
-    required=True,
-    placeholder="Names, program, RSVP contact, dress code, and any other text to print",
-)
+# Invitations use one paper size. The administrator can rename it from the field editor.
+INVITATION_SIZE_LABEL = "5 x 7 in"
+INVITATION_MIN_QUANTITY = 20
 
 
-def date_field(key: str, label: str) -> dict[str, Any]:
-    return {"field_key": key, "label": label, "field_type": "date", "required": True}
+def date_field(key: str, label: str, required: bool = True) -> dict[str, Any]:
+    return {"field_key": key, "label": label, "field_type": "date", "required": required}
 
 
-def time_field(key: str, label: str) -> dict[str, Any]:
-    return {"field_key": key, "label": label, "field_type": "time", "required": True}
+def time_field(key: str, label: str, required: bool = True) -> dict[str, Any]:
+    return {"field_key": key, "label": label, "field_type": "time", "required": required}
 
 
 def invitation_fields(
     *,
-    paper: Sequence[OptionSpec],
     folds: Sequence[OptionSpec],
     printing: Sequence[OptionSpec],
-    sizes: Sequence[OptionSpec],
     envelopes: Sequence[OptionSpec],
     event_fields: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """The Invitation order form, grouped into the sections the order page renders.
 
-    ``""`` basic specifications, ``"design"`` customization, ``"event"`` category-specific event
-    details (including the wording), and ``"upload"`` photo/reference files. A package order skips
-    the basic and design sections; the server re-validates only the event and upload sections.
+    ``""`` basic specifications, ``"options"`` finish and envelope (also offered with a package, and
+    priced on top of it), ``"design"`` customization, ``"event"`` the structured event details of the
+    invitation category, and ``"upload"`` photo/reference files. A package order skips the basic and
+    design sections; the server re-validates only the options, event, and upload sections.
     """
     basics = [
-        choice("invitation_size", "Invitation size", sizes),
-        choice("paper_type", "Paper type", paper),
-        choice("paper_finish", "Paper finish", ["Matte", "Glossy", "Satin", "Uncoated (natural texture)"]),
+        choice(
+            "invitation_size",
+            "Invitation size",
+            [INVITATION_SIZE_LABEL],
+            kind="radio",
+            default=slug(INVITATION_SIZE_LABEL),
+            help_text="Every invitation is printed in this one standard size.",
+        ),
         choice("printing_type", "Printing type", printing),
         ORIENTATION,
         choice("folding_type", "Style / format", folds),
-        choice("envelope_option", "Envelope preference", envelopes, default="no-envelope"),
-        text(
-            "envelope_color",
-            "Envelope color",
-            required=True,
-            placeholder="e.g. Sage green, blush pink",
-            depends_on="envelope_option",
-            depends_values=["colored-envelope"],
-        ),
         number(
             "insert_count",
             "Number of photo / page inserts",
@@ -204,6 +195,24 @@ def invitation_fields(
             maximum=20,
             required=False,
             help_text="Leave blank if you are not sure yet.",
+        ),
+    ]
+    options = [
+        choice("paper_finish", "Paper finish", ["Glossy", "Matte"], kind="radio", default="glossy"),
+        choice(
+            "envelope_option",
+            "Envelope",
+            envelopes,
+            default="plain-white-envelope",
+            help_text="Envelope upgrades may change the price; the amount is shown next to each choice.",
+        ),
+        text(
+            "envelope_color",
+            "Envelope color",
+            required=True,
+            placeholder="e.g. Sage green, blush pink",
+            depends_on="envelope_option",
+            depends_values=["colored-envelope"],
         ),
     ]
     design = [
@@ -234,43 +243,51 @@ def invitation_fields(
     fields: list[dict[str, Any]] = []
     for field in basics:
         fields.append({**field, "section": ""})
+    for field in options:
+        fields.append({**field, "section": "options"})
     for field in design:
         fields.append({**field, "section": "design"})
-    for field in [*event_fields, INVITATION_WORDING]:
+    for field in event_fields:
         fields.append({**field, "section": "event"})
     for field in uploads:
         fields.append({**field, "section": "upload"})
     return fields
 
 
-INVITATION_SIZES = ["4 x 6 in", "5 x 7 in", "A5 (5.8 x 8.3 in)", "Square 5 x 5 in", opt("Custom size", quote=True)]
+# Structured event details. Every category asks for the celebrant, event date, event time, and event
+# location (same keys, so summaries and the mockup designer read them the same way); each category
+# then adds the details that belong to it.
+RSVP = text("rsvp_contact", "RSVP contact", placeholder="e.g. Anna · 0917 000 0000")
 
 BIRTHDAY_EVENT = [
-    text("celebrant_name", "Celebrant name", required=True, placeholder="e.g. Mia Santos"),
-    number("celebrant_age", "Age to celebrate", minimum=1, maximum=120, required=True, placeholder="e.g. 7"),
+    text("celebrant_name", "Celebrant's name", required=True, placeholder="e.g. Mia Santos"),
+    number("celebrant_age", "Age to celebrate", minimum=1, maximum=120, required=False, placeholder="e.g. 7"),
     date_field("event_date", "Event date"),
     time_field("event_time", "Event time"),
-    text("venue", "Venue", required=True, placeholder="e.g. Quezon City"),
+    text("event_location", "Event location", required=True, max_length=240, placeholder="Venue name and address"),
+    RSVP,
 ]
 
 CHRISTENING_EVENT = [
-    text("child_name", "Child's name", required=True, placeholder="e.g. Noah Miguel Santos"),
-    text("parents_names", "Parents' names", required=True, placeholder="e.g. Mark and Anna Santos"),
+    text("celebrant_name", "Celebrant's name (child)", required=True, placeholder="e.g. Noah Miguel Santos"),
+    text("parents_names", "Parents' names", placeholder="e.g. Mark and Anna Santos"),
     text("godparents_names", "Godparents", multiline=True, placeholder="One name per line or separated by commas"),
-    date_field("baptism_date", "Baptism date"),
-    time_field("baptism_time", "Baptism time"),
-    text("church", "Church", required=True, placeholder="e.g. St. Joseph Parish"),
-    text("reception_venue", "Reception venue", placeholder="e.g. Santos Residence, Pasig City"),
+    date_field("event_date", "Event date (baptism)"),
+    time_field("event_time", "Event time (baptism)"),
+    text("event_location", "Event location (church)", required=True, max_length=240, placeholder="e.g. St. Joseph Parish, Pasig City"),
+    text("reception_venue", "Reception venue", max_length=240, placeholder="e.g. Santos Residence, Pasig City"),
+    RSVP,
 ]
 
 WEDDING_EVENT = [
-    text("bride_name", "Bride's name", required=True, placeholder="e.g. Maria Santos"),
-    text("groom_name", "Groom's name", required=True, placeholder="e.g. Juan Dela Cruz"),
-    date_field("wedding_date", "Wedding date"),
-    time_field("ceremony_time", "Ceremony time"),
-    text("ceremony_venue", "Ceremony venue", required=True, placeholder="e.g. Manila Cathedral"),
-    text("reception_venue", "Reception venue", required=True, placeholder="e.g. The Peninsula Manila"),
+    text("bride_name", "Celebrant: bride's name", required=True, placeholder="e.g. Maria Santos"),
+    text("groom_name", "Celebrant: groom's name", required=True, placeholder="e.g. Juan Dela Cruz"),
+    date_field("event_date", "Event date (wedding day)"),
+    time_field("event_time", "Event time (ceremony)"),
+    text("event_location", "Event location (ceremony venue)", required=True, max_length=240, placeholder="e.g. Manila Cathedral"),
+    text("reception_venue", "Reception venue", max_length=240, placeholder="e.g. The Peninsula Manila"),
     text("entourage", "Entourage", multiline=True, placeholder="Principal sponsors, bridesmaids, groomsmen, and other names"),
+    RSVP,
 ]
 
 INVITATIONS = [
@@ -279,8 +296,6 @@ INVITATIONS = [
         "Birthday Invitation",
         "A cheerful invitation for birthdays and milestones.",
         invitation_fields(
-            sizes=INVITATION_SIZES,
-            paper=["Standard cardstock", "Premium cardstock", "Linen textured cardstock", "Pearlescent cardstock", "Kraft cardstock"],
             folds=["Flat card (no fold)", "Bi-fold", "Tri-fold"],
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope"],
@@ -288,15 +303,13 @@ INVITATIONS = [
         ),
         image=f"{IMG}/invitation/Bdayinvitation.jpg",
         event_mode="required",
-        min_quantity=10,
+        min_quantity=INVITATION_MIN_QUANTITY,
     ),
     product(
         "wedding-invitation",
         "Wedding Invitation",
         "Elegant stationery for wedding celebrations.",
         invitation_fields(
-            sizes=INVITATION_SIZES + ["Square 6 x 6 in"],
-            paper=["Premium cardstock", "Linen textured cardstock", "Pearlescent cardstock", "Kraft cardstock", "Vellum overlay with cardstock"],
             folds=["Flat card (no fold)", "Bi-fold", "Gatefold", "Tri-fold", opt("Pocket fold", quote=True)],
             printing=["Single-sided, full color", "Double-sided, full color", "Full color with foil accents"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope", "Vellum envelope"],
@@ -304,15 +317,13 @@ INVITATIONS = [
         ),
         image=f"{IMG}/invitation/weddinginvitationj.jpg",
         event_mode="required",
-        min_quantity=10,
+        min_quantity=INVITATION_MIN_QUANTITY,
     ),
     product(
         "christening-invitation",
         "Christening Invitation",
         "A gentle invitation for a christening or baptism day.",
         invitation_fields(
-            sizes=INVITATION_SIZES,
-            paper=["Standard cardstock", "Premium cardstock", "Linen textured cardstock", "Pearlescent cardstock"],
             folds=["Flat card (no fold)", "Bi-fold"],
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope"],
@@ -320,7 +331,7 @@ INVITATIONS = [
         ),
         image=f"{IMG}/invitation/christening.jpg",
         event_mode="required",
-        min_quantity=10,
+        min_quantity=INVITATION_MIN_QUANTITY,
     ),
 ]
 
@@ -623,6 +634,24 @@ WATERPROOF = choice(
 CUT_TYPE = choice("cut_type", "Cut type", ["Kiss cut (on sheet)", "Die cut (individually cut)", "Sheet (square trim, uncut)"])
 
 STICKERS = [
+    # Product labels are the main sticker service, so they are listed first.
+    product(
+        "product-label-stickers",
+        "Product Label Stickers",
+        "Labels for jars, bottles, boxes, and small-business products.",
+        [
+            choice("size", "Size", STICKER_SIZES + ["2 x 3 in", "3 x 4 in"]),
+            choice("shape", "Shape", ["Round", "Square", "Rectangle", "Oval", "Custom die-cut"]),
+            choice("material", "Material", STICKER_MATERIALS + [opt("Kraft paper", "kraft-paper")]),
+            STICKER_FINISH,
+            WATERPROOF,
+            CUT_TYPE,
+            upload("design_upload", "Label design upload", required=True),
+            text("label_text", "Label text", multiline=True, placeholder="Product name, ingredients, net weight, or other text"),
+        ],
+        image=f"{IMG}/Sticker/sticker.jpg",
+        min_quantity=10,
+    ),
     product(
         "business-logo-stickers",
         "Business Logo Stickers",
@@ -638,22 +667,6 @@ STICKERS = [
             text("design_notes", "Design notes", multiline=True, placeholder="Colors, text to add, or layout notes"),
         ],
         image=f"{IMG}/Sticker/sticker.jpg",
-        min_quantity=10,
-    ),
-    product(
-        "product-label-stickers",
-        "Product Label Stickers",
-        "Labels for jars, bottles, boxes, and small-business products.",
-        [
-            choice("size", "Size", STICKER_SIZES + ["2 x 3 in", "3 x 4 in"]),
-            choice("shape", "Shape", ["Round", "Square", "Rectangle", "Oval", "Custom die-cut"]),
-            choice("material", "Material", STICKER_MATERIALS + [opt("Kraft paper", "kraft-paper")]),
-            STICKER_FINISH,
-            WATERPROOF,
-            CUT_TYPE,
-            upload("design_upload", "Label design upload", required=True),
-            text("label_text", "Label text", multiline=True, placeholder="Product name, ingredients, net weight, or other text"),
-        ],
         min_quantity=10,
     ),
     product(
@@ -674,21 +687,11 @@ STICKERS = [
         event_mode="optional",
         min_quantity=1,
     ),
-    product(
-        "wall-stickers-decals",
-        "Wall Stickers / Decals",
-        "Decorative wall decals for rooms, shops, and displays.",
-        [
-            choice("size", "Size", ["12 x 12 in", "12 x 24 in", "24 x 24 in", "24 x 36 in", opt("Custom size", quote=True)]),
-            choice("shape", "Shape", ["Square", "Rectangle", "Round", "Contour (follows design)"]),
-            choice("material", "Material", ["Matte wall vinyl", "Glossy wall vinyl", "Removable vinyl"]),
-            choice("finish", "Finish", ["Matte", "Glossy"]),
-            choice("cut_type", "Cut type", ["Contour cut", "Square / rectangle trim", "Lettering cut (no background)"]),
-            upload("design_upload", "Design upload"),
-            text("design_notes", "Design description", multiline=True, required=True, placeholder="Describe the decal, wall color, and placement"),
-        ],
-    ),
 ]
+
+# Products removed from the catalog. Existing databases delete them once on start-up (orders keep
+# their own copy of the product details, so past orders and reports are unaffected).
+REMOVED_PRODUCTS = ("wall-stickers-decals",)
 
 # ---------------------------------------------------------------- Sintra Board
 

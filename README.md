@@ -17,7 +17,7 @@ FastAPI serves the existing HTML/CSS/JavaScript storefront and admin pages from 
    python -m backend.app.core.generate_admin_hash
    ```
 
-   Copy the printed hash into `PRINTSHOP_ADMIN_PASSWORD_HASH`, and set `PRINTSHOP_ADMIN_EMAIL`. For local development, set these in the shell before starting the server.
+   Copy the printed hash into `PRINTSHOP_ADMIN_PASSWORD_HASH`, and set `PRINTSHOP_ADMIN_EMAIL`. For local development, set these in the shell before starting the server. Once SMTP is configured, the admin sign-in page's **Forgot password?** link can email a verification code and save a new password in the database; that saved password then takes precedence over `PRINTSHOP_ADMIN_PASSWORD_HASH`.
 
 4. Start the website from the project root:
 

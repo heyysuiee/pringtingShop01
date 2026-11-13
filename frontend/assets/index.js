@@ -200,10 +200,9 @@ function initImageFallbacks() {
             description: "Custom sticker concepts for product packaging, business branding, and personal projects.",
             palette: ["#e8e7dc", "#3e5147", "#b87968"],
             samples: [
-                ["business-logo-stickers", "Business Logo Stickers", "Brand sticker concept; shape, finish, and size can be discussed."],
                 ["product-label-stickers", "Product Label Stickers", "Label concept for product packaging and small businesses."],
-                ["name-stickers", "Name Stickers", "Personalized name sticker concept for school, gifts, or events."],
-                ["wall-stickers-decals", "Wall Stickers / Decals", "Decorative decal concept for a room or display."]
+                ["business-logo-stickers", "Business Logo Stickers", "Brand sticker concept; shape, finish, and size can be discussed."],
+                ["name-stickers", "Name Stickers", "Personalized name sticker concept for school, gifts, or events."]
             ]
         },
         "sintra-board": {
@@ -266,10 +265,21 @@ function initImageFallbacks() {
     const defaultPresentation = { kicker: "Made to order", palette: ["#e8e7dc", "#3e5147", "#b87968"] };
     const peso = (value) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value);
 
-    function priceLabel(product) {
-        if (product.pricing_mode === "quote" || product.base_price === null) return "Pricing by quote";
-        return product.pricing_mode === "area" ? `${peso(product.base_price)} per sq ft` : `From ${peso(product.base_price)} each`;
+    function packagePerPiece(pkg) {
+        return pkg.included_quantity ? pkg.price / pkg.included_quantity : Infinity;
     }
+
+    function priceLabel(product) {
+        if (product.pricing_mode !== "quote" && product.base_price !== null) {
+            return product.pricing_mode === "area" ? `${peso(product.base_price)} per sq ft` : `${peso(product.base_price)} per piece`;
+        }
+        const packages = product.packages || [];
+        if (packages.length) return `Packages from ${peso(Math.min(...packages.map(packagePerPiece)))} per piece`;
+        return "Pricing by quote";
+    }
+
+    // Extra details per product from the live catalog: every image and the published packages.
+    const productDetails = new Map();
 
     function applyCatalog(categories) {
         Object.keys(services).forEach((key) => delete services[key]);
@@ -281,9 +291,13 @@ function initImageFallbacks() {
                 kicker: look.kicker,
                 description: category.description || "",
                 palette: look.palette,
-                samples: category.products.map((product) => [
-                    product.id, product.name, product.description, product.image || undefined, priceLabel(product)
-                ])
+                samples: category.products.map((product) => {
+                    productDetails.set(product.id, {
+                        images: product.images && product.images.length ? product.images : (product.image ? [product.image] : []),
+                        packages: product.packages || [],
+                    });
+                    return [product.id, product.name, product.description, product.image || undefined, priceLabel(product)];
+                })
             };
         });
     }
@@ -491,6 +505,42 @@ function initImageFallbacks() {
         dialogDescription.textContent = sample.description;
         if (dialogPrice) dialogPrice.textContent = `${sample.price} · final amount confirmed by the shop`;
         dialogRequest.href = orderUrl(serviceId, sample.id);
+
+        // Every product photo, and the packages customers can choose on the order page.
+        const details = productDetails.get(sample.id) || { images: [], packages: [] };
+        const galleryHost = document.querySelector("#sample-dialog-gallery");
+        if (galleryHost) {
+            galleryHost.replaceChildren(...(details.images.length > 1 ? details.images : []).map((source, index) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = index === 0 ? "active" : "";
+                button.setAttribute("aria-label", `Show photo ${index + 1} of ${sample.name}`);
+                const thumb = document.createElement("img");
+                thumb.src = source;
+                thumb.alt = "";
+                thumb.loading = "lazy";
+                button.append(thumb);
+                button.addEventListener("click", () => {
+                    dialogImage.src = source;
+                    galleryHost.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+                });
+                return button;
+            }));
+            galleryHost.hidden = details.images.length < 2;
+        }
+        const packageHost = document.querySelector("#sample-dialog-packages");
+        if (packageHost) {
+            packageHost.replaceChildren(...details.packages.map((pkg) => {
+                const item = document.createElement("li");
+                const name = document.createElement("span");
+                name.textContent = `${pkg.name} · ${pkg.included_quantity} pcs`;
+                const price = document.createElement("strong");
+                price.textContent = `${peso(pkg.price)} (≈ ${peso(packagePerPiece(pkg))}/pc)`;
+                item.append(name, price);
+                return item;
+            }));
+            packageHost.hidden = !details.packages.length;
+        }
         sampleDialog.showModal();
     }
 

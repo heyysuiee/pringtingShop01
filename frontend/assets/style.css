@@ -5154,7 +5154,7 @@ fieldset.dyn-field>legend {
 
 .package-list {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 16px;
     margin-bottom: 10px;
 }
@@ -5383,4 +5383,527 @@ span.package-card-image.product-image-placeholder {
     font-size: 0.8rem;
     font-weight: 700;
     letter-spacing: 0.02em;
+}
+/* ---------- Ordering flow: packages for every product, galleries, payment options, mockup ---------- */
+
+.stepper.stepper-dynamic {
+    grid-template-columns: repeat(var(--steps, 5), minmax(0, 1fr));
+}
+
+.min-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 2px 9px;
+    border: 1px solid var(--order-brown);
+    border-radius: 999px;
+    color: var(--order-brown);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+}
+
+.min-badge[hidden] {
+    display: none;
+}
+
+.selected-product-copy .min-badge {
+    justify-self: start;
+    margin: 4px 0 0;
+}
+
+.photo-gallery {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    min-width: 0;
+}
+
+.photo-gallery-main {
+    position: relative;
+    display: block;
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: #f1f1f1;
+    cursor: zoom-in;
+    aspect-ratio: 4 / 3;
+}
+
+.photo-gallery-main img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    transition: transform 0.25s ease;
+}
+
+.photo-gallery-main:hover img {
+    transform: scale(1.03);
+}
+
+.photo-gallery-main:focus-visible {
+    outline: 3px solid var(--order-brown);
+    outline-offset: -3px;
+}
+
+span.photo-gallery-main {
+    display: grid;
+    place-items: center;
+    cursor: default;
+    font-size: 2.6rem;
+}
+
+.photo-gallery-count {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(43, 43, 43, 0.85);
+    color: #ffffff;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.photo-gallery-thumbs {
+    display: flex;
+    gap: 6px;
+    padding: 0 10px 10px;
+    overflow-x: auto;
+}
+
+.photo-gallery-thumb {
+    flex: 0 0 52px;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    overflow: hidden;
+    border: 2px solid #d4d4d4;
+    border-radius: 8px;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.photo-gallery-thumb.active {
+    border-color: var(--order-brown);
+}
+
+.photo-gallery-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.order-system .selected-product .selected-product-gallery {
+    border-right: 1px solid #d4d4d4;
+}
+
+.selected-product-copy .field-hint {
+    margin: 0;
+}
+
+.package-card-gallery .photo-gallery-main {
+    max-height: 240px;
+    aspect-ratio: 16 / 10;
+}
+
+.package-unit-price {
+    margin-left: 4px;
+    color: #2b2b2b;
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.package-description {
+    margin: 0;
+    color: #2b2b2b;
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+
+.estimate-lines li.estimate-total-line {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px dashed #d4d4d4;
+}
+
+/* Payment option (50% down payment or Cash on Delivery) */
+
+.payment-options {
+    display: grid;
+    gap: 10px;
+    margin: 22px 0 0;
+    padding: 18px;
+    border: 1px solid #d4d4d4;
+    border-radius: 16px;
+    background: #fafafa;
+}
+
+.payment-options legend {
+    padding: 0 6px;
+}
+
+.payment-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.payment-option-card {
+    position: relative;
+    cursor: pointer;
+}
+
+.payment-option-card input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.payment-option-body {
+    display: grid;
+    gap: 4px;
+    height: 100%;
+    padding: 14px 16px;
+    border: 2px solid #d4d4d4;
+    border-radius: 14px;
+    background: #ffffff;
+    color: var(--order-ink);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.payment-option-body strong {
+    font-family: var(--serif);
+    font-size: 1.05rem;
+}
+
+.payment-option-body small {
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.payment-option-card input:checked + .payment-option-body {
+    border-color: var(--order-brown);
+    box-shadow: 0 0 0 2px var(--order-brown);
+}
+
+.payment-option-card input:focus-visible + .payment-option-body {
+    outline: 2px solid var(--order-brown);
+    outline-offset: 3px;
+}
+
+.payment-breakdown {
+    display: grid;
+    gap: 0;
+    margin: 4px 0 0;
+}
+
+.payment-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    border-bottom: 1px solid #e3e3e3;
+    font-size: 0.9rem;
+}
+
+.payment-breakdown-row dt {
+    color: #2b2b2b;
+}
+
+.payment-breakdown-row dd {
+    margin: 0;
+    font-weight: 700;
+    text-align: right;
+}
+
+.payment-breakdown .field-hint {
+    margin: 6px 0 0;
+}
+
+/* Invitation mockup designer */
+
+.mockup-skip {
+    margin: 0 0 16px;
+}
+
+.mockup-designer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
+    gap: 24px;
+    align-items: start;
+}
+
+.mockup-designer.is-disabled .mockup-controls,
+.mockup-designer.is-disabled .mockup-stage {
+    opacity: 0.45;
+}
+
+.mockup-templates {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.mockup-template {
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    border: 2px solid #d4d4d4;
+    border-radius: 12px;
+    background: #ffffff;
+    color: var(--order-ink);
+    cursor: pointer;
+    text-align: center;
+}
+
+.mockup-template.selected {
+    border-color: var(--order-brown);
+    box-shadow: 0 0 0 2px var(--order-brown);
+}
+
+.mockup-template:disabled {
+    cursor: not-allowed;
+}
+
+.mockup-template-thumb svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(43, 43, 43, 0.12);
+}
+
+.mockup-template-name {
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.mockup-palettes {
+    display: flex;
+    gap: 10px;
+}
+
+.mockup-swatch {
+    width: 42px;
+    height: 42px;
+    border: 2px solid #d4d4d4;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.mockup-swatch.selected {
+    border-color: var(--order-brown);
+    box-shadow: 0 0 0 3px #ffffff, 0 0 0 5px var(--order-brown);
+}
+
+.mockup-stage {
+    position: sticky;
+    top: 16px;
+    display: grid;
+    gap: 8px;
+    margin: 0;
+}
+
+.mockup-preview {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.mockup-preview svg,
+.summary-mockup svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 14px 34px rgba(43, 43, 43, 0.2);
+}
+
+.summary-mockup {
+    width: min(220px, 60%);
+    margin-top: 10px;
+}
+
+/* Lightbox for product, package, and mockup images */
+
+.customer-lightbox {
+    width: min(960px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    padding: 0;
+    border: 0;
+    border-radius: 16px;
+    background: #ffffff;
+}
+
+.customer-lightbox::backdrop {
+    background: rgba(20, 20, 20, 0.82);
+}
+
+.lightbox-frame {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+}
+
+.lightbox-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    z-index: 1;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(43, 43, 43, 0.85);
+    color: #ffffff;
+    cursor: pointer;
+    font-size: 1.4rem;
+}
+
+.lightbox-stage {
+    display: grid;
+    place-items: center;
+    min-height: 200px;
+    border-radius: 10px;
+    background: #f1f1f1;
+}
+
+.lightbox-stage img {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 170px);
+    object-fit: contain;
+}
+
+.lightbox-stage svg {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: min(calc(100vh - 170px), 760px);
+}
+
+.lightbox-caption {
+    margin: 0;
+    font-size: 0.86rem;
+    text-align: center;
+}
+
+.lightbox-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    font-size: 0.86rem;
+}
+
+.lightbox-nav button[hidden] {
+    display: none;
+}
+
+@media (max-width: 760px) {
+    .stepper.stepper-dynamic {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        row-gap: 16px;
+    }
+
+    .stepper.stepper-dynamic .stepper-item::before {
+        display: none;
+    }
+
+    .payment-option-grid,
+    .mockup-designer {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mockup-stage {
+        position: static;
+        width: 100%;
+        max-width: 360px;
+        margin: 0 auto;
+    }
+
+    .order-system .selected-product .selected-product-gallery {
+        border-right: 0;
+        border-bottom: 1px solid #d4d4d4;
+    }
+}
+
+@media (max-width: 480px) {
+    .stepper.stepper-dynamic {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .mockup-templates {
+        gap: 6px;
+    }
+}
+
+/* Services page: sample details gallery and packages */
+
+.sample-dialog-gallery {
+    display: flex;
+    gap: 6px;
+    padding: 8px 0 0;
+    overflow-x: auto;
+}
+
+.sample-dialog-gallery button {
+    flex: 0 0 56px;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    overflow: hidden;
+    border: 2px solid #d4d4d4;
+    border-radius: 8px;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.sample-dialog-gallery button.active {
+    border-color: #2b2b2b;
+}
+
+.sample-dialog-gallery img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.sample-dialog-packages {
+    display: grid;
+    gap: 6px;
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.86rem;
+}
+
+.sample-dialog-packages li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid #e3e3e3;
+}
+
+/* Customer portal: payment breakdown and mockup */
+
+.portal-mockup {
+    width: min(240px, 70%);
+    margin: 10px 0;
+}
+
+.portal-mockup svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 10px 26px rgba(43, 43, 43, 0.18);
 }

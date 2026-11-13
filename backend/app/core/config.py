@@ -94,8 +94,17 @@ def _load_env_file() -> None:
             os.environ.setdefault(key, value)
 
 
+def _allowed_hosts() -> tuple[str, ...]:
+    hosts = _csv_setting("PRINTSHOP_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver")
+    # Render sets RENDER_EXTERNAL_HOSTNAME (e.g. myapp.onrender.com) on every web service.
+    render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+    if render_host and render_host not in hosts:
+        hosts += (render_host,)
+    return hosts
+
+
 _load_env_file()
-_environment = os.environ.get("PRINTSHOP_ENVIRONMENT", "development").strip().lower()
+_environment =os.environ.get("PRINTSHOP_ENVIRONMENT", "development").strip().lower()
 _database_path = os.environ.get(
     "PRINTSHOP_DATABASE_PATH",
     os.environ.get("PRINTSHOP_ORDER_DB", str(PROJECT_DIR / "backend" / "data" / "orders.sqlite3")),
@@ -113,7 +122,7 @@ settings = Settings(
     secret_key_persistent=bool(os.environ.get("PRINTSHOP_SECRET_KEY", "")),
     admin_email=os.environ.get("PRINTSHOP_ADMIN_EMAIL", "").strip().lower(),
     admin_password_hash=os.environ.get("PRINTSHOP_ADMIN_PASSWORD_HASH", ""),
-    allowed_hosts=_csv_setting("PRINTSHOP_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver"),
+    allowed_hosts=_allowed_hosts(),
     cors_origins=_csv_setting("PRINTSHOP_CORS_ORIGINS"),
     smtp_host=os.environ.get("PRINTSHOP_SMTP_HOST", "").strip(),
     smtp_port=int(os.environ.get("PRINTSHOP_SMTP_PORT", "587") or "587"),

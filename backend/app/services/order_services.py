@@ -15,10 +15,10 @@ from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
 
 from backend.app.core.security import session_claims
-from backend.app.models.order import OrderAttachment, OrderHistoryEntry, OrderRecord, OrderUpdates
+from backend.app.models.order import DOWN_PAYMENT_RATE, PAYMENT_OPTIONS, OrderAttachment, OrderHistoryEntry, OrderRecord, OrderUpdates
 from backend.app.repositories import customer_repository, order_repository
 from backend.app.schemas.user import normalize_email, validate_phone
-from backend.app.services import auth_services, catalog_services, package_services
+from backend.app.services import auth_services, catalog_services, mockup_services, package_services
 from backend.app.utils.clock import now_iso
 from backend.app.utils.images import optimized_image
 
@@ -166,6 +166,58 @@ def _event_fields(details: Any) -> list[dict[str, str]]:
     return []
 
 
+def payment_option(order: Mapping[str, Any]) -> str:
+    option = order.get("payment_option") or "down_payment"
+    return option if option in PAYMENT_OPTIONS else "down_payment"
+
+
+def is_cod(order: Mapping[str, Any]) -> bool:
+    return payment_option(order) == "cod"
+
+
+def payment_breakdown(order: Mapping[str, Any]) -> dict[str, Any]:
+    """Down payment, amount paid, and balance for one order, shown to customers and administrators.
+
+    With the 50% down payment option, half of the confirmed total is due before the draft is prepared and
+    the rest before release. With Cash on Delivery no down payment is required; the full amount is paid
+    on delivery or pickup. Before the quotation the figures use the catalog/package estimate.
+    """
+    option = payment_option(order)
+    total = order.get("total_amount")
+    estimate = (order.get("pricing") or {}).get("estimated_total")
+    estimate = float(estimate) if isinstance(estimate, (int, float)) and not isinstance(estimate, bool) else None
+    basis = float(total) if total is not None else estimate
+    paid = paid_amount(order)
+    cod = option == "cod"
+    required = 0.0 if cod else (round(basis * DOWN_PAYMENT_RATE, 2) if basis is not None else None)
+    if cod:
+        status = "Not required (COD)"
+    elif total is None:
+        status = "Due after quotation"
+    elif paid >= round(float(total) * DOWN_PAYMENT_RATE, 2) - 0.005:
+        status = "Paid"
+    elif paid > 0:
+        status = "Partially paid"
+    else:
+        status = "Pending"
+    balance = round(max(0.0, float(total) - paid), 2) if total is not None else None
+    return {
+        "payment_option": option,
+        "payment_option_label": PAYMENT_OPTIONS[option],
+        "down_payment_rate": 0.0 if cod else DOWN_PAYMENT_RATE,
+        "confirmed_total": round(float(total), 2) if total is not None else None,
+        "estimated_total": estimate,
+        "based_on_estimate": total is None and estimate is not None,
+        "down_payment_required": required,
+        "down_payment_remaining": round(max(0.0, required - paid), 2) if required is not None else None,
+        "down_payment_status": status,
+        "amount_paid": paid,
+        "balance": balance,
+        # What is still to be paid after the down payment (or everything, for COD), before the confirmed total.
+        "remaining_after_down_payment": round(basis - (required or 0.0), 2) if basis is not None else None,
+    }
+
+
 def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     result = dict(order)
     result.pop("customer_id", None)
@@ -175,6 +227,9 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     customization = order.get("customization") or {}
     result["order_kind"] = customization.get("order_kind", "")
     result["package"] = customization.get("package")
+    result["mockup"] = customization.get("mockup")
+    result["payment_option"] = payment_option(order)
+    result["payment"] = payment_breakdown(order)
     result["event_fields"] = _event_fields(order.get("event_details"))
     product = dict(order["product"])
     product["image"] = optimized_image(product.get("image", ""))
@@ -283,13 +338,16 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     }
     if payload.get("acknowledged") is not True:
         raise HTTPException(status_code=422, detail="Acknowledge the order instructions before submitting.")
+    chosen_payment = payload.get("payment_option")
+    if chosen_payment in (None, ""):
+        chosen_payment = "down_payment"
+    if chosen_payment not in PAYMENT_OPTIONS:
+        raise HTTPException(status_code=422, detail="Choose 50% down payment or Cash on Delivery (COD) as the payment option.")
 
-    # The product, its form fields, and its prices come from the database, never from the client.
+    # The product, its form fields, its packages, and its prices come from the database, never from the client.
     product = catalog_services.orderable_product(product_payload.get("id"))
     has_event_fields = catalog_services.product_has_event_section(product)
     package_id = customization_payload.get("package_id")
-    if package_id not in (None, "") and not has_event_fields:
-        raise HTTPException(status_code=422, detail="Packages are only available for invitation orders.")
     package = package_services.orderable_package(product, package_id) if package_id not in (None, "") else None
     decoded_uploads = _decode_order_uploads(product, payload.get("files", []), payload.get("field_files"))
     field_file_names: dict[str, list[str]] = {}
@@ -301,9 +359,16 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         customization_payload.get("quantity"),
         customization_payload.get("options"),
         field_file_names,
-        sections={"event", "upload"} if package else None,
         package=package,
     )
+    mockup = mockup_services.clean_mockup(product, customization_payload.get("mockup"), selections)
+    if mockup:
+        specifications.append({
+            "key": "mockup",
+            "label": "Invitation mockup",
+            "value": f"{mockup['template_name']} template (colour option {mockup['palette'] + 1})",
+            "type": "mockup",
+        })
     notes = _text(customization_payload.get("notes", ""), "Special instructions", 2000)
 
     if has_event_fields:
@@ -342,6 +407,7 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         customization["package"] = {
             "id": package["id"],
             "name": package["name"],
+            "description": package["description"],
             "price": package["price"],
             "size": package["size"],
             "material": package["material"],
@@ -350,9 +416,13 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
             "add_on_price": package["add_on_price"],
             "included_quantity": package["included_quantity"],
             "image": package["image"],
+            "images": package["images"],
         }
+    if mockup:
+        customization["mockup"] = mockup
     now = now_iso()
     estimate = pricing.get("estimated_total")
+    payment_text = f" Payment option: {PAYMENT_OPTIONS[chosen_payment]}."
     if package and estimate is not None:
         history_text = (
             f"Customer submitted a {package['name']} package order. Package total PHP {estimate:,.2f}; "
@@ -362,6 +432,7 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         history_text = f"Customer submitted an order request. Catalog estimate PHP {estimate:,.2f}; awaiting administrator confirmation."
     else:
         history_text = "Customer submitted an order request. Awaiting administrator quotation."
+    history_text += payment_text
     history_entry: OrderHistoryEntry = {"at": now, "text": history_text}
     order: OrderRecord = {
         # Assigned by order_repository.create_order (XXX-MM-DD-YY), never by the client.
@@ -397,6 +468,7 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         "history": [history_entry],
         "admin_notes": "",
         "customer_id": customer_id,
+        "payment_option": chosen_payment,
     }
     try:
         order_repository.create_order(order, idempotency_key)
@@ -549,10 +621,19 @@ def set_quotation(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not 0 < amount <= 100000000:
         raise HTTPException(status_code=422, detail="Enter a valid total quotation amount.")
     instructions = _text(payload.get("payment_instructions", ""), "Payment instructions", 1000)
+    total = round(float(amount), 2)
+    if is_cod(order):
+        # Cash on Delivery: no down payment, so the draft can be prepared right away.
+        next_status = "Draft Preparation"
+        terms = f"Cash on Delivery: no down payment required; PHP {total:,.2f} is due on delivery or pickup."
+    else:
+        next_status = "Awaiting Down Payment"
+        terms = f"50% down payment of PHP {total * DOWN_PAYMENT_RATE:,.2f} is required before the draft is prepared."
     return _save(
         order,
-        {"total_amount": round(float(amount), 2), "payment_instructions": instructions, "status": "Awaiting Down Payment"},
-        f"Administrator provided a quotation of PHP {float(amount):,.2f}. Payment instructions were {'provided' if instructions else 'not included'}.",
+        {"total_amount": total, "payment_instructions": instructions, "status": next_status},
+        f"Administrator provided a quotation of PHP {float(amount):,.2f}. {terms} "
+        f"Payment instructions were {'provided' if instructions else 'not included'}.",
         payload.get("expected_version"),
         admin=True,
     )
@@ -583,7 +664,7 @@ def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
     }
     payments = order["payments"] + [payment]
     updates: OrderUpdates = {"payments": payments}
-    if order["status"] == "Awaiting Down Payment" and sum(item["amount"] for item in payments) >= order["total_amount"] * 0.5:
+    if order["status"] == "Awaiting Down Payment" and sum(item["amount"] for item in payments) >= order["total_amount"] * DOWN_PAYMENT_RATE - 0.005:
         updates["status"] = "Draft Preparation"
     return _save(
         order,
@@ -598,7 +679,9 @@ def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
     order = _admin_order(reference)
     if order["status"] not in {"Draft Preparation", "Awaiting Customer Approval"}:
         raise HTTPException(status_code=409, detail="A draft can only be sent after preparation begins.")
-    if order["total_amount"] is None or paid_amount(order) < order["total_amount"] * 0.5:
+    if order["total_amount"] is None:
+        raise HTTPException(status_code=409, detail="Set the confirmed quotation before sending a draft.")
+    if not is_cod(order) and paid_amount(order) < order["total_amount"] * DOWN_PAYMENT_RATE - 0.005:
         raise HTTPException(status_code=409, detail="Record the required 50% down payment before sending a draft.")
     metadata, contents = _decode_upload(payload.get("file"))
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -617,6 +700,40 @@ def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
     except HTTPException:
         (UPLOAD_DIR / metadata["filename"]).unlink(missing_ok=True)
         raise
+
+
+def payment_option_changeable(order: Mapping[str, Any]) -> bool:
+    """The payment option can change until money is received or a draft is sent."""
+    if order["payments"]:
+        return False
+    return order["status"] in PENDING_STATUSES or (order["status"] == "Draft Preparation" and not order["draft_attachment"])
+
+
+def update_payment_option(reference: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Switch an order between the 50% down payment and Cash on Delivery (for example at the customer's request)."""
+    order = _admin_order(reference)
+    option = payload.get("payment_option")
+    if option not in PAYMENT_OPTIONS:
+        raise HTTPException(status_code=422, detail="Choose 50% down payment or Cash on Delivery (COD).")
+    if option == payment_option(order):
+        raise HTTPException(status_code=409, detail=f"This order already uses {PAYMENT_OPTIONS[option]}.")
+    if not payment_option_changeable(order):
+        raise HTTPException(
+            status_code=409,
+            detail="The payment option can only be changed before any payment is recorded and before a draft is sent.",
+        )
+    note = _text(payload.get("note", "") or "", "Reason", 500)
+    updates: OrderUpdates = {"payment_option": option}
+    event = f"Administrator changed the payment option to {PAYMENT_OPTIONS[option]}."
+    if option == "cod" and order["status"] == "Awaiting Down Payment":
+        updates["status"] = "Draft Preparation"
+        event += " No down payment is required, so the order moved to Draft Preparation."
+    elif option == "down_payment" and order["status"] == "Draft Preparation":
+        updates["status"] = "Awaiting Down Payment"
+        event += " The 50% down payment is now required, so the order moved back to Awaiting Down Payment."
+    if note:
+        event += f" Reason: {note}"
+    return _save(order, updates, event, payload.get("expected_version"), admin=True)
 
 
 # Status changes the administrator may make directly. Other moves happen through their own actions

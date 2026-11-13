@@ -59,6 +59,10 @@ def initialize() -> None:
         if "completed_at" not in columns:
             # When the administrator marked the order Completed. Used for completion-duration reports.
             connection.execute("ALTER TABLE orders ADD COLUMN completed_at TEXT")
+        if "payment_option" not in columns:
+            # How the customer pays: "down_payment" (50% after the quotation, balance before release)
+            # or "cod" (cash on delivery: no down payment, the full amount is paid on delivery/pickup).
+            connection.execute("ALTER TABLE orders ADD COLUMN payment_option TEXT NOT NULL DEFAULT 'down_payment'")
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key)"
         )
@@ -156,8 +160,8 @@ def create_order(order: dict[str, Any], idempotency_key: str) -> str:
             INSERT INTO orders (
                 reference, created_at, updated_at, customer, product, customization,
                 event_details, has_event, acknowledged, status, total_amount,
-                attachments, history, customer_id, idempotency_key, pricing
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                attachments, history, customer_id, idempotency_key, pricing, payment_option
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reference,
@@ -176,6 +180,7 @@ def create_order(order: dict[str, Any], idempotency_key: str) -> str:
                 order.get("customer_id"),
                 idempotency_key,
                 json.dumps(order.get("pricing") or {}),
+                order.get("payment_option") or "down_payment",
             ),
         )
     order["reference"] = reference
@@ -211,6 +216,8 @@ def _apply_updates(order: OrderRecord, updates: OrderUpdates) -> None:
         order["draft_attachment"] = updates["draft_attachment"]
     if "admin_notes" in updates:
         order["admin_notes"] = updates["admin_notes"]
+    if "payment_option" in updates:
+        order["payment_option"] = updates["payment_option"]
 
 
 def update_order(
@@ -248,6 +255,7 @@ def update_order(
             "history": json.dumps(current["history"]),
             "admin_notes": current["admin_notes"],
             "completed_at": current.get("completed_at"),
+            "payment_option": current.get("payment_option") or "down_payment",
         }
         connection.execute(
             """
@@ -255,7 +263,8 @@ def update_order(
                 total_amount = :total_amount, payment_instructions = :payment_instructions,
                 payments = :payments, attachments = :attachments,
                 draft_attachment = :draft_attachment, history = :history,
-                admin_notes = :admin_notes, completed_at = :completed_at
+                admin_notes = :admin_notes, completed_at = :completed_at,
+                payment_option = :payment_option
             WHERE reference = :reference
             """,
             {**values, "reference": reference},

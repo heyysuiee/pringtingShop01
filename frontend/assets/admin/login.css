@@ -323,10 +323,21 @@
             outline-offset: 3px;
         }
 
-        .prototype-note {
-            margin-top: 23px;
-            color: #b3b3b3;
-            text-align: center;
+        .forgot-row {
+            margin: -6px 0 18px;
+            text-align: right;
+        }
+
+        .forgot-link {
+            color: #2b2b2b;
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .forgot-link:hover {
+            text-decoration-thickness: 2px;
         }
 
         .password-field {
@@ -452,8 +463,7 @@
         .form-heading h2,
         .form-heading p,
         .form-heading .eyebrow,
-        .field label,
-        .prototype-note {
+        .field label {
             color: #2b2b2b;
         }
 
@@ -511,13 +521,293 @@
             font-size: 0.9rem;
         }
 
-        .prototype-note {
-            font-size: 0.82rem;
+        .mobile-brand .brand-mark {
+            color: #2b2b2b;
+        }
+
+        /* ---- Forgot password ---- */
+        .reset-steps {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            margin: 0 0 30px;
+            padding: 0;
+            list-style: none;
+        }
+
+        .reset-steps li {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            color: #8a8a8a;
+            font-size: 0.66rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .reset-steps li:not(:last-child)::after {
+            position: absolute;
+            top: 13px;
+            left: calc(50% + 21px);
+            width: calc(100% - 42px);
+            height: 1px;
+            background: #d4d4d4;
+            content: "";
+        }
+
+        .reset-steps li.done::after {
+            background: #2b2b2b;
+        }
+
+        .step-dot {
+            display: grid;
+            width: 27px;
+            height: 27px;
+            place-items: center;
+            border: 1px solid #b3b3b3;
+            border-radius: 50%;
+            background: #ffffff;
+            color: #8a8a8a;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+
+        .reset-steps li.done,
+        .reset-steps li.current {
+            color: #2b2b2b;
+        }
+
+        .reset-steps li.done .step-dot {
+            border-color: #2b2b2b;
+            color: #2b2b2b;
+        }
+
+        .reset-steps li.current .step-dot {
+            border-color: #2b2b2b;
+            background: #2b2b2b;
+            color: #ffffff;
+        }
+
+        .reset-steps[hidden] {
+            display: none;
+        }
+
+        .reset-alert {
+            margin: 0 0 20px;
+            padding: 11px 14px;
+            border: 1px solid #d4d4d4;
+            border-radius: 10px;
+            background: #f7f7f7;
+            color: #2b2b2b;
+            font-size: 0.86rem;
+            line-height: 1.5;
+        }
+
+        .reset-alert.is-error {
+            border-color: #c98d8d;
+            background: #fbf1f1;
+            color: #8a1f1f;
+        }
+
+        .reset-alert.is-success {
+            border-color: #2b2b2b;
+            background: #f4f4f4;
+        }
+
+        .reset-lead {
+            margin: 0 0 20px;
+            color: #3f3f3f;
+            font-size: 0.9rem;
             line-height: 1.6;
         }
 
-        .mobile-brand .brand-mark {
+        .reset-lead strong {
             color: #2b2b2b;
+        }
+
+        .field-error {
+            margin: -8px 0 14px;
+            color: #8a1f1f;
+            font-size: 0.82rem;
+            line-height: 1.5;
+        }
+
+        .field-error:empty {
+            display: none;
+        }
+
+        .field input[aria-invalid="true"] {
+            border-color: #8a1f1f;
+        }
+
+        .code-input {
+            letter-spacing: 0.45em;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        .code-input::placeholder {
+            letter-spacing: 0.45em;
+            text-align: center;
+        }
+
+        .code-meta {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px 14px;
+            margin: -4px 0 18px;
+            color: #5c5c5c;
+            font-size: 0.8rem;
+        }
+
+        .code-meta span.expired {
+            color: #8a1f1f;
+            font-weight: 700;
+        }
+
+        .link-button {
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: #2b2b2b;
+            cursor: pointer;
+            font: inherit;
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-align: left;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .link-button:hover {
+            text-decoration-thickness: 2px;
+        }
+
+        .link-button:disabled {
+            color: #8a8a8a;
+            cursor: default;
+            text-decoration: none;
+        }
+
+        .step-secondary {
+            display: block;
+            width: 100%;
+            margin-top: 16px;
+            color: #5c5c5c;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .reset-rules {
+            margin: -6px 0 20px;
+            padding: 0;
+            list-style: none;
+            color: #8a8a8a;
+            font-size: 0.82rem;
+            line-height: 1.8;
+        }
+
+        .reset-rules li::before {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin-right: 10px;
+            border: 1px solid #8a8a8a;
+            border-radius: 50%;
+            vertical-align: 1px;
+            content: "";
+        }
+
+        .reset-rules li.met {
+            color: #2b2b2b;
+            font-weight: 700;
+        }
+
+        .reset-rules li.met::before {
+            border-color: #2b2b2b;
+            background: #2b2b2b;
+        }
+
+        .reset-success {
+            text-align: center;
+        }
+
+        .reset-success .reset-lead {
+            margin-bottom: 22px;
+        }
+
+        .reset-success h3 {
+            margin: 16px 0 8px;
+            font-family: var(--serif);
+            font-size: 1.7rem;
+            font-weight: 400;
+            letter-spacing: -0.03em;
+        }
+
+        .success-mark {
+            display: grid;
+            width: 52px;
+            height: 52px;
+            margin: 4px auto 0;
+            place-items: center;
+            border-radius: 50%;
+            background: #2b2b2b;
+            color: #ffffff;
+            font-size: 1.35rem;
+        }
+
+        .success-button {
+            display: grid;
+            place-items: center;
+            text-decoration: none;
+        }
+
+        .reset-hint {
+            min-height: 1.2em;
+            margin: 12px 0 0;
+            color: #5c5c5c;
+            font-size: 0.8rem;
+        }
+
+        .reset-back {
+            margin: 26px 0 0;
+            padding-top: 18px;
+            border-top: 1px solid #e2e2e2;
+            text-align: center;
+        }
+
+        .reset-back .link-button {
+            color: #5c5c5c;
+            font-weight: 600;
+        }
+
+        @media (max-width: 420px) {
+            .reset-steps {
+                margin-bottom: 24px;
+            }
+
+            .reset-steps li {
+                gap: 6px;
+                font-size: 0.6rem;
+                letter-spacing: 0.08em;
+            }
+
+            .step-dot {
+                width: 24px;
+                height: 24px;
+                font-size: 0.68rem;
+            }
+
+            .reset-steps li:not(:last-child)::after {
+                top: 12px;
+                left: calc(50% + 18px);
+                width: calc(100% - 36px);
+            }
         }
 
         @media (max-width: 760px) {

@@ -95,49 +95,52 @@
                     </div>
                 </section>
 
-                <!-- 02 · Ordering option (Invitation) or Customize (all other products) -->
+                <!-- 02 · Ordering option: a package or a customized order (every product) -->
                 <section class="wizard-step" data-step="2" data-wizard-section="option" aria-labelledby="step2-title">
-                    <div id="invitation-option" hidden>
-                        <p class="order-step-kicker">02 · Choose how to order</p>
-                        <h2 id="step2-title" class="step-title">How would you like your <span id="step2-product">invitation</span>?</h2>
-                        <p class="order-step-lead">Choose a ready-made package with everything included, or customize
-                            the size, paper, design, and details yourself. The shop confirms the final amount before
-                            payment is requested.</p>
-                        <div class="order-mode-grid" role="group" aria-label="Ordering option">
-                            <button type="button" class="order-mode-card" data-order-mode="package" aria-pressed="false">
-                                <span class="order-mode-icon" aria-hidden="true">▤</span>
-                                <span class="order-mode-copy">
-                                    <strong>Order by Package</strong>
-                                    <small>Pick a published set with its exact price and inclusions. Best when you
-                                        want a ready-made design.</small>
-                                </span>
-                            </button>
-                            <button type="button" class="order-mode-card" data-order-mode="customize" aria-pressed="false">
-                                <span class="order-mode-icon" aria-hidden="true">✎</span>
-                                <span class="order-mode-copy">
-                                    <strong>Customize Your Own Invitation</strong>
-                                    <small>Set your own size, paper, quantity, design direction, and event details.
-                                        Priced by quotation.</small>
-                                </span>
-                            </button>
-                        </div>
-                        <div id="package-section" hidden>
-                            <h3 class="invitation-subtitle">Choose a package</h3>
-                            <p class="field-hint">Select one set to continue. The package order form opens after a
-                                package is chosen.</p>
-                            <div class="package-list" id="package-list" aria-live="polite"></div>
-                            <p class="field-error" id="package-error" role="alert"></p>
-                        </div>
-                        <p class="field-error" id="order-mode-error" role="alert"></p>
+                    <p class="order-step-kicker">02 · Choose how to order</p>
+                    <h2 id="step2-title" class="step-title">How would you like your <span id="step2-product">order</span>?</h2>
+                    <p class="order-step-lead" id="order-mode-lead">Choose a ready-made package with a fixed price and
+                        inclusions, or customize the order yourself. The shop confirms the final amount before payment
+                        is requested.</p>
+                    <div class="order-mode-grid" role="group" aria-label="Ordering option">
+                        <button type="button" class="order-mode-card" data-order-mode="package" aria-pressed="false">
+                            <span class="order-mode-icon" aria-hidden="true">▤</span>
+                            <span class="order-mode-copy">
+                                <strong>Select Package</strong>
+                                <small id="package-mode-note">Pick a published package with its exact price, inclusions,
+                                    and photos.</small>
+                            </span>
+                        </button>
+                        <button type="button" class="order-mode-card" data-order-mode="customize" aria-pressed="false">
+                            <span class="order-mode-icon" aria-hidden="true">✎</span>
+                            <span class="order-mode-copy">
+                                <strong id="customize-mode-title">Customize Order</strong>
+                                <small id="customize-mode-note">Choose your own size, material, and details. Priced from
+                                    the shop's rates or by quotation.</small>
+                            </span>
+                        </button>
                     </div>
+                    <div id="package-section" hidden>
+                        <h3 class="invitation-subtitle">Choose a package</h3>
+                        <p class="field-hint">Select one package to continue. Select a photo to see it larger.</p>
+                        <div class="package-list" id="package-list" aria-live="polite"></div>
+                        <p class="field-error" id="package-error" role="alert"></p>
+                    </div>
+                    <p class="field-error" id="order-mode-error" role="alert"></p>
+                </section>
 
-                    <div id="general-customize" hidden>
-                        <p class="order-step-kicker">02 · Make it yours</p>
-                        <h2 class="step-title">Customize your <span id="step2-general-product">product</span></h2>
-                        <p class="order-step-lead">Only the options for this product are shown. Fields marked “optional”
-                            can be left blank.</p>
+                <!-- 03 · Details (all products except invitations) -->
+                <section class="wizard-step" data-step="8" data-wizard-section="details" aria-labelledby="step8-title">
+                    <div id="general-customize">
+                        <p class="order-step-kicker">03 · Make it yours</p>
+                        <h2 class="step-title" id="step8-title"><span id="general-step-title">Customize your</span>
+                            <span id="step2-general-product">product</span></h2>
+                        <p class="order-step-lead" id="general-step-lead">Only the options for this product are shown.
+                            Fields marked “optional” can be left blank.</p>
+                        <div id="general-package-summary" class="selected-package-summary" hidden></div>
                         <div class="field quantity-field" id="general-quantity-field">
-                            <label for="quantity" class="field-label">Quantity</label>
+                            <label for="quantity" class="field-label">Quantity <span class="min-badge"
+                                    id="quantity-min-badge" hidden></span></label>
                             <div class="quantity-control">
                                 <button type="button" class="quantity-step" data-quantity-step="-1"
                                     aria-label="Decrease quantity">−</button>
@@ -149,6 +152,7 @@
                             <p class="field-hint" id="quantity-hint"></p>
                         </div>
                         <div id="general-dynamic-fields" aria-live="polite"></div>
+                        <div id="general-package-fields" aria-live="polite" hidden></div>
                         <div class="field">
                             <label for="notes" class="field-label">Special instructions <span
                                     class="optional">(optional)</span></label>
@@ -196,13 +200,21 @@
                         <div id="invitation-design-fields" aria-live="polite"></div>
                     </div>
 
+                    <div id="invitation-options-block">
+                        <h3 class="invitation-subtitle">Paper finish &amp; envelope</h3>
+                        <p class="field-hint">Choose a Glossy or Matte finish and your envelope. Any upgrade charge is
+                            shown next to the choice and added to the total.</p>
+                        <div id="invitation-options-fields" aria-live="polite"></div>
+                    </div>
+
                     <div class="field quantity-field" id="invitation-quantity-field">
-                        <label for="invitation-quantity" class="field-label">Total pieces</label>
+                        <label for="invitation-quantity" class="field-label">Total pieces <span class="min-badge"
+                                id="invitation-min-badge">Minimum 20 pcs</span></label>
                         <div class="quantity-control">
                             <button type="button" class="quantity-step" data-quantity-step="-1"
                                 aria-label="Decrease quantity">−</button>
                             <input id="invitation-quantity" class="input" type="number" inputmode="numeric" step="1"
-                                min="10" value="10" required>
+                                min="20" value="20" required>
                             <button type="button" class="quantity-step" data-quantity-step="1"
                                 aria-label="Increase quantity">+</button>
                         </div>
@@ -224,8 +236,9 @@
                 <section class="wizard-step" data-step="4" data-wizard-section="event-files" aria-labelledby="step4-title">
                     <p class="order-step-kicker">04 · Event details &amp; files</p>
                     <h2 id="step4-title" class="step-title">Tell us about the celebration</h2>
-                    <p class="order-step-lead">These details guide your invitation layout and wording. Required fields
-                        are marked; everything you share is reviewed by the shop before printing.</p>
+                    <p class="order-step-lead">Fill in the celebrant's name, event date, time, and location. These
+                        appear on your invitation and in the mockup preview; everything is reviewed by the shop before
+                        printing.</p>
                     <div id="invitation-event-fields" aria-live="polite"></div>
                     <h3 class="invitation-subtitle">Photos &amp; references</h3>
                     <p class="field-hint">Attach up to 15 files in total. JPG, PNG, WebP, or PDF · 5 MB maximum each.
@@ -239,10 +252,53 @@
                     </div>
                 </section>
 
-                <!-- 05 · Contact -->
+                <!-- Invitation mockup designer (Birthday, Wedding, and Christening invitations only) -->
+                <section class="wizard-step" data-step="7" data-wizard-section="mockup" aria-labelledby="step7-title">
+                    <p class="order-step-kicker">05 · Design preview</p>
+                    <h2 id="step7-title" class="step-title">Preview your invitation</h2>
+                    <p class="order-step-lead">Choose a template and colours, adjust the wording, and see your
+                        invitation with your event details before you order. The shop uses your mockup as the design
+                        brief and still sends a final draft for approval.</p>
+                    <label class="order-acknowledgement mockup-skip"><input id="mockup-skip" type="checkbox"><span>Skip
+                            the mockup — the shop will design from my details and uploads</span></label>
+                    <div class="mockup-designer" id="mockup-designer">
+                        <div class="mockup-controls">
+                            <fieldset class="field">
+                                <legend class="field-label">Template</legend>
+                                <div class="mockup-templates" id="mockup-templates" role="radiogroup"
+                                    aria-label="Invitation template"></div>
+                            </fieldset>
+                            <fieldset class="field">
+                                <legend class="field-label">Colours</legend>
+                                <div class="mockup-palettes" id="mockup-palettes" role="radiogroup"
+                                    aria-label="Colour option"></div>
+                            </fieldset>
+                            <div class="field">
+                                <label for="mockup-headline" class="field-label">Headline <span
+                                        class="optional">(optional)</span></label>
+                                <input id="mockup-headline" class="input" maxlength="80">
+                            </div>
+                            <div class="field">
+                                <label for="mockup-message" class="field-label">Message <span
+                                        class="optional">(optional)</span></label>
+                                <textarea id="mockup-message" class="input" rows="3" maxlength="300"></textarea>
+                            </div>
+                            <p class="field-hint">The names, date, time, location, and RSVP come from the event details
+                                you entered. <button type="button" class="text-button" id="mockup-edit-details">Edit
+                                    event details</button></p>
+                        </div>
+                        <figure class="mockup-stage">
+                            <button type="button" class="mockup-preview" id="mockup-preview"
+                                aria-label="Open a larger preview"></button>
+                            <figcaption class="field-hint" id="mockup-caption"></figcaption>
+                        </figure>
+                    </div>
+                </section>
+
+                <!-- 06 · Contact & payment -->
                 <section class="wizard-step" data-step="5" data-wizard-section="contact" aria-labelledby="step5-title">
-                    <p class="order-step-kicker">05 · How we can reach you</p>
-                    <h2 id="step5-title" class="step-title">Your contact details</h2>
+                    <p class="order-step-kicker" id="step5-kicker">05 · Contact &amp; payment</p>
+                    <h2 id="step5-title" class="step-title">Your contact details &amp; payment option</h2>
                     <div class="form-grid">
                         <div class="field"><label for="name" class="field-label">Full name</label><input id="name"
                                 class="input" autocomplete="name" maxlength="120" required></div>
@@ -278,6 +334,31 @@
                                     class="optional">(optional)</span></label><input id="event-location" class="input"
                                 maxlength="240" placeholder="Venue, city, or full address"></div>
                     </fieldset>
+
+                    <fieldset class="payment-options" aria-describedby="payment-option-hint">
+                        <legend class="field-label">Payment option</legend>
+                        <p class="field-hint" id="payment-option-hint">Choose how you will pay. The administrator
+                            confirms the final amount first, then shares the payment instructions.</p>
+                        <div class="payment-option-grid">
+                            <label class="payment-option-card">
+                                <input type="radio" name="payment-option" value="down_payment" checked>
+                                <span class="payment-option-body">
+                                    <strong>50% Down Payment</strong>
+                                    <small>Pay half after the quotation is confirmed; the draft is prepared once it is
+                                        received. Pay the balance before release.</small>
+                                </span>
+                            </label>
+                            <label class="payment-option-card">
+                                <input type="radio" name="payment-option" value="cod">
+                                <span class="payment-option-body">
+                                    <strong>Cash on Delivery (COD)</strong>
+                                    <small>No down payment. Pay the full amount in cash when your order is delivered or
+                                        picked up.</small>
+                                </span>
+                            </label>
+                        </div>
+                        <dl class="payment-breakdown" id="payment-breakdown" aria-live="polite"></dl>
+                    </fieldset>
                 </section>
 
                 <!-- 06 · Review -->
@@ -295,8 +376,10 @@
                             <li>Include the event date, time, and location when applicable.</li>
                             <li>Any price shown is an estimate from the shop's published prices. The administrator
                                 confirms the final amount before payment is requested.</li>
-                            <li>A 50% down payment is required after the administrator confirms the final amount.
-                                Payment instructions will come from the shop administrator.</li>
+                            <li>With the 50% down payment option, half of the confirmed amount is paid before the
+                                draft is prepared and the balance before release. With Cash on Delivery (COD), no down
+                                payment is needed and the full amount is paid on delivery or pickup. Payment
+                                instructions come from the shop administrator.</li>
                             <li>We will send a draft layout via chat for you to check and approve.</li>
                             <li class="approval-rule">NO APPROVAL, NO PRINT.</li>
                             <li>Order processing takes approximately 2–5 days. This is processing time, not a guaranteed
@@ -304,8 +387,8 @@
                         </ol>
                     </section>
                     <label class="order-acknowledgement"><input id="acknowledge" type="checkbox" required><span>I have
-                            reviewed my details and understand the order instructions, including the 50% down payment
-                            requirement and “NO APPROVAL, NO PRINT.”</span></label>
+                            reviewed my details and understand the order instructions, including my payment option
+                            (50% down payment or Cash on Delivery) and “NO APPROVAL, NO PRINT.”</span></label>
                     <p class="field-error" id="acknowledgement-error" role="alert"></p>
                 </section>
 
@@ -324,6 +407,7 @@
                 <h2>Your order is pending confirmation</h2>
                 <p>The shop administrator must review your request. Payment instructions will be provided by the
                     administrator. No payment has been recorded and printing has not started.</p>
+                <p class="field-hint">Your reference number (it includes today's date):</p>
                 <p class="order-ref" id="confirm-ref"></p>
                 <div id="confirm-details" class="confirmation-details"></div>
                 <div class="page-hero-actions">
@@ -350,8 +434,22 @@
         </div>
     </footer>
 
+    <dialog class="customer-lightbox" id="customer-lightbox" aria-label="Image preview">
+        <div class="lightbox-frame">
+            <button type="button" class="lightbox-close" data-close-lightbox aria-label="Close preview">×</button>
+            <div class="lightbox-stage" id="lightbox-stage"></div>
+            <p class="lightbox-caption" id="lightbox-caption"></p>
+            <div class="lightbox-nav">
+                <button type="button" class="btn btn-ghost-dark btn-small" id="lightbox-prev">‹ Previous</button>
+                <span id="lightbox-count"></span>
+                <button type="button" class="btn btn-ghost-dark btn-small" id="lightbox-next">Next ›</button>
+            </div>
+        </div>
+    </dialog>
+
     <script src="/assets/index.js"></script>
     <script src="/assets/dynamic-form.js"></script>
+    <script src="/assets/mockup.js"></script>
     <script src="/assets/order.js"></script>
 </body>
 

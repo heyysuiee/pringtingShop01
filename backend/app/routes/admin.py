@@ -22,6 +22,13 @@ def _params(request: Request) -> dict[str, Any]:
     return dict(request.query_params)
 
 
+@router.get("/api/admin/counts")
+def action_counts(request: Request) -> dict[str, Any]:
+    """Numbers for the sidebar notification badges (records that need an administrator's action)."""
+    require_admin(request)
+    return report_services.action_counts()
+
+
 @router.get("/api/admin/customers")
 def admin_customers(request: Request) -> dict[str, Any]:
     return report_services.customer_list(_params(request))

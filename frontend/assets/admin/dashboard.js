@@ -27,6 +27,7 @@
         orders: "Order Management",
         customers: "Customer Management",
         services: "Services & Products",
+        packages: "Package Management",
         pricing: "Pricing Management",
         payments: "Payments & Transactions",
         reports: "Sales & Reports",
@@ -46,6 +47,8 @@
         ["cancelled", "Cancelled / rejected", ["Rejected", "Cancelled"]],
     ];
     const PAYMENT_STATUSES = ["Fully Paid", "Partially Paid", "Unpaid", "Not Quoted"];
+    const PAYMENT_OPTIONS = [["down_payment", "50% Down Payment"], ["cod", "Cash on Delivery (COD)"]];
+    const CUSTOMER_PAYMENT_STATUSES = ["With balance", "Fully paid", "Awaiting quotation", "No transactions"];
     const ACTION_LABELS = {
         "Under Review": "Approve request",
         "Awaiting Quotation": "Mark as awaiting quotation",
@@ -74,9 +77,9 @@
     let services = [];
 
     const filters = {
-        orders: { search: "", status: "", service: "", payment_status: "", kind: "", date_from: "", date_to: "" },
-        customers: { search: "", activity: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
-        payments: { search: "", method: "", service: "", payment_status: "", date_from: "", date_to: "" },
+        orders: { search: "", status: "", service: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" },
+        customers: { search: "", activity: "", payment_status: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
+        payments: { search: "", method: "", service: "", payment_status: "", payment_option: "", date_from: "", date_to: "" },
         reports: {
             tab: "summary",
             summary: { preset: "month", date_from: "", date_to: "", group_by: "", service: "" },
@@ -230,6 +233,7 @@
             orders: renderOrders,
             customers: renderCustomers,
             services: () => window.PrintShopCatalogAdmin?.renderServices(),
+            packages: () => window.PrintShopCatalogAdmin?.renderPackages(),
             pricing: () => window.PrintShopCatalogAdmin?.renderPricing(),
             payments: renderPayments,
             reports: renderReports,
@@ -243,24 +247,71 @@
         return viewRoot.querySelector("[data-view-body]");
     }
 
+    let lastCounts = null;
+    let lastSignature = "";
+
+    function setBadge(selector, value, title) {
+        const badge = document.querySelector(selector);
+        if (!badge) return;
+        const text = value ? String(value) : "";
+        if (badge.textContent !== text && value) {
+            badge.classList.remove("is-new");
+            void badge.offsetWidth; // restart the pulse animation
+            badge.classList.add("is-new");
+        }
+        badge.textContent = text;
+        badge.title = value ? title : "";
+        badge.setAttribute("aria-label", value ? title : "");
+    }
+
+    /**
+     * Sidebar badges: requests to review, payments to collect, new customers, unread notifications.
+     * Polled every 30 seconds and after every action; when any record changed, the open page reloads its data.
+     */
     async function refreshBadges() {
         try {
-            const [orders, activity] = await Promise.all([
-                api(`/api/admin/orders${query({ page_size: 10 })}`),
+            const [counts, activity] = await Promise.all([
+                api("/api/admin/counts"),
                 api(`/api/admin/activity${query({ actor: "customer", limit: 200 })}`),
             ]);
-            rememberServices(orders.services);
-            const pending = orders.status_counts?.["Pending Confirmation"] || 0;
-            const pendingBadge = document.querySelector("#pending-count");
-            pendingBadge.textContent = pending ? String(pending) : "";
-            pendingBadge.title = pending ? `${pending} new request${pending === 1 ? "" : "s"} waiting for review` : "";
+            lastCounts = counts;
+            const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+            setBadge("#pending-count", counts.orders, `${plural(counts.new_requests, "new request")} and ${plural(counts.to_review, "request")} to review or quote`);
+            setBadge("#payment-count", counts.payments, `${plural(counts.awaiting_down_payment, "order")} awaiting down payment, ${plural(counts.collect_before_release, "order")} ready for pickup with a balance`);
+            setBadge("#customer-count", counts.customers, `${plural(counts.customers, "new customer")} in the last 7 days`);
             const seen = localStorage.getItem(NOTIFICATION_SEEN_KEY) || "";
             const unread = activity.events.filter((event) => (event.at || "") > seen).length;
-            document.querySelector("#notification-count").textContent = unread ? String(unread) : "";
+            setBadge("#notification-count", unread, `${plural(unread, "unread customer update")}`);
             document.querySelectorAll(".notification-dot").forEach((dot) => { dot.hidden = !unread; });
+            document.querySelectorAll("[data-attention]").forEach((element) => {
+                const value = counts[element.dataset.attention] || 0;
+                element.querySelector("strong").textContent = number(value);
+                element.classList.toggle("has-items", value > 0);
+            });
+            // Records changed elsewhere (a new order, a customer action): refresh the open table, unless a dialog is open.
+            if (lastSignature && counts.signature !== lastSignature && !dialog.open && activeView !== "packages" && activeView !== "services" && activeView !== "pricing") {
+                refreshActiveView();
+            }
+            lastSignature = counts.signature;
         } catch {
             // Badges are a convenience; the pages themselves report loading errors.
         }
+    }
+
+    function attentionRow() {
+        const items = [
+            ["new_requests", "New requests", () => { filters.orders = { ...filters.orders, status: "Pending Confirmation" }; navigate("orders"); }],
+            ["to_review", "To review / quote", () => { filters.orders = { ...filters.orders, status: "Under Review" }; navigate("orders"); }],
+            ["awaiting_down_payment", "Awaiting down payment", () => { filters.orders = { ...filters.orders, status: "Awaiting Down Payment" }; navigate("orders"); }],
+            ["draft_preparation", "Drafts to prepare", () => { filters.orders = { ...filters.orders, status: "Draft Preparation" }; navigate("orders"); }],
+            ["ready_for_pickup", "Ready for pickup", () => { filters.orders = { ...filters.orders, status: "Ready for Pickup" }; navigate("orders"); }],
+            ["new_customers", "New customers (7 days)", () => navigate("customers")],
+        ];
+        return h("section", { className: "attention-grid", "aria-label": "Needs attention" }, ...items.map(([key, label, onclick]) => {
+            const value = lastCounts?.[key] || 0;
+            return h("button", { className: `attention-item${value ? " has-items" : ""}`, type: "button", dataset: { attention: key }, onclick },
+                h("span", { text: label }), h("strong", { text: number(value) }));
+        }));
     }
 
     // ================================================================ dashboard
@@ -352,6 +403,7 @@
         }).load();
 
         body.replaceChildren(
+            panel("Needs attention", "Live counts · these update automatically when records change", attentionRow()),
             cards,
             h("div", { className: "dashboard-grid" },
                 panel("Revenue trend", "Confirmed revenue per month, last 12 months", trend),
@@ -389,7 +441,8 @@
         const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
         const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
         const paymentSelect = selectInput([["", "All payment statuses"], ...PAYMENT_STATUSES.map((status) => [status, status])], f.payment_status, (value) => apply({ payment_status: value }));
-        const kindSelect = selectInput([["", "All order types"], ["package", "Ready-made package"], ["customize", "Customized invitation"]], f.kind, (value) => apply({ kind: value }));
+        const kindSelect = selectInput([["", "All order types"], ["package", "Package"], ["customize", "Customized order"]], f.kind, (value) => apply({ kind: value }));
+        const optionSelect = selectInput([["", "All payment options"], ...PAYMENT_OPTIONS], f.payment_option, (value) => apply({ payment_option: value }));
         const fromInput = dateInput(f.date_from, (value) => apply({ date_from: value }));
         const toInput = dateInput(f.date_to, (value) => apply({ date_to: value }));
         const search = searchInput("Search order ID, customer, email, product…", f.search, (value) => apply({ search: value }));
@@ -416,18 +469,19 @@
         let lastCounts = {};
         const table = new UI.DataTable(tableHost, {
             columns: [
-                { label: "Order ID", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "cell-pair" },
+                { label: "Reference no.", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "cell-pair" },
                     h("span", { className: "table-primary", text: row.reference }),
                     row.image_count ? h("span", { className: "table-chip", text: `🖼 ${row.image_count} image${row.image_count === 1 ? "" : "s"}` }) : null) },
                 { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
                 { label: "Service / product", sortKey: "service", render: (row) => h("span", { className: "cell-pair" },
                     h("span", { className: "table-primary", text: row.product }),
                     h("span", { className: "table-secondary", text: row.service }),
-                    row.order_kind ? h("span", { className: "table-chip", text: row.order_kind === "package" ? `📦 ${row.package_name || "Package"}` : "✎ Customized invitation" }) : null) },
-                { label: "Request date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
-                { label: "Total", sortKey: "total", align: "right", render: (row) => totalText(row) },
+                    row.order_kind ? h("span", { className: "table-chip", text: row.order_kind === "package" ? `📦 ${row.package_name || "Package"}` : "✎ Customized" }) : null) },
+                { label: "Date requested", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
+                { label: "Amount", sortKey: "total", align: "right", render: (row) => totalText(row) },
                 { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
-                { label: "Payment", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+                { label: "Payment", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.payment_status),
+                    h("span", { className: "table-secondary", text: row.payment_option === "cod" ? "COD" : `50% DP · ${row.down_payment_status}` })) },
                 { label: "Status", sortKey: "status", render: (row) => badge(row.status) },
             ],
             defaultSort: { key: "request_date", dir: "desc" },
@@ -450,7 +504,7 @@
         });
         renderTabs();
         const clear = h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
-            Object.assign(f, { search: "", status: "", service: "", payment_status: "", kind: "", date_from: "", date_to: "" });
+            Object.assign(f, { search: "", status: "", service: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" });
             renderOrders();
         } });
         body.replaceChildren(
@@ -460,12 +514,13 @@
                 field("Service", serviceSelect),
                 field("Status", statusSelect),
                 field("Payment", paymentSelect),
+                field("Payment option", optionSelect),
                 field("Order type", kindSelect),
                 field("Requested from", fromInput),
                 field("Requested to", toInput),
                 clear,
             ),
-            panel(["Orders ", countLabel], "Select a row to review the order, its uploaded samples, and available actions.", tableHost,
+            panel(["Customer requests ", countLabel], "Every customer request with its reference number, customer, service, date requested, amount, and status. Select a row for the complete transaction details.", tableHost,
                 UI.exportButtons("orders", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
         table.load();
@@ -494,6 +549,10 @@
         if (order.product?.image) {
             images.push({ src: order.product.image, name: `${order.product.name} — catalog sample`, caption: "Product sample the customer selected from the catalog", kind: "Catalog sample" });
         }
+        const packageImages = order.package ? (order.package.images?.length ? order.package.images : (order.package.image ? [order.package.image] : [])) : [];
+        packageImages.filter((src) => src !== order.product?.image).forEach((src, index) => {
+            images.push({ src, name: `${order.package.name} — package photo ${index + 1}`, caption: "Photo of the package the customer selected", kind: "Package photo" });
+        });
         order.attachments.filter((file) => file.mime_type.startsWith("image/")).forEach((file) => {
             images.push({ src: file.url, name: file.name, caption: `${file.field_label || "Reference file"} · uploaded by the customer · ${UI.fileSize(file.size)}`, kind: file.field_label || "Customer upload" });
         });
@@ -533,7 +592,7 @@
                 className: "gallery-thumb", type: "button", "aria-label": `Show ${image.name}`, title: image.name, onclick: () => select(index),
             }, h("img", { src: image.src, alt: "", loading: "lazy", decoding: "async" }))));
             main.addEventListener("click", () => UI.openViewer(images, current));
-            section.append(main, name, images.length > 1 ? thumbs : null,
+            section.append(main, name, ...(images.length > 1 ? [thumbs] : []),
                 h("button", { className: "button button-small gallery-open", type: "button", text: `Open large preview (${images.length} image${images.length === 1 ? "" : "s"})`, onclick: () => UI.openViewer(images, current) }));
             select(0);
         }
@@ -627,20 +686,14 @@
                 ["Order ID", order.reference],
                 ["Service", summary.service],
                 ["Product", summary.product],
-                order.order_kind ? ["Order type", order.order_kind === "package" ? "Ready-made package" : "Customized invitation"] : null,
+                order.order_kind ? ["Order type", order.order_kind === "package" ? "Package" : "Customized order"] : null,
                 order.package?.name ? ["Package", order.package.name] : null,
                 ["Quantity", number(order.customization?.quantity)],
                 ["Request date", dateTime(order.created_at)],
                 ["Completion date", summary.completed_at ? dateTime(summary.completed_at) : "Not completed"],
                 summary.completion_days !== null ? ["Completion duration", `${days(summary.completion_days)} (calendar)`] : null,
             ])),
-            h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: "Payment" }), detailList([
-                ["Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
-                [order.order_kind === "package" ? "Package total" : "Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
-                ["Amount paid", money(summary.amount_paid)],
-                ["Balance", summary.balance === null ? "—" : money(summary.balance)],
-                ["Payment status", badge(summary.payment_status)],
-            ])),
+            paymentFactCard(order),
         );
 
         const specs = specifications(order);
@@ -651,6 +704,7 @@
             h("section", { className: "fact-card" }, h("h3", { text: "Special instructions" }),
                 h("p", { className: "prewrap", text: order.customization?.notes || order.customization?.instructions || "None provided." })),
             events.length ? h("section", { className: "fact-card" }, h("h3", { text: "Event details" }), detailList(events)) : null,
+            mockupCard(order),
             pricingCard(order.pricing, order),
             order.admin_notes ? h("section", { className: "fact-card" }, h("h3", { text: "Latest note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
         );
@@ -676,6 +730,78 @@
             payments,
             history,
         ];
+    }
+
+    /** Payment option, the 50% down payment (or COD), amount paid, and balance for one order. */
+    function paymentFactCard(order) {
+        const summary = order.summary;
+        const payment = order.payment || {};
+        const cod = payment.payment_option === "cod";
+        const basis = order.total_amount === null ? " (from the estimate)" : "";
+        return h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: "Payment" }), detailList([
+            ["Payment option", h("strong", { text: payment.payment_option_label || "50% Down Payment" })],
+            ["Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
+            [order.order_kind === "package" ? "Package total" : "Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
+            ["Down payment (50%)", cod ? "Not required (COD)" : payment.down_payment_required === null ? "Half of the quotation" : `${money(payment.down_payment_required)}${basis}`],
+            ["Down payment status", badge(payment.down_payment_status || "—")],
+            ["Amount paid", money(summary.amount_paid)],
+            [cod ? "Due on delivery" : "Balance", summary.balance === null ? "—" : money(summary.balance)],
+            ["Payment status", badge(summary.payment_status)],
+        ]), order.total_amount !== null ? h("div", { className: "payment-split" },
+            h("div", {}, h("span", { text: cod ? "Down payment" : "Down payment due" }), h("strong", { text: cod ? "None (COD)" : money(payment.down_payment_remaining || 0) })),
+            h("div", {}, h("span", { text: "Paid so far" }), h("strong", { text: money(summary.amount_paid) })),
+            h("div", {}, h("span", { text: cod ? "Collect on delivery" : "Remaining balance" }), h("strong", { text: money(summary.balance || 0) })),
+        ) : null);
+    }
+
+    function mockupCard(order) {
+        const mockup = order.mockup;
+        if (!mockup || !window.InvitationMockup) return null;
+        const preview = h("button", { className: "mockup-preview-admin", type: "button", title: "Open a larger preview" }, window.InvitationMockup.render(mockup));
+        preview.addEventListener("click", () => {
+            const viewer = h("dialog", { className: "admin-dialog mockup-dialog" },
+                h("div", { className: "dialog-frame" },
+                    h("button", { className: "dialog-close", type: "button", "aria-label": "Close", text: "×", onclick: () => viewer.close() }),
+                    h("h2", { className: "dialog-heading", text: `${mockup.template_name} — ${order.reference}` }),
+                    window.InvitationMockup.render(mockup)));
+            viewer.addEventListener("close", () => viewer.remove());
+            document.body.append(viewer);
+            viewer.showModal();
+        });
+        const details = mockup.details || {};
+        return h("section", { className: "fact-card mockup-card" },
+            h("h3", { text: "Invitation mockup (customer design)" }),
+            preview,
+            detailList([
+                ["Template", `${mockup.template_name} · colour option ${Number(mockup.palette) + 1}`],
+                ["Headline", mockup.headline || "Default"],
+                ["Message", mockup.message || "Default"],
+                ["Names on card", details.names],
+            ]),
+            h("p", { className: "field-note", text: "Use this as the design brief; the customer still approves the final draft." }));
+    }
+
+    function paymentOptionForm(order, reload) {
+        const current = order.payment?.payment_option || "down_payment";
+        const target = current === "cod" ? "down_payment" : "cod";
+        const label = PAYMENT_OPTIONS.find(([value]) => value === target)[1];
+        const button = h("button", { className: "button", type: "button", text: `Switch to ${label}` });
+        button.addEventListener("click", async () => {
+            const answer = await UI.confirm({
+                title: `Switch to ${label}?`,
+                message: target === "cod"
+                    ? "No down payment will be required. If the order is awaiting its down payment, it moves to Draft Preparation."
+                    : "The customer must pay the 50% down payment before the draft. An order in Draft Preparation moves back to Awaiting Down Payment.",
+                confirmLabel: "Switch payment option",
+                input: { label: "Reason (recorded in the order history)", required: false, placeholder: "e.g. Customer asked to pay on delivery" },
+            });
+            if (!answer) return;
+            await submitAction(button, order, "payment-option", { payment_option: target, note: answer.value || "" }, reload, `Payment option changed to ${label}.`);
+        });
+        return h("div", { className: "action-form" },
+            h("h4", { text: "Payment option" }),
+            h("p", { className: "field-note", text: `This order uses ${order.payment?.payment_option_label || "50% Down Payment"}. It can be changed until a payment is recorded or a draft is sent.` }),
+            h("div", { className: "dialog-actions" }, button));
     }
 
     function pricingCard(pricing, order = null) {
@@ -738,6 +864,7 @@
         if (actions.quote) section.append(quoteForm(order, reload));
         if (actions.record_payment) section.append(paymentForm(order, reload));
         if (actions.send_draft) section.append(draftForm(order, reload));
+        if (actions.change_payment_option) section.append(paymentOptionForm(order, reload));
         if (section.childElementCount === 1) {
             const final = { Completed: "This order is completed and fully paid. No further actions are needed.", Rejected: "This request was rejected.", Cancelled: "This order was cancelled." }[order.status];
             section.append(h("p", { className: "field-note", text: final || "No administrator action is available at this stage." }));
@@ -785,7 +912,19 @@
             event.preventDefault();
             if (!form.reportValidity()) return;
             const total = Number(amount.value);
-            const answer = await UI.confirm({ title: "Send this quotation?", message: "The customer sees the quotation and payment instructions in their portal. The order moves to Awaiting Down Payment.", confirmLabel: "Send quotation", details: [["Total amount", money(total)]] });
+            const cod = order.payment?.payment_option === "cod";
+            const answer = await UI.confirm({
+                title: "Send this quotation?",
+                message: cod
+                    ? "The customer pays Cash on Delivery, so no down payment is needed: the order moves straight to Draft Preparation."
+                    : "The customer sees the quotation and payment instructions in their portal. The order moves to Awaiting Down Payment.",
+                confirmLabel: "Send quotation",
+                details: [
+                    ["Total amount", money(total)],
+                    ["Payment option", order.payment?.payment_option_label || "50% Down Payment"],
+                    cod ? ["Due on delivery", money(total)] : ["50% down payment", money(Math.round(total * 50) / 100)],
+                ],
+            });
             if (!answer) return;
             await submitAction(submit, order, "quotation", { total_amount: total, payment_instructions: instructions.value.trim() }, reload, "Quotation saved and shared with the customer.");
         });
@@ -795,17 +934,18 @@
     function paymentForm(order, reload) {
         const summary = order.summary;
         const amount = h("input", { id: "payment-amount", type: "number", min: "0.01", step: "0.01", max: String(summary.balance), required: true });
-        const method = selectInput(["GCash", "Maya", "Bank transfer", "Cash", "Other"].map((value) => [value, value]), "GCash", () => {});
+        const cod = order.payment?.payment_option === "cod";
+        const method = selectInput(["GCash", "Maya", "Bank transfer", "Cash", "Cash on Delivery", "Other"].map((value) => [value, value]), cod ? "Cash on Delivery" : "GCash", () => {});
         method.id = "payment-method";
         const reference = h("input", { id: "payment-reference", maxlength: 120, placeholder: "Receipt or transaction number" });
         const received = h("input", { id: "payment-received", type: "checkbox", required: true });
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Confirm payment" });
-        const down = order.total_amount * 0.5;
+        const down = cod ? 0 : order.total_amount * 0.5;
         const fill = (value) => h("button", { className: "button button-small", type: "button", text: value === summary.balance ? `Full balance ${money(value)}` : `50% down ${money(value)}`, onclick: () => { amount.value = value.toFixed(2); } });
         const form = h("form", { className: "action-form", dataset: { focus: "payment" } },
-            h("h4", { text: "Confirm a received payment" }),
-            h("p", { className: "field-note", text: `Confirmed total ${money(order.total_amount)} · Paid ${money(summary.amount_paid)} · Balance ${money(summary.balance)}. Record only money the shop has actually received.` }),
-            h("div", { className: "quick-fill" }, summary.amount_paid < down - 0.005 && down < summary.balance ? fill(Math.round((down - summary.amount_paid) * 100) / 100) : null, fill(summary.balance)),
+            h("h4", { text: cod ? "Confirm a Cash on Delivery payment" : "Confirm a received payment" }),
+            h("p", { className: "field-note", text: `${order.payment?.payment_option_label || "50% Down Payment"} · Confirmed total ${money(order.total_amount)} · Paid ${money(summary.amount_paid)} · Balance ${money(summary.balance)}. Record only money the shop has actually received.` }),
+            h("div", { className: "quick-fill" }, !cod && summary.amount_paid < down - 0.005 && down < summary.balance ? fill(Math.round((down - summary.amount_paid) * 100) / 100) : null, fill(summary.balance)),
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: "payment-amount", text: "Amount received (PHP)" }), amount),
                 h("div", { className: "form-field" }, h("label", { for: "payment-method", text: "Payment method" }), method),
@@ -891,17 +1031,20 @@
                 { label: "Email address", sortKey: "email", render: (row) => row.email },
                 { label: "Contact number", render: (row) => row.phone || "—" },
                 { label: "Registered", sortKey: "registered", type: "date", render: (row) => date(row.registered_date) },
-                { label: "Total orders", sortKey: "orders", align: "right", render: (row) => number(row.total_orders) },
-                { label: "Completed", sortKey: "completed", align: "right", render: (row) => number(row.completed_orders) },
-                { label: "Pending", sortKey: "pending", align: "right", render: (row) => number(row.pending_orders) },
-                { label: "Amount spent", sortKey: "spent", align: "right", render: (row) => h("strong", { text: money(row.total_spent) }) },
+                { label: "Total orders", sortKey: "orders", align: "right", render: (row) => cellPair(number(row.total_orders), `${number(row.completed_orders)} completed · ${number(row.pending_orders)} open`) },
+                { label: "Total transactions", sortKey: "transactions", align: "right", render: (row) => h("strong", { text: money(row.total_transaction_amount) }) },
+                { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.total_paid) },
+                { label: "Balance", sortKey: "balance", align: "right", render: (row) => money(row.outstanding_balance) },
+                { label: "Amount spent", sortKey: "spent", align: "right", render: (row) => money(row.total_spent) },
+                { label: "Payment status", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
             ],
             defaultSort: { key: "registered", dir: "desc" },
             initialQuery: { ...f },
             fetch: (params) => api(`/api/admin/customers${query(params)}`),
             onLoad: (result) => {
                 countLabel.textContent = `${number(result.total)} customer${result.total === 1 ? "" : "s"}`;
-                summaryLine.textContent = `${number(result.summary.with_orders)} with orders · ${money(result.summary.total_spent)} total spent by these customers (completed and fully paid orders only).`;
+                const s = result.summary;
+                summaryLine.textContent = `${number(s.with_orders)} with orders · ${money(s.total_transaction_amount)} in transactions · ${money(s.total_paid)} paid · ${money(s.outstanding_balance)} outstanding · ${money(s.total_spent)} spent (completed and fully paid orders only).`;
             },
             emptyMessage: "No customer accounts have been registered yet.",
             onRowClick: (row) => openCustomer(row.id),
@@ -915,6 +1058,7 @@
             h("div", { className: "filter-bar" },
                 searchInput("Search name, email, phone, or customer ID…", f.search, (value) => apply({ search: value })),
                 field("Order activity", selectInput(CUSTOMER_ACTIVITY, f.activity, (value) => apply({ activity: value }))),
+                field("Payment status", selectInput([["", "Any payment status"], ...CUSTOMER_PAYMENT_STATUSES.map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
                 field("Registered from", dateInput(f.registered_from, (value) => apply({ registered_from: value }))),
                 field("Registered to", dateInput(f.registered_to, (value) => apply({ registered_to: value }))),
                 field("Ordered from", dateInput(f.ordered_from, (value) => apply({ ordered_from: value }))),
@@ -924,7 +1068,7 @@
                     renderCustomers();
                 } }),
             ),
-            panel(["Customers ", countLabel], "Amount spent counts only completed and fully paid orders. Select a row for the full history.", h("div", {}, summaryLine, tableHost),
+            panel(["Customers ", countLabel], "Total transactions = confirmed totals of orders that are not cancelled. Amount spent counts only completed and fully paid orders. Select a row for the full transaction history.", h("div", {}, summaryLine, tableHost),
                 UI.exportButtons("customers", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
         table.load();
@@ -954,7 +1098,7 @@
                 { label: "Requested", sortKey: "created_at", type: "date", render: (row) => date(row.request_date) },
                 { label: "Total", sortKey: "total_amount", align: "right", render: (row) => totalText(row) },
                 { label: "Paid", sortKey: "amount_paid", align: "right", render: (row) => money(row.amount_paid) },
-                { label: "Payment", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+                { label: "Payment", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.payment_status), h("span", { className: "table-secondary", text: row.payment_option_label })) },
                 { label: "Status", sortKey: "status", render: (row) => badge(row.status) },
             ],
             rows: () => [...data.orders],
@@ -1009,8 +1153,11 @@
                 miniStat("Completed", number(customer.completed_orders)),
                 miniStat("Pending", number(customer.pending_orders)),
                 miniStat("Cancelled", number(customer.cancelled_orders)),
-                miniStat("Amount spent", money(customer.total_spent), "Completed and fully paid orders"),
+                miniStat("Total transactions", money(customer.total_transaction_amount), "Confirmed totals, excluding cancelled orders"),
                 miniStat("Total payments received", money(customer.total_paid), "Includes payments on open orders"),
+                miniStat("Outstanding balance", money(customer.outstanding_balance), "Still to be paid on open orders"),
+                miniStat("Amount spent", money(customer.total_spent), "Completed and fully paid orders"),
+                miniStat("Payment status", customer.payment_status),
             ),
             h("section", { className: "fact-card" }, h("h3", { text: "Customer information" }), detailList([
                 ["Customer ID", customer.display_id],
@@ -1065,7 +1212,7 @@
         const body = viewBody();
         if (!body) return;
         const f = filters.payments;
-        const cards = h("section", { className: "stats-grid", "aria-label": "Payment summary" }, loadingBlock());
+        const cards = h("section", { className: "stats-grid stats-grid-6", "aria-label": "Payment summary" }, loadingBlock());
         const tableHost = h("div");
         const countLabel = h("span", { className: "table-secondary" });
         const methodSelect = selectInput([["", "All methods"]], f.method, (value) => apply({ method: value }));
@@ -1080,7 +1227,7 @@
                 { label: "Method", sortKey: "method", render: (row) => row.method },
                 { label: "Reference", render: (row) => row.payment_reference || "—" },
                 { label: "Amount", sortKey: "amount", align: "right", render: (row) => h("strong", { text: money(row.amount) }) },
-                { label: "Order payment", sortKey: "payment_status", render: (row) => badge(row.order_payment_status) },
+                { label: "Order payment", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.order_payment_status), h("span", { className: "table-secondary", text: row.payment_option_label })) },
             ],
             defaultSort: { key: "received", dir: "desc" },
             initialQuery: { ...f },
@@ -1091,6 +1238,8 @@
                 cards.replaceChildren(
                     statCard({ label: "Total payments received", value: money(s.total_received), foot: "All recorded payments", icon: "₱" }),
                     statCard({ label: "Outstanding balance", value: money(s.outstanding_balance), foot: `${s.orders_with_balance.length} active order${s.orders_with_balance.length === 1 ? "" : "s"} with a balance`, icon: "◷" }),
+                    statCard({ label: "Awaiting down payment", value: number(s.awaiting_down_payment), foot: `${money(s.down_payments_due)} in 50% down payments due`, icon: "½", onClick: () => { filters.orders = { ...filters.orders, status: "Awaiting Down Payment" }; navigate("orders"); } }),
+                    statCard({ label: "Cash on Delivery", value: number(s.cod_orders), foot: `${money(s.cod_due)} to collect on delivery`, icon: "⛟", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_option: "cod" }; navigate("orders"); } }),
                     statCard({ label: "Fully paid orders", value: number(s.fully_paid_orders), foot: "Payments cover the confirmed total", icon: "✓" }),
                     statCard({ label: "Awaiting quotation", value: number(s.awaiting_quotation), foot: "No confirmed total yet", icon: "⌕" }),
                 );
@@ -1122,6 +1271,7 @@
                 field("Method", methodSelect),
                 field("Service", serviceSelect),
                 field("Order payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.slice(0, 3).map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
+                field("Payment option", selectInput([["", "All"], ...PAYMENT_OPTIONS], f.payment_option, (value) => apply({ payment_option: value }))),
                 field("Received from", dateInput(f.date_from, (value) => apply({ date_from: value }))),
                 field("Received to", dateInput(f.date_to, (value) => apply({ date_to: value }))),
                 h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
@@ -1147,7 +1297,7 @@
             columns: [
                 { label: "Order ID", sortKey: "reference", render: (row) => row.reference },
                 { label: "Customer", sortKey: "customer_name", render: (row) => cellPair(row.customer_name, row.product) },
-                { label: "Status", sortKey: "status", render: (row) => badge(row.status) },
+                { label: "Status", sortKey: "status", render: (row) => cellPair(row.status, row.payment_option_label) },
                 { label: "Balance", sortKey: "balance", align: "right", render: (row) => h("strong", { text: money(row.balance) }) },
             ],
             rows: () => [...rows],
@@ -1207,7 +1357,30 @@
         const groupSelect = selectInput([["", "Automatic"], ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["year", "Yearly"]], f.group_by, (value) => { f.group_by = value; load(); });
         customFields.hidden = f.preset !== "custom";
         const params = () => ({ ...f });
+        const shortcut = (label, preset, group) => {
+            const button = h("button", {
+                className: `segmented-button${f.preset === preset && (f.group_by || "day") === group ? " active" : ""}`,
+                type: "button",
+                text: label,
+                onclick: () => {
+                    f.preset = preset;
+                    f.group_by = group;
+                    presetSelect.value = preset;
+                    groupSelect.value = group;
+                    customFields.hidden = true;
+                    shortcuts.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+                    load();
+                },
+            });
+            return button;
+        };
+        const shortcuts = h("div", { className: "segmented sales-shortcuts", role: "group", "aria-label": "Sales report" },
+            shortcut("Daily sales (today)", "today", "day"),
+            shortcut("Weekly sales (this week)", "week", "day"),
+            shortcut("Monthly sales (this month)", "month", "day"),
+            shortcut("Year by month", "year", "month"));
         host.replaceChildren(
+            shortcuts,
             h("div", { className: "filter-bar report-filters" },
                 field("Report period", presetSelect), customFields,
                 field("Revenue grouping", groupSelect),
@@ -1258,9 +1431,41 @@
             statCard({ label: "Pending orders", value: number(t.pending_orders), foot: `${number(t.processing_orders)} more in progress`, icon: "◷" }),
             statCard({ label: "Cancelled orders", value: number(t.cancelled_orders), foot: "Cancelled or rejected", icon: "✕" }),
             statCard({ label: "Fully paid orders", value: number(t.fully_paid_orders), foot: "Requested in this period", icon: "₱" }),
-            statCard({ label: "Total confirmed revenue", value: money(t.confirmed_revenue), foot: "Completed and fully paid", icon: "₱", tone: "highlight" }),
+            statCard({ label: "Total sales", value: money(t.confirmed_revenue), foot: "Confirmed revenue: completed and fully paid", icon: "₱", tone: "highlight" }),
             statCard({ label: "Avg. completion time", value: t.average_completion_days === null ? "—" : days(t.average_completion_days), foot: "Calendar days, request to completion", icon: "⏱" }),
         );
+        const p = data.payments;
+        const paymentCards = h("section", { className: "stats-grid", "aria-label": "Payment summary" },
+            statCard({ label: "Payments received", value: money(p.received_total), foot: `${number(p.payment_count)} payment${p.payment_count === 1 ? "" : "s"} received in this period`, icon: "₱" }),
+            statCard({ label: "Down payments (50%)", value: money(p.down_payments), foot: `Balance payments ${money(p.balance_payments)}`, icon: "½" }),
+            statCard({ label: "Cash on Delivery collected", value: money(p.cod_collections), foot: `${number(p.orders_cod)} COD · ${number(p.orders_down_payment)} down-payment orders requested`, icon: "⛟" }),
+            statCard({ label: "Outstanding balance", value: money(p.outstanding_balance), foot: `${number(p.awaiting_down_payment)} awaiting down payment`, icon: "◷" }),
+        );
+        const methodHost = h("div");
+        new UI.DataTable(methodHost, {
+            columns: [
+                { label: "Payment method", sortKey: "method", render: (row) => h("strong", { text: row.method }) },
+                { label: "Payments", sortKey: "count", align: "right", render: (row) => number(row.count) },
+                { label: "Amount received", sortKey: "amount", align: "right", render: (row) => money(row.amount) },
+            ],
+            rows: () => [...p.by_method],
+            defaultSort: { key: "amount", dir: "desc" },
+            pageSize: 10,
+            emptyMessage: "No payments were received in this period.",
+        }).load();
+        const revenueSummaryHost = h("div");
+        new UI.DataTable(revenueSummaryHost, {
+            columns: [
+                { label: "Service name", sortKey: "service", render: (row) => h("strong", { text: row.service }) },
+                { label: "Total completed transactions", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
+                { label: "Total revenue", sortKey: "revenue", align: "right", render: (row) => h("strong", { text: money(row.revenue) }) },
+                { label: "Date range", render: () => data.period.label },
+            ],
+            rows: () => [...data.by_service],
+            defaultSort: { key: "revenue", dir: "desc" },
+            pageSize: 25,
+            emptyMessage: "No services in the catalog.",
+        }).load();
         const trendChart = h("div", { className: "chart-box" });
         UI.columnChart(trendChart, data.trend.map((bucket) => ({
             label: bucket.label, short: shortBucket(bucket.key, group), value: bucket.revenue, completed: bucket.completed_orders,
@@ -1331,6 +1536,8 @@
                 data.service ? ` · ${data.service.label}` : " · All services",
                 " · Orders are counted by request date; completed orders and revenue by completion date. Revenue includes only completed and fully paid orders, each counted once."),
             cards,
+            panel("Revenue summary", `Completed transactions and revenue per service · ${data.period.label}`, revenueSummaryHost),
+            panel("Payment summary", "Money received in this period by payment date. Payments are cash flow; sales count only completed and fully paid orders.", h("div", {}, paymentCards, methodHost)),
             h("div", { className: "dashboard-grid" },
                 panel(`Revenue trend (${groupName.toLowerCase()})`, data.period.label, trendChart),
                 panel("Revenue per service", "Confirmed revenue in this period", revenueChart),
@@ -1659,7 +1866,12 @@
     activeView = document.body.dataset.adminView || viewFromLocation();
     renderView();
     refreshBadges();
-    window.setInterval(refreshBadges, 60000);
+    window.setInterval(() => {
+        if (document.visibilityState === "visible") refreshBadges();
+    }, 30000);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") refreshBadges();
+    });
 
     // Deep links: /admin/orders?order=IPS-11-08-26 or /admin/customers?customer=<id>
     const params = new URLSearchParams(window.location.search);

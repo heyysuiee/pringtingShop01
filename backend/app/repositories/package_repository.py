@@ -1,7 +1,9 @@
-"""Ready-made Invitation packages (sets) shown on the customer order page.
+"""Ready-made packages (sets) shown on the customer order page.
 
-Each package belongs to one Invitation product and carries the published price, what is included,
-and an optional add-on charge for extra pieces beyond the included quantity.
+Packages started with the three Invitation categories and now exist for every product: each package
+belongs to one product and carries its published price, what is included, its images, and an optional
+add-on charge for extra pieces beyond the included quantity. The table keeps its original name
+(``invitation_packages``) so existing databases keep their data.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from backend.app.database.catalog_seed import INVITATION_PACKAGES
 from backend.app.database.connection import connection_scope
 from backend.app.models.catalog import InvitationPackage
 from backend.app.utils.clock import now_iso
+from backend.app.utils.images import optimized_image
 
 
 SEED_MARKER = "invitation_packages_v1"
@@ -51,6 +54,12 @@ def initialize() -> None:
     with connection_scope() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(invitation_packages)")}
+        if "images" not in columns:
+            # Every package image in display order (JSON list of site paths); ``image`` is the first.
+            connection.execute("ALTER TABLE invitation_packages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
+        if "description" not in columns:
+            connection.execute("ALTER TABLE invitation_packages ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         seeded = connection.execute("SELECT value FROM app_meta WHERE key = ?", (SEED_MARKER,)).fetchone()
         if seeded is None:
             _seed(connection)
@@ -65,15 +74,28 @@ def _seed(connection: sqlite3.Connection) -> None:
         _insert(connection, package)
 
 
+def _images(row: sqlite3.Row) -> list[str]:
+    try:
+        values = json.loads(row["images"] or "[]") if "images" in row.keys() else []
+    except (TypeError, ValueError):
+        values = []
+    images = [value for value in values if isinstance(value, str) and value] if isinstance(values, list) else []
+    if not images and row["image"]:
+        images = [row["image"]]
+    return [optimized_image(path) for path in images]
+
+
 def _package_from_row(row: sqlite3.Row) -> InvitationPackage:
     try:
         inclusions = json.loads(row["inclusions"] or "[]")
     except (TypeError, ValueError):
         inclusions = []
+    images = _images(row)
     return {
         "id": row["id"],
         "product_id": row["product_id"],
         "name": row["name"],
+        "description": row["description"] if "description" in row.keys() else "",
         "price": float(row["price"]),
         "size": row["size"],
         "material": row["material"],
@@ -81,7 +103,8 @@ def _package_from_row(row: sqlite3.Row) -> InvitationPackage:
         "add_on_label": row["add_on_label"],
         "add_on_price": None if row["add_on_price"] is None else float(row["add_on_price"]),
         "included_quantity": int(row["included_quantity"]),
-        "image": row["image"],
+        "image": images[0] if images else "",
+        "images": images,
         "sort_order": int(row["sort_order"]),
         "active": bool(row["active"]),
     }
@@ -94,6 +117,14 @@ def list_packages(product_id: str, active_only: bool) -> list[InvitationPackage]
             f"SELECT * FROM invitation_packages WHERE product_id = ?{active} ORDER BY sort_order, created_at",
             (product_id,),
         ).fetchall()
+    return [_package_from_row(row) for row in rows]
+
+
+def list_all_packages(active_only: bool) -> list[InvitationPackage]:
+    """Every package of every product, grouped by product in display order."""
+    active = " WHERE active = 1" if active_only else ""
+    with connection_scope() as connection:
+        rows = connection.execute(f"SELECT * FROM invitation_packages{active} ORDER BY product_id, sort_order, created_at").fetchall()
     return [_package_from_row(row) for row in rows]
 
 
@@ -114,17 +145,19 @@ def next_sort_order(product_id: str) -> int:
 
 def _insert(connection: sqlite3.Connection, data: dict[str, Any]) -> None:
     now = now_iso()
+    images = [path for path in (data.get("images") or ([data["image"]] if data.get("image") else [])) if path]
     connection.execute(
         """
         INSERT INTO invitation_packages (
-            id, product_id, name, price, size, material, inclusions, add_on_label, add_on_price,
-            included_quantity, image, sort_order, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, product_id, name, description, price, size, material, inclusions, add_on_label, add_on_price,
+            included_quantity, image, images, sort_order, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             data.get("id") or new_id(),
             data["product_id"],
             data["name"],
+            data.get("description", ""),
             float(data.get("price", 0) or 0),
             data.get("size", ""),
             data.get("material", ""),
@@ -132,7 +165,8 @@ def _insert(connection: sqlite3.Connection, data: dict[str, Any]) -> None:
             data.get("add_on_label", ""),
             data.get("add_on_price"),
             int(data.get("included_quantity", 20) or 20),
-            data.get("image", ""),
+            images[0] if images else "",
+            json.dumps(images),
             int(data.get("sort_order", 0)),
             1 if data.get("active", True) else 0,
             now,
@@ -150,12 +184,16 @@ def create_package(data: dict[str, Any]) -> str:
 
 def update_package(package_id: str, updates: dict[str, Any]) -> None:
     columns = (
-        "name", "price", "size", "material", "inclusions", "add_on_label", "add_on_price",
-        "included_quantity", "image", "sort_order", "active",
+        "product_id", "name", "description", "price", "size", "material", "inclusions", "add_on_label", "add_on_price",
+        "included_quantity", "image", "images", "sort_order", "active",
     )
     values = dict(updates)
     if "inclusions" in values:
         values["inclusions"] = json.dumps(list(values["inclusions"]))
+    if "images" in values:
+        images = [path for path in values["images"] if path]
+        values["images"] = json.dumps(images)
+        values["image"] = images[0] if images else ""
     assignments = []
     parameters: list[Any] = []
     for column in columns:

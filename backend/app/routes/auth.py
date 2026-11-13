@@ -18,7 +18,6 @@ from backend.app.core.security import (
     create_session_cookie,
     require_same_origin,
     require_session,
-    verify_password,
 )
 from backend.app.schemas.user import (
     CustomerLogin,
@@ -29,7 +28,7 @@ from backend.app.schemas.user import (
     PasswordResetVerify,
 )
 from backend.app.repositories import auth_throttle_repository as otp_store
-from backend.app.services import auth_services
+from backend.app.services import admin_auth_services, auth_services
 
 
 router = APIRouter(tags=["authentication"])
@@ -168,13 +167,62 @@ def update_customer_profile(payload: CustomerProfileUpdate, request: Request) ->
 @router.post("/api/admin/session")
 def create_admin_session(payload: CustomerLogin, request: Request, response: Response) -> dict[str, str]:
     require_same_origin(request)
-    if not settings.admin_email or not settings.admin_password_hash:
+    if not admin_auth_services.configured():
         raise HTTPException(status_code=503, detail="Administrator credentials have not been configured.")
     _throttle("admin-login-ip", _client_address(request), LOGIN_LIMIT, "Too many sign-in attempts. Try again in a few minutes.")
-    if payload.email != settings.admin_email or not verify_password(payload.password, settings.admin_password_hash):
+    if not admin_auth_services.authenticate(payload.email, payload.password):
         raise HTTPException(status_code=401, detail="Administrator credentials are incorrect.")
     create_session_cookie(response, request, settings.admin_email, "admin")
     return {"mode": "authenticated"}
+
+
+@router.post("/api/admin/password-reset/request")
+def request_admin_password_reset(payload: PasswordResetRequest, request: Request) -> dict[str, Any]:
+    require_same_origin(request)
+    if not settings.admin_email:
+        admin_auth_services.log_missing_settings()
+        raise HTTPException(status_code=503, detail="Administrator credentials have not been configured.")
+    if not settings.smtp_configured:
+        auth_services.log_missing_smtp_settings()
+        raise HTTPException(status_code=503, detail="Password reset emails are not available right now. Contact the shop owner.")
+    _throttle("admin-otp-request-ip", _client_address(request), OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.", otp_store)
+    # The admin address is checked before any code is created or emailed, so the form can say
+    # plainly that the address does not belong to the administrator account.
+    if not admin_auth_services.is_admin_email(payload.email):
+        raise HTTPException(status_code=404, detail=admin_auth_services.NOT_ADMIN_EMAIL_MESSAGE)
+    cooled_down = not otp_store.allow("admin-otp-cooldown", payload.email, 1, OTP_RESEND_COOLDOWN_SECONDS)
+    _throttle("admin-otp-request-email", payload.email, OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.", otp_store)
+    if cooled_down:
+        # No new code is sent; the code from the previous request stays valid until it expires.
+        return {
+            "message": "A code was requested for this address less than a minute ago. Use the code from that email, or wait to request a new one.",
+            "resend_after": OTP_RESEND_COOLDOWN_SECONDS,
+            "cooldown": True,
+        }
+    try:
+        result = admin_auth_services.request_password_reset(payload.email)
+    except HTTPException:
+        # No email went out, so give the cooldown back: retry straight away.
+        otp_store.reset("admin-otp-cooldown", payload.email)
+        raise
+    result["resend_after"] = OTP_RESEND_COOLDOWN_SECONDS
+    return result
+
+
+@router.post("/api/admin/password-reset/verify")
+def verify_admin_password_reset(payload: PasswordResetVerify, request: Request) -> dict[str, str]:
+    require_same_origin(request)
+    _throttle("admin-otp-verify-ip", _client_address(request), OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.", otp_store)
+    token = admin_auth_services.verify_password_reset_code(payload.email, payload.code)
+    return {"reset_token": token, "message": "Code verified. Choose your new password."}
+
+
+@router.post("/api/admin/password-reset/confirm")
+def confirm_admin_password_reset(payload: PasswordResetConfirm, request: Request) -> dict[str, str]:
+    require_same_origin(request)
+    _throttle("admin-reset-confirm-ip", _client_address(request), RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.", otp_store)
+    admin_auth_services.complete_password_reset(payload.email, payload.reset_token, payload.new_password)
+    return {"message": "Your administrator password has been changed. Sign in with your new password."}
 
 
 @router.get("/api/admin/session")

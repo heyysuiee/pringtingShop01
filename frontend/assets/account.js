@@ -107,7 +107,8 @@
                 title.textContent = order.product.name;
                 const details = document.createElement("p");
                 details.className = "field-hint";
-                details.textContent = `${order.reference} · ${order.status} · ${order.customization.quantity} item(s)`;
+                const paying = order.payment?.payment_option === "cod" ? "Cash on Delivery" : "50% down payment";
+                details.textContent = `${order.reference} · ${order.status} · ${order.customization.quantity} item(s) · ${paying}`;
                 main.append(category, title, details);
                 const viewOrder = document.createElement("button");
                 viewOrder.className = "btn btn-dark btn-small";

@@ -43,9 +43,11 @@
     }
 
     function paymentSummary(order) {
-        if (order.total_amount === null) return "Payment: Not due · Waiting for quotation";
+        const option = order.payment?.payment_option === "cod" ? "COD" : "50% down payment";
+        if (order.total_amount === null) return `${option} · not due yet, waiting for quotation`;
         const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
-        return received >= order.total_amount ? "Paid in full" : received > 0 ? `Partial · ${money(received)} received` : "Not received";
+        const state = received >= order.total_amount ? "Paid in full" : received > 0 ? `Partial · ${money(received)} received` : "Not received";
+        return `${option} · ${state}`;
     }
 
     async function request(url, options = {}) {
@@ -115,7 +117,7 @@
             const main = make("div", "order-history-main");
             const kind = order.order_kind === "package"
                 ? (order.package?.name ? `Package: ${order.package.name}` : "Ready-made package")
-                : order.order_kind === "customize" ? "Customized invitation" : "";
+                : order.order_kind === "customize" ? "Customized order" : "";
             main.append(make("span", "service-tag", order.product.category), make("h2", "", order.product.name), make("p", "field-hint", [order.reference, `Submitted ${formatDate(order.created_at)}`, kind].filter(Boolean).join(" · ")));
             const meta = make("div", "order-history-meta");
             meta.append(make("span", "order-status-pill", order.status), make("span", "payment-status", paymentSummary(order)));
@@ -217,8 +219,9 @@
 
         const summary = document.querySelector("#detail-summary");
         summary.replaceChildren();
-        if (order.order_kind) appendSummaryRow(summary, "Order type", order.order_kind === "package" ? "Ready-made package" : "Customized invitation");
-        appendSummaryRow(summary, "Quantity", String(order.customization.quantity));
+        if (order.order_kind) appendSummaryRow(summary, "Order type", order.order_kind === "package" ? `Package${order.package?.name ? `: ${order.package.name}` : ""}` : "Customized order");
+        appendSummaryRow(summary, "Quantity", `${order.customization.quantity} pcs`);
+        if (typeof order.pricing?.unit_price === "number") appendSummaryRow(summary, "Price per piece", `${money(order.pricing.unit_price)} (estimate)`);
         specificationRows(order).forEach(([label, value]) => appendSummaryRow(summary, label, value));
         appendSummaryRow(summary, "Special instructions", order.customization.notes ?? order.customization.instructions);
         appendSummaryRow(summary, "Customer", order.customer.name);
@@ -232,13 +235,28 @@
             appendSummaryRow(summary, "Estimated total", `${money(estimateOf(order))} (from shop prices; not yet confirmed)`);
         }
         appendSummaryRow(summary, "Confirmed total", order.total_amount === null ? "Waiting for Admin Quotation" : money(order.total_amount));
+        const payment = order.payment || {};
+        const cod = payment.payment_option === "cod";
+        appendSummaryRow(summary, "Payment option", payment.payment_option_label || "50% Down Payment");
+        if (cod) {
+            appendSummaryRow(summary, "Down payment", "Not required (Cash on Delivery)");
+        } else if (payment.down_payment_required !== null && payment.down_payment_required !== undefined) {
+            const basis = order.total_amount === null ? " (estimate; due after the quotation)" : "";
+            appendSummaryRow(summary, "50% down payment", `${money(payment.down_payment_required)}${basis} · ${payment.down_payment_status}`);
+        }
         if (order.total_amount !== null) {
-            const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
-            appendSummaryRow(summary, "50% down payment", money(order.total_amount * 0.5));
+            const received = order.payments.reduce((total, item) => total + item.amount, 0);
             appendSummaryRow(summary, "Payment received", money(received));
-            appendSummaryRow(summary, "Remaining balance", money(Math.max(0, order.total_amount - received)));
+            appendSummaryRow(summary, cod ? "Due on delivery / pickup" : "Remaining balance", money(Math.max(0, order.total_amount - received)));
         }
         if (order.payment_instructions) appendSummaryRow(summary, "Payment instructions", order.payment_instructions);
+        if (order.mockup && window.InvitationMockup) {
+            const wrapper = make("div", "summary-row");
+            const holder = make("dd", "portal-mockup");
+            holder.append(window.InvitationMockup.render(order.mockup));
+            wrapper.append(make("dt", "", `Invitation mockup · ${order.mockup.template_name}`), holder);
+            summary.append(wrapper);
+        }
         renderAttachments(summary, order.attachments, "Uploaded files");
 
         const draft = document.querySelector("#customer-draft");

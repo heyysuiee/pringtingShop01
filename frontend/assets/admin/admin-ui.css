@@ -1693,3 +1693,263 @@ button.notification-item:hover {
     white-space: normal;
     overflow-wrap: anywhere;
 }
+
+/* ================================================================ Catalog photos, packages, payments, mockups */
+
+/* Larger product/package thumbnails in tables; select one to open the zoom/fullscreen viewer. */
+.product-thumb-button {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.product-thumb-button .product-thumb,
+.product-cell .product-thumb {
+    width: 72px;
+    height: 56px;
+    object-fit: contain;
+}
+
+.product-thumb-button:hover .product-thumb,
+.product-thumb-button:focus-visible .product-thumb {
+    border-color: var(--ui-text);
+    box-shadow: 0 0 0 2px var(--ui-text);
+}
+
+.thumb-count {
+    position: absolute;
+    right: -6px;
+    bottom: -6px;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--ui-text);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.form-label-strong {
+    display: block;
+    font-weight: 700;
+}
+
+.image-manager {
+    display: grid;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.image-manager-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.image-tile {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-surface);
+}
+
+.image-tile-preview {
+    display: block;
+    width: 100%;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: 6px;
+    background: var(--ui-subtle);
+    cursor: zoom-in;
+    aspect-ratio: 4 / 3;
+}
+
+.image-tile-preview img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.image-tile figcaption {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.image-manager-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.image-upload-button {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.image-upload-button input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.image-path-field {
+    display: inline-flex;
+    flex: 1 1 260px;
+    gap: 6px;
+}
+
+.image-path-field input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Order details: payment breakdown and invitation mockup */
+.payment-split {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.payment-split div {
+    padding: 8px 10px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    background: var(--ui-subtle);
+}
+
+.payment-split span {
+    display: block;
+    color: var(--ui-muted);
+    font-size: 12px;
+}
+
+.payment-split strong {
+    font-size: 15px;
+}
+
+.mockup-card .mockup-preview-admin {
+    width: min(260px, 100%);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
+}
+
+.mockup-card svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 8px 22px rgba(43, 43, 43, 0.18);
+}
+
+.mockup-dialog svg {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: min(78vh, 760px);
+    margin: 0 auto;
+}
+
+/* Dashboard: items needing attention */
+.attention-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+    margin: 0 0 18px;
+}
+
+.attention-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-surface);
+    color: var(--ui-text);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.attention-item:hover {
+    border-color: var(--ui-text);
+}
+
+.attention-item strong {
+    min-width: 32px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--ui-subtle);
+    text-align: center;
+}
+
+.attention-item.has-items strong {
+    background: var(--status-critical);
+    color: #ffffff;
+}
+
+.nav-count.is-new {
+    animation: badge-pulse 1.2s ease 2;
+}
+
+@keyframes badge-pulse {
+    50% { transform: scale(1.25); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-count.is-new {
+        animation: none;
+    }
+}
+
+.sales-shortcuts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Sidebar notification badges: hidden when zero, highlighted when something needs action. */
+.nav-count:empty {
+    display: none;
+}
+
+.sidebar-nav .nav-count:not(:empty) {
+    background: var(--status-critical);
+    color: #ffffff;
+}
+
+.stats-grid-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+    .stats-grid-6 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 520px) {
+    .stats-grid-6 {
+        grid-template-columns: 1fr;
+    }
+}

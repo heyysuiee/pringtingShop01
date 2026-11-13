@@ -125,16 +125,122 @@
         return h("span", { className: `status-badge ${active ? "available" : "unavailable"}`, text: active ? onText : offText });
     }
 
-    function thumb(product) {
-        return product.image
-            ? h("img", { className: "product-thumb", src: product.image, alt: "", loading: "lazy", decoding: "async" })
-            : h("span", { className: "product-thumb product-thumb-empty", "aria-hidden": "true", text: product.name.slice(0, 1) });
+    function imagesOf(item) {
+        return item.images && item.images.length ? item.images : (item.image ? [item.image] : []);
+    }
+
+    /** Open product or package photos in the large viewer (zoom, pan, fullscreen). */
+    function viewImages(images, name, index = 0) {
+        UI().openViewer(images.map((src, position) => ({
+            src,
+            name: `${name} — photo ${position + 1}`,
+            caption: `${name} · photo ${position + 1} of ${images.length}${position === 0 ? " · primary photo" : ""}`,
+            original: src,
+        })), index);
+    }
+
+    /** A large thumbnail that opens the viewer. Clicking it does not open the row's editor. */
+    function thumb(item) {
+        const images = imagesOf(item);
+        if (!images.length) return h("span", { className: "product-thumb product-thumb-empty", "aria-hidden": "true", text: item.name.slice(0, 1) });
+        const button = h("button", { className: "product-thumb-button", type: "button", title: "View photos (zoom and fullscreen)", "aria-label": `View photos of ${item.name}` },
+            h("img", { className: "product-thumb", src: images[0], alt: "", loading: "lazy", decoding: "async" }),
+            images.length > 1 ? h("span", { className: "thumb-count", text: `${images.length}` }) : null,
+        );
+        button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            viewImages(images, item.name);
+        });
+        return button;
+    }
+
+    /**
+     * Photo manager for a product or package: large previews (aspect ratio kept), view with zoom and
+     * fullscreen, reorder, remove, add uploads, or add a bundled image by its site path.
+     * value() → { images: [...saved paths in order], image_uploads: [{ name, dataUrl }] }.
+     */
+    function imageManager(initial, { name = "Photo", maxImages = 12 } = {}) {
+        const kept = [...initial];
+        const uploads = [];
+        const grid = h("div", { className: "image-manager-grid" });
+        const fileInput = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", multiple: true });
+        const pathInput = h("input", { type: "text", maxlength: 300, placeholder: "/frontend/image/…" });
+        const addPath = h("button", { className: "button button-small", type: "button", text: "Add path" });
+        const count = h("span", { className: "field-note" });
+        const all = () => [...kept, ...uploads.map((upload) => upload.dataUrl)];
+
+        function render() {
+            const sources = all();
+            count.textContent = `${sources.length} of ${maxImages} photos. The first photo is the main image customers see first.${uploads.length ? " New photos are added after the saved ones; reorder them after saving." : ""}`;
+            grid.replaceChildren(...sources.map((src, index) => {
+                const saved = index < kept.length;
+                const view = h("button", { className: "image-tile-preview", type: "button", title: "View larger (zoom and fullscreen)", "aria-label": `View photo ${index + 1}` },
+                    h("img", { src, alt: "", loading: "lazy", decoding: "async" }));
+                view.addEventListener("click", () => viewImages(all(), name, index));
+                const left = h("button", { className: "button button-small", type: "button", text: "◀", "aria-label": "Move photo earlier", disabled: !saved || index === 0 });
+                const right = h("button", { className: "button button-small", type: "button", text: "▶", "aria-label": "Move photo later", disabled: !saved || index >= kept.length - 1 });
+                const remove = h("button", { className: "button button-small button-danger", type: "button", text: "Remove" });
+                left.addEventListener("click", () => { kept.splice(index - 1, 0, kept.splice(index, 1)[0]); render(); });
+                right.addEventListener("click", () => { kept.splice(index + 1, 0, kept.splice(index, 1)[0]); render(); });
+                remove.addEventListener("click", () => {
+                    if (saved) kept.splice(index, 1);
+                    else uploads.splice(index - kept.length, 1);
+                    render();
+                });
+                return h("figure", { className: "image-tile" },
+                    view,
+                    h("figcaption", {},
+                        h("span", { className: `catalog-chip${index === 0 ? "" : " catalog-chip-muted"}`, text: index === 0 ? "Main photo" : saved ? `Photo ${index + 1}` : "New — not saved yet" }),
+                        h("span", { className: "catalog-row-actions" }, left, right, remove)),
+                );
+            }));
+            if (!sources.length) grid.append(h("p", { className: "empty-state", text: "No photos yet. Upload one or more photos." }));
+        }
+
+        fileInput.addEventListener("change", async () => {
+            const files = [...(fileInput.files || [])];
+            fileInput.value = "";
+            for (const file of files) {
+                if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
+                    toast(`${file.name}: choose a JPG, PNG, or WebP image of 2 MB or less.`);
+                    continue;
+                }
+                if (all().length >= maxImages) {
+                    toast(`A product or package can have at most ${maxImages} photos.`);
+                    break;
+                }
+                uploads.push({ name: file.name, dataUrl: await readImage(file) });
+            }
+            render();
+        });
+        addPath.addEventListener("click", () => {
+            const path = pathInput.value.trim();
+            if (!path.startsWith("/")) {
+                toast("Image paths must start with “/”, for example /frontend/image/souvenir/totebag.jpg.");
+                return;
+            }
+            if (!kept.includes(path) && all().length < maxImages) kept.push(path);
+            pathInput.value = "";
+            render();
+        });
+        render();
+        const element = h("div", { className: "image-manager" },
+            grid,
+            count,
+            h("div", { className: "image-manager-actions" },
+                h("label", { className: "button button-small image-upload-button" }, "＋ Upload photos", fileInput),
+                h("span", { className: "image-path-field" }, pathInput, addPath)),
+        );
+        return {
+            element,
+            value: () => ({ images: [...kept], image_uploads: uploads.map((upload) => ({ name: upload.name, dataUrl: upload.dataUrl })) }),
+        };
     }
 
     // ================================================================ Services & Products view
 
     const UI = () => window.AdminUI;
-    const views = { products: null, pricing: null };
+    const views = { products: null, pricing: null, packages: null };
     const serviceFilter = { search: "", category: "", availability: "" };
     const pricingFilter = { search: "", category: "", state: "" };
 
@@ -408,9 +514,8 @@
             toast("Add a category before adding products.");
             return;
         }
-        let imageUpload = null;
-
         const form = h("form", { className: "catalog-form", novalidate: true });
+        const photos = imageManager(product ? imagesOf(product) : [], { name: product?.name || "New product" });
         const name = h("input", { name: "name", required: true, maxlength: 120, value: product?.name || "" });
         const category = selectOf("category_id", categories().map((item) => [item.id, item.label]), product?.category_id || serviceFilter.category || categories()[0].id);
         const description = h("textarea", { name: "description", maxlength: 600 });
@@ -421,23 +526,6 @@
         const maxQuantity = h("input", { name: "max_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: product?.max_quantity ?? 10000 });
         const pricingMode = selectOf("pricing_mode", Object.entries(PRICING_LABELS), product?.pricing_mode || "unit");
         const basePrice = h("input", { name: "base_price", type: "number", min: 0, step: "0.01", placeholder: "Not set — customers request a quote", value: product?.base_price ?? "" });
-        const imagePath = h("input", { name: "image", maxlength: 300, placeholder: "/frontend/image/…", value: product?.image || "" });
-        const imageFile = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp" });
-        const preview = h("img", { className: "service-image-preview", alt: "Product image preview" });
-        preview.hidden = !product?.image;
-        if (product?.image) preview.src = product.image;
-        imageFile.addEventListener("change", async () => {
-            const file = imageFile.files?.[0];
-            if (!file) return;
-            if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 2 * 1024 * 1024) {
-                imageFile.value = "";
-                toast("Choose a JPG, PNG, or WebP image of 2 MB or less.");
-                return;
-            }
-            imageUpload = { name: file.name, dataUrl: await readImage(file) };
-            preview.src = imageUpload.dataUrl;
-            preview.hidden = false;
-        });
         const priceLabel = () => (pricingMode.value === "area" ? "Base price per sq ft (PHP)" : "Base price per piece (PHP)");
         const basePriceField = formField(priceLabel(), basePrice, { note: "Leave blank until the shop approves a price. Blank means customers get a quotation." });
         pricingMode.addEventListener("change", () => {
@@ -456,9 +544,10 @@
             formField("Maximum quantity", maxQuantity),
             formField("Pricing method", pricingMode, { note: "“Per square foot” uses the product's width, height, and measurement unit fields." }),
             basePriceField,
-            formField("Upload product image", imageFile, { note: "JPG, PNG, or WebP · 2 MB maximum. Saved to the server." }),
-            formField("Or image path", imagePath),
-            h("div", { className: "form-field full" }, preview),
+        ), h("div", { className: "form-field full" },
+            h("span", { className: "form-label-strong", text: "Product photos" }),
+            h("span", { className: "field-note", text: "Upload several photos (JPG, PNG, or WebP · 2 MB each). Customers see all of them on the services and order pages. Select a photo to view it larger with zoom and fullscreen." }),
+            photos.element,
         ));
 
         const save = h("button", { className: "button button-primary", type: "submit", text: product ? "Save product" : "Create product" });
@@ -494,9 +583,8 @@
                 max_quantity: Number(maxQuantity.value),
                 pricing_mode: pricingMode.value,
                 base_price: pricingMode.value === "quote" ? null : numberOrNull(basePrice.value),
-                image: imagePath.value.trim(),
+                ...photos.value(),
             };
-            if (imageUpload) payload.image_upload = imageUpload;
             void guarded(save, async () => {
                 const result = product
                     ? await api("PATCH", `/api/admin/catalog/products/${encodeURIComponent(product.id)}`, payload)
@@ -515,8 +603,8 @@
             form,
         );
         if (product) {
+            body.append(packageListSection(product));
             body.append(fieldListSection(product));
-            if (isInvitationProduct(product)) body.append(packageListSection(product));
         }
         openDialog(body);
     }
@@ -581,19 +669,22 @@
         );
     }
 
-    // ================================================================ invitation packages
+    // ================================================================ packages (every product)
 
-    function isInvitationProduct(product) {
-        return product.category_id === "invitation" || product.fields.some((field) => Boolean(field.section));
+    function perPieceText(pkg) {
+        return pkg.included_quantity ? `${money(pkg.price / pkg.included_quantity)} per piece` : "";
     }
 
     function packageListSection(product) {
         const listHost = h("div");
         const add = h("button", { className: "button button-primary button-small", type: "button", text: "＋ Add package" });
-        add.addEventListener("click", () => openPackageEditor(product, null));
+        add.addEventListener("click", () => openPackageEditor(product, null, { back: () => openProductEditor(product.id) }));
+        const largeFormat = product.category_id === "large-format" || product.pricing_mode === "area";
         const section = h("section", { className: "catalog-packages" },
-            h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: "Order packages" }), add),
-            h("p", { className: "field-note", text: "Ready-made sets customers can order with one click. The price, inclusions, and availability here are shown on the customer order page." }),
+            h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: "Packages" }), add),
+            h("p", { className: "field-note", text: largeFormat
+                ? "Optional ready-made packages. Customers can always choose “Customize Order” to give their own size and requirements."
+                : "Ready-made packages customers can select on the order page, with their photos, inclusions, and price. Customers can also customize their own order." }),
             listHost,
         );
         const reload = async () => {
@@ -602,11 +693,11 @@
                 const result = await api("GET", `/api/admin/catalog/products/${encodeURIComponent(product.id)}/packages`);
                 const packages = result.packages || [];
                 if (!packages.length) {
-                    listHost.replaceChildren(h("p", { className: "empty-state", text: "No packages yet. Add the ready-made sets customers can order." }));
+                    listHost.replaceChildren(h("p", { className: "empty-state", text: "No packages yet. Add the ready-made packages customers can order." }));
                     return;
                 }
                 listHost.replaceChildren(h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
-                    h("thead", {}, h("tr", {}, ...["Package", "Price", "Included", "Add-on", "Availability", ""].map((text) => h("th", { scope: "col", text })))),
+                    h("thead", {}, h("tr", {}, ...["", "Package", "Price", "Included", "Add-on", "Availability", ""].map((text) => h("th", { scope: "col", text })))),
                     h("tbody", {}, ...packages.map((pkg) => packageRow(product, pkg, reload))),
                 )));
             } catch (error) {
@@ -617,72 +708,116 @@
         return section;
     }
 
-    function packageRow(product, pkg, reload) {
-        const toggle = h("button", { className: "button button-small", type: "button", text: pkg.active ? "Hide" : "Show", title: pkg.active ? "Stop offering this package" : "Offer this package again" });
+    function packageActions(pkg, reload) {
+        const toggle = h("button", { className: "button button-small", type: "button", text: pkg.active ? "Deactivate" : "Activate", title: pkg.active ? "Stop offering this package" : "Offer this package again" });
         toggle.addEventListener("click", () => {
             void guarded(toggle, async () => {
                 await api("PATCH", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`, { active: !pkg.active });
-                toast(pkg.active ? "Package hidden from customers." : "Package is available to order again.");
+                toast(pkg.active ? "Package deactivated. Customers no longer see it." : "Package activated. Customers can select it again.");
                 await reload();
             });
         });
-        const edit = h("button", { className: "button button-small", type: "button", text: "Edit" });
-        edit.addEventListener("click", () => openPackageEditor(product, pkg));
         const remove = h("button", { className: "button button-small button-danger", type: "button", text: "Delete" });
         remove.addEventListener("click", () => {
-            if (!window.confirm(`Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, mark it Unavailable instead.`)) return;
+            if (!window.confirm(`Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, deactivate it instead.`)) return;
             void guarded(remove, async () => {
                 await api("DELETE", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`);
                 toast("Package deleted.");
                 await reload();
             });
         });
+        return { toggle, remove };
+    }
+
+    function packageRow(product, pkg, reload) {
+        const { toggle, remove } = packageActions(pkg, reload);
+        const edit = h("button", { className: "button button-small", type: "button", text: "Edit" });
+        edit.addEventListener("click", () => openPackageEditor(product, pkg, { back: () => openProductEditor(product.id) }));
         const addOn = pkg.add_on_price === null || pkg.add_on_price === undefined
             ? "—"
             : `${pkg.add_on_label || "Add-on"} ${money(pkg.add_on_price)}`;
         return h("tr", {},
-            h("td", {}, h("span", { className: "table-primary", text: pkg.name }), h("span", { className: "table-secondary", text: `${pkg.inclusions.length} inclusion${pkg.inclusions.length === 1 ? "" : "s"}${pkg.size ? ` · ${pkg.size}` : ""}` })),
-            h("td", { text: money(pkg.price) }),
+            h("td", {}, thumb(pkg)),
+            h("td", {}, h("span", { className: "table-primary", text: pkg.name }), h("span", { className: "table-secondary", text: `${pkg.inclusions.length} inclusion${pkg.inclusions.length === 1 ? "" : "s"} · ${imagesOf(pkg).length} photo${imagesOf(pkg).length === 1 ? "" : "s"}${pkg.size ? ` · ${pkg.size}` : ""}` })),
+            h("td", {}, h("span", { className: "table-primary", text: money(pkg.price) }), h("span", { className: "table-secondary", text: perPieceText(pkg) })),
             h("td", { text: `${pkg.included_quantity} pcs` }),
             h("td", { text: addOn }),
-            h("td", {}, statusBadge(pkg.active, "Available", "Unavailable")),
+            h("td", {}, statusBadge(pkg.active, "Active", "Inactive")),
             h("td", {}, h("div", { className: "catalog-row-actions" }, toggle, edit, remove)),
         );
     }
 
-    function openPackageEditor(product, pkg) {
+    /**
+     * Add or edit a package. ``back`` reopens the screen the editor came from; ``onSaved`` runs after saving.
+     */
+    function openPackageEditor(product, pkg, { back = null, onSaved = null } = {}) {
         const form = h("form", { className: "catalog-form", novalidate: true });
         const name = h("input", { name: "name", required: true, maxlength: 120, value: pkg?.name || "" });
+        const description = h("textarea", { name: "description", maxlength: 600, rows: 3, placeholder: "What makes this package a good choice" });
+        description.value = pkg?.description || "";
         const price = h("input", { name: "price", type: "number", min: "0.01", step: "0.01", required: true, value: pkg?.price ?? "" });
         const size = h("input", { name: "size", maxlength: 80, value: pkg?.size || "", placeholder: 'e.g. 5" × 7"' });
-        const material = h("input", { name: "material", maxlength: 120, value: pkg?.material || "", placeholder: "e.g. Premium photo paper" });
-        const included = h("input", { name: "included_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: pkg?.included_quantity ?? 20 });
-        const addOnLabel = h("input", { name: "add_on_label", maxlength: 120, value: pkg?.add_on_label || "", placeholder: "e.g. Additional set" });
-        const addOnPrice = h("input", { name: "add_on_price", type: "number", min: 0, step: "0.01", value: pkg?.add_on_price ?? "", placeholder: "Leave blank for no add-on" });
+        const material = h("input", { name: "material", maxlength: 120, value: pkg?.material || "", placeholder: "e.g. Canvas, premium photo paper" });
+        const included = h("input", { name: "included_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: pkg?.included_quantity ?? Math.max(1, product.min_quantity || 1) });
+        const addOnLabel = h("input", { name: "add_on_label", maxlength: 120, value: pkg?.add_on_label || "", placeholder: "e.g. Additional piece" });
+        const addOnPrice = h("input", { name: "add_on_price", type: "number", min: 0, step: "0.01", value: pkg?.add_on_price ?? "", placeholder: "Leave blank for a fixed quantity" });
         const inclusions = h("textarea", { name: "inclusions", required: true, maxlength: 10000, rows: 6, placeholder: "One inclusion per line" });
         inclusions.value = (pkg?.inclusions || []).join("\n");
-        const image = h("input", { name: "image", maxlength: 300, value: pkg?.image || "", placeholder: "/frontend/image/…" });
-        const active = selectOf("active", [["true", "Available to order"], ["false", "Hidden"]], pkg ? String(pkg.active) : "true");
+        const active = selectOf("active", [["true", "Active — customers can select it"], ["false", "Inactive — hidden from customers"]], pkg ? String(pkg.active) : "true");
         const sortOrder = h("input", { name: "sort_order", type: "number", min: 0, max: 10000, step: 1, value: pkg?.sort_order ?? "", placeholder: "Automatic" });
+        const photos = imageManager(pkg ? imagesOf(pkg) : [], { name: pkg?.name || "New package" });
+        const perPiece = h("span", { className: "field-note" });
+        const refreshPerPiece = () => {
+            const value = Number(price.value);
+            const quantity = Number(included.value);
+            perPiece.textContent = value > 0 && quantity > 0 ? `≈ ${money(value / quantity)} per piece for the included ${quantity.toLocaleString()} pcs.` : "";
+        };
+        price.addEventListener("input", refreshPerPiece);
+        included.addEventListener("input", refreshPerPiece);
+        refreshPerPiece();
 
         form.append(h("div", { className: "form-grid" },
             formField("Package name", name),
+            formField("Availability", active),
+            formField("Description", description, { full: true }),
             formField("Package price (PHP)", price),
+            h("div", { className: "form-field" }, h("label", { for: included.id = `pkg-qty-${Math.random().toString(36).slice(2, 7)}`, text: "Included quantity (pcs)" }), included, perPiece),
             formField("Size", size),
             formField("Material", material),
-            formField("Included quantity", included),
             formField("Add-on label", addOnLabel, { note: "Shown when customers order more than the included quantity." }),
             formField("Add-on price per extra piece (PHP)", addOnPrice, { note: "Leave blank to lock the order at exactly the included quantity." }),
-            formField("Availability", active),
             formField("Sort order", sortOrder, { note: "Lower numbers appear first. Leave blank to add the package at the end." }),
-            formField("Image path", image, { full: true, note: "Optional site path, e.g. /frontend/image/invitation/Bdayinvitation.jpg." }),
             formField("Inclusions", inclusions, { full: true, note: "One inclusion per line. Customers see exactly these lines on the package card." }),
+        ), h("div", { className: "form-field full" },
+            h("span", { className: "form-label-strong", text: "Package photos" }),
+            h("span", { className: "field-note", text: "Upload several photos of the package. The first one is shown on the package card; customers can browse all of them." }),
+            photos.element,
         ));
 
-        const back = h("button", { className: "button", type: "button", text: "← Back to product" });
-        back.addEventListener("click", () => openProductEditor(product.id));
+        const actions = h("div", { className: "dialog-actions" });
+        if (back) {
+            const backButton = h("button", { className: "button", type: "button", text: "← Back" });
+            backButton.addEventListener("click", back);
+            actions.append(backButton);
+        } else {
+            actions.append(h("button", { className: "button", type: "button", dataset: { action: "close-dialog" }, text: "Close" }));
+        }
+        if (pkg) {
+            const remove = h("button", { className: "button button-danger", type: "button", text: "Delete package" });
+            remove.addEventListener("click", () => {
+                if (!window.confirm(`Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, make it inactive instead.`)) return;
+                void guarded(remove, async () => {
+                    await api("DELETE", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`);
+                    toast("Package deleted.");
+                    if (onSaved) await onSaved();
+                    if (back) back(); else closeDialog();
+                });
+            });
+            actions.append(remove);
+        }
         const save = h("button", { className: "button button-primary", type: "submit", text: pkg ? "Save package" : "Add package" });
-        form.append(h("div", { className: "dialog-actions" }, back, save));
+        actions.append(save);
+        form.append(actions);
 
         form.addEventListener("submit", (event) => {
             event.preventDefault();
@@ -699,6 +834,7 @@
             }
             const payload = {
                 name: name.value.trim(),
+                description: description.value.trim(),
                 price: priceValue,
                 size: size.value.trim(),
                 material: material.value.trim(),
@@ -706,8 +842,8 @@
                 add_on_label: addOnLabel.value.trim(),
                 add_on_price: addOnPrice.value.trim() === "" ? null : Number(addOnPrice.value),
                 inclusions: lines,
-                image: image.value.trim(),
                 active: active.value === "true",
+                ...photos.value(),
             };
             if (sortOrder.value.trim() !== "") payload.sort_order = Number(sortOrder.value);
             void guarded(save, async () => {
@@ -716,17 +852,208 @@
                 } else {
                     await api("POST", `/api/admin/catalog/products/${encodeURIComponent(product.id)}/packages`, payload);
                 }
-                toast(pkg ? "Package saved." : "Package added.");
-                openProductEditor(product.id);
+                toast(pkg ? "Package saved. The customer order page shows the changes now." : "Package added. Customers can select it on the order page.");
+                if (onSaved) await onSaved();
+                if (back) back(); else closeDialog();
             });
         });
 
         openDialog(h("div", { className: "catalog-editor" },
             h("p", { className: "catalog-breadcrumb", text: `${product.category_label} / ${product.name}` }),
             h("h2", { className: "dialog-heading", text: pkg ? `Edit “${pkg.name}”` : "Add a package" }),
-            h("p", { className: "dialog-subtitle", text: "Customers can order this ready-made set without customizing. Use only prices and inclusions approved by the shop." }),
+            h("p", { className: "dialog-subtitle", text: "Customers can select this package instead of customizing. Use only prices and inclusions approved by the shop." }),
             form,
         ));
+    }
+
+    // ================================================================ Package Management view
+
+    const packageState = { data: null, loading: null, error: "" };
+    const packageFilter = { search: "", service: "", product: "", status: "" };
+
+    async function loadPackages(force = false) {
+        if (packageState.data && !force) return packageState.data;
+        if (!packageState.loading) {
+            packageState.loading = api("GET", "/api/admin/catalog/packages")
+                .then((data) => {
+                    packageState.data = data;
+                    packageState.error = "";
+                    return data;
+                })
+                .catch((error) => {
+                    packageState.error = error instanceof Error ? error.message : "The packages could not be loaded.";
+                    throw error;
+                })
+                .finally(() => { packageState.loading = null; });
+        }
+        return packageState.loading;
+    }
+
+    async function refreshPackagesView() {
+        await Promise.all([loadPackages(true), load(true)]);
+        if (document.querySelector("[data-package-table]")) renderPackages();
+    }
+
+    function productForPackage(productId) {
+        const fromCatalog = findProduct(productId);
+        if (fromCatalog) return fromCatalog;
+        const listed = packageState.data?.products.find((item) => item.id === productId);
+        return listed ? { ...listed, fields: [] } : null;
+    }
+
+    function openPackageProductPicker() {
+        const products = packageState.data?.products || [];
+        if (!products.length) {
+            toast("Add a product before adding packages.");
+            return;
+        }
+        const select = h("select", { required: true });
+        const groups = new Map();
+        products.forEach((product) => {
+            if (!groups.has(product.category_label)) groups.set(product.category_label, h("optgroup", { label: product.category_label }));
+            groups.get(product.category_label).append(new Option(`${product.name}${product.active ? "" : " (unavailable)"} · ${product.package_count} package${product.package_count === 1 ? "" : "s"}`, product.id));
+        });
+        select.append(...groups.values());
+        if (packageFilter.product) select.value = packageFilter.product;
+        const next = h("button", { className: "button button-primary", type: "submit", text: "Continue" });
+        const form = h("form", { className: "catalog-form" },
+            h("div", { className: "form-grid" }, formField("Product", select, { full: true, note: "Every product can have packages, including tote bags, stickers, souvenirs, Sintra boards, party needs, invitations, and tarpaulins." })),
+            h("div", { className: "dialog-actions" }, h("button", { className: "button", type: "button", dataset: { action: "close-dialog" }, text: "Cancel" }), next));
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const product = productForPackage(select.value);
+            if (product) openPackageEditor(product, null, { onSaved: refreshPackagesView });
+        });
+        openDialog(h("div", {}, h("h2", { className: "dialog-heading", text: "Add a package" }), h("p", { className: "dialog-subtitle", text: "Choose the product this package belongs to." }), form), false);
+    }
+
+    function renderPackages() {
+        const host = document.querySelector("[data-package-table]");
+        if (!host) return;
+        if (!packageState.data || !state.catalog) {
+            host.replaceChildren(h("p", { className: "empty-state", text: packageState.error ? `The packages could not be loaded. ${packageState.error}` : "Loading packages…" }));
+            if (!packageState.error) Promise.all([loadPackages(), load()]).then(renderPackages, renderPackages);
+            return;
+        }
+        const data = packageState.data;
+        const packages = data.packages;
+        const stats = document.querySelector("[data-package-stats]");
+        if (stats) {
+            const withPackages = data.products.filter((product) => product.package_count > 0).length;
+            const card = (label, value, foot) => h("article", { className: "stat-card" },
+                h("span", { className: "stat-top" }, h("span", { className: "stat-label", text: label })),
+                h("span", { className: "stat-value", text: String(value) }),
+                h("span", { className: "stat-foot", text: foot }));
+            stats.replaceChildren(
+                card("Total packages", packages.length, "Across every service"),
+                card("Active packages", packages.filter((pkg) => pkg.active).length, "Customers can select these"),
+                card("Products with packages", withPackages, `of ${data.products.length} products`),
+                card("Products without packages", data.products.length - withPackages, "Ordered by customization only"),
+            );
+        }
+
+        const serviceSelect = document.querySelector("#package-service-filter");
+        const productSelect = document.querySelector("#package-product-filter");
+        if (serviceSelect && !serviceSelect.dataset.bound) {
+            serviceSelect.replaceChildren(new Option("All services", ""), ...data.services.map((service) => new Option(service.label, service.id)));
+            serviceSelect.value = packageFilter.service;
+        }
+        const fillProducts = () => {
+            if (!productSelect) return;
+            const options = data.products.filter((product) => !packageFilter.service || product.category_id === packageFilter.service);
+            productSelect.replaceChildren(new Option("All products", ""), ...options.map((product) => new Option(product.name, product.id)));
+            productSelect.value = options.some((product) => product.id === packageFilter.product) ? packageFilter.product : "";
+            packageFilter.product = productSelect.value;
+        };
+        fillProducts();
+
+        if (!views.packages || views.packages.container !== host || !host.isConnected) {
+            views.packages = new (UI().DataTable)(host, {
+                columns: [
+                    { label: "Package", sortKey: "name", render: (pkg) => h("div", { className: "product-cell" }, thumb(pkg), h("span", {},
+                        h("span", { className: "table-primary", text: pkg.name }),
+                        h("span", { className: "table-secondary", text: pkg.description || pkg.inclusions.slice(0, 2).join(" · ") }),
+                    )) },
+                    { label: "Product / service", sortKey: "product_name", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: pkg.product_name }), h("span", { className: "table-secondary", text: pkg.category_label })) },
+                    { label: "Price", sortKey: "price", align: "right", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: money(pkg.price) }), h("span", { className: "table-secondary", text: perPieceText(pkg) })) },
+                    { label: "Included", sortKey: "included_quantity", align: "right", render: (pkg) => `${pkg.included_quantity.toLocaleString()} pcs` },
+                    { label: "Add-on", render: (pkg) => (pkg.add_on_price === null ? "Fixed quantity" : `${money(pkg.add_on_price)} / extra pc`) },
+                    { label: "Photos", value: (pkg) => imagesOf(pkg).length, sortKey: "photos", align: "right", render: (pkg) => String(imagesOf(pkg).length) },
+                    { label: "Status", sortKey: "active", value: (pkg) => (pkg.active ? 0 : 1), render: (pkg) => statusBadge(pkg.active, "Active", "Inactive") },
+                    { label: "", render: (pkg) => {
+                        const { toggle, remove } = packageActions(pkg, refreshPackagesView);
+                        return h("div", { className: "catalog-row-actions" }, toggle, remove);
+                    } },
+                ],
+                rows: () => packageState.data?.packages || [],
+                filter: (pkg, filter) => {
+                    const needle = (filter.search || "").toLowerCase();
+                    return (!filter.service || pkg.category_id === filter.service)
+                        && (!filter.product || pkg.product_id === filter.product)
+                        && (!filter.status || (filter.status === "active") === pkg.active)
+                        && (!needle || `${pkg.name} ${pkg.description} ${pkg.product_name} ${pkg.category_label} ${pkg.inclusions.join(" ")}`.toLowerCase().includes(needle));
+                },
+                initialQuery: { ...packageFilter },
+                defaultSort: { key: "product_name", dir: "asc" },
+                emptyMessage: "No packages yet. Select “Add package” to create the first one.",
+                filteredEmptyMessage: "No packages match these filters.",
+                onRowClick: (pkg) => {
+                    const product = productForPackage(pkg.product_id);
+                    if (product) openPackageEditor(product, pkg, { onSaved: refreshPackagesView });
+                },
+                rowTitle: (pkg) => `Edit ${pkg.name}`,
+                onLoad: (result) => {
+                    const count = document.querySelector("[data-package-count]");
+                    if (count) count.textContent = `${result.total} of ${packages.length}`;
+                },
+            });
+        }
+        const apply = (values) => {
+            Object.assign(packageFilter, values);
+            views.packages.setQuery({ ...packageFilter });
+        };
+        const search = bindControl("#package-search", "input", (event) => apply({ search: event.target.value.trim() }));
+        if (search && !search.value) search.value = packageFilter.search;
+        bindControl("#package-service-filter", "change", (event) => {
+            packageFilter.service = event.target.value;
+            fillProducts();
+            apply({});
+        });
+        bindControl("#package-product-filter", "change", (event) => apply({ product: event.target.value }));
+        const status = bindControl("#package-status-filter", "change", (event) => apply({ status: event.target.value }));
+        if (status) status.value = packageFilter.status;
+        views.packages.setQuery({ ...packageFilter });
+
+        const productsHost = document.querySelector("[data-package-products]");
+        if (productsHost) {
+            const rows = [...data.products].sort((a, b) => a.category_label.localeCompare(b.category_label) || a.name.localeCompare(b.name));
+            productsHost.replaceChildren(h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
+                h("thead", {}, h("tr", {}, ...["Product", "Service", "Packages", ""].map((text) => h("th", { scope: "col", text })))),
+                h("tbody", {}, ...rows.map((product) => {
+                    const add = h("button", { className: "button button-small", type: "button", text: "＋ Add package" });
+                    add.addEventListener("click", () => {
+                        const full = productForPackage(product.id);
+                        if (full) openPackageEditor(full, null, { onSaved: refreshPackagesView });
+                    });
+                    const filterButton = h("button", { className: "button button-small", type: "button", text: "Show", disabled: !product.package_count });
+                    filterButton.addEventListener("click", () => {
+                        packageFilter.service = product.category_id;
+                        if (serviceSelect) serviceSelect.value = product.category_id;
+                        fillProducts();
+                        packageFilter.product = product.id;
+                        if (productSelect) productSelect.value = product.id;
+                        apply({});
+                        host.scrollIntoView({ behavior: "smooth", block: "start" });
+                    });
+                    return h("tr", {},
+                        h("td", {}, h("span", { className: "table-primary", text: product.name }), product.active ? null : h("span", { className: "table-secondary", text: "Unavailable to order" })),
+                        h("td", { text: product.category_label }),
+                        h("td", {}, product.package_count ? h("span", { className: "status-badge available", text: `${product.package_count} package${product.package_count === 1 ? "" : "s"}` }) : h("span", { className: "status-badge pending", text: "No packages" })),
+                        h("td", {}, h("div", { className: "catalog-row-actions" }, filterButton, add)),
+                    );
+                })),
+            )));
+        }
     }
 
     // ================================================================ field editor
@@ -1027,6 +1354,19 @@
                 case "add-product": openProductEditor(null); break;
                 case "edit-product": openProductEditor(id); break;
                 case "edit-pricing": openPricingEditor(id); break;
+                case "add-package":
+                    try {
+                        await loadPackages();
+                    } catch {
+                        toast(packageState.error || "The packages could not be loaded.");
+                        return;
+                    }
+                    openPackageProductPicker();
+                    break;
+                case "reload-packages":
+                    await refreshPackagesView();
+                    toast("Packages reloaded.");
+                    break;
                 case "reload-catalog":
                     await load(true);
                     rerenderActiveView();
@@ -1043,5 +1383,5 @@
     // The script loads at the end of <body>, so the shared dialog already exists.
     dialog()?.addEventListener("close", () => dialog().classList.remove("admin-dialog-wide"));
 
-    window.PrintShopCatalogAdmin = { renderServices, renderPricing, reload: () => load(true) };
+    window.PrintShopCatalogAdmin = { renderServices, renderPricing, renderPackages, reload: () => load(true) };
 })();

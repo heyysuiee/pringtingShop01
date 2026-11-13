@@ -15,7 +15,7 @@ import secrets
 import sqlite3
 from typing import Any
 
-from backend.app.database.catalog_seed import CATALOG_SEED, slug
+from backend.app.database.catalog_seed import CATALOG_SEED, INVITATION_MIN_QUANTITY, REMOVED_PRODUCTS, slug
 from backend.app.database.connection import connection_scope
 from backend.app.models.catalog import CatalogCategory, CatalogField, CatalogProduct, FieldOption
 from backend.app.utils.clock import now_iso
@@ -23,9 +23,13 @@ from backend.app.utils.images import optimized_image
 
 
 SEED_MARKER = "catalog_seed_v1"
-# Marks the sectioned Invitation order-form fields. Existing databases get their old invitation
-# fields replaced once so the new package/customize flow has the right questions.
-FIELD_MIGRATION_MARKER = "invitation_fields_v2"
+# Marks the current Invitation order-form fields (one paper size, Glossy/Matte finish, envelope as a
+# package option, structured event details). Existing databases get their invitation fields replaced
+# once; option prices the administrator already set are kept for options that still exist.
+FIELD_MIGRATION_MARKER = "invitation_fields_v3"
+# Removes discontinued products (Wall Stickers) and lists Product Labels first among stickers.
+CLEANUP_MARKER = "catalog_cleanup_v1"
+FRESH_MARKERS = (FIELD_MIGRATION_MARKER, CLEANUP_MARKER)
 
 
 def new_id(prefix: str) -> str:
@@ -119,27 +123,41 @@ def initialize() -> None:
     with connection_scope() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
-        _ensure_section_column(connection)
+        _ensure_columns(connection)
         seeded = connection.execute("SELECT value FROM app_meta WHERE key = ?", (SEED_MARKER,)).fetchone()
         if seeded is None:
             # Seed only once. If the administrator later removes products, they are not re-created.
             if connection.execute("SELECT COUNT(*) FROM catalog_categories").fetchone()[0] == 0:
                 _seed(connection)
-                # Fresh databases already have the sectioned invitation fields.
-                connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (FIELD_MIGRATION_MARKER, now_iso()))
+                # Fresh databases already have the current fields and catalog.
+                for marker in FRESH_MARKERS:
+                    connection.execute("INSERT OR IGNORE INTO app_meta (key, value) VALUES (?, ?)", (marker, now_iso()))
             connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (SEED_MARKER, now_iso()))
         _migrate_invitation_fields(connection)
+        _cleanup_catalog(connection)
 
 
-def _ensure_section_column(connection: sqlite3.Connection) -> None:
+def _ensure_columns(connection: sqlite3.Connection) -> None:
     columns = {row["name"] for row in connection.execute("PRAGMA table_info(catalog_fields)")}
     if "section" not in columns:
         connection.execute("ALTER TABLE catalog_fields ADD COLUMN section TEXT NOT NULL DEFAULT ''")
+    product_columns = {row["name"] for row in connection.execute("PRAGMA table_info(catalog_products)")}
+    if "images" not in product_columns:
+        # Every image of a product, in display order (JSON list of site paths). ``image`` is the first.
+        connection.execute("ALTER TABLE catalog_products ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
+
+
+def _marker_set(connection: sqlite3.Connection, marker: str) -> bool:
+    return connection.execute("SELECT value FROM app_meta WHERE key = ?", (marker,)).fetchone() is not None
 
 
 def _migrate_invitation_fields(connection: sqlite3.Connection) -> None:
-    """Replace the old Invitation form fields with the sectioned package/customize fields once."""
-    if connection.execute("SELECT value FROM app_meta WHERE key = ?", (FIELD_MIGRATION_MARKER,)).fetchone():
+    """Replace the Invitation form fields with the current seed once, keeping option prices.
+
+    Price adjustments (and quote flags) the administrator entered are copied to the new option with the
+    same field key and option value. Invitation minimum quantities are raised to the 20-piece minimum.
+    """
+    if _marker_set(connection, FIELD_MIGRATION_MARKER):
         return
     for category in CATALOG_SEED:
         if category["id"] != "invitation":
@@ -147,10 +165,51 @@ def _migrate_invitation_fields(connection: sqlite3.Connection) -> None:
         for product in category["products"]:
             if connection.execute("SELECT 1 FROM catalog_products WHERE id = ?", (product["id"],)).fetchone() is None:
                 continue
+            previous = {
+                (row["field_key"], row["value"]): row
+                for row in connection.execute(
+                    """
+                    SELECT f.field_key, o.value, o.price_adjustment, o.price_type, o.requires_quote
+                    FROM catalog_field_options o JOIN catalog_fields f ON f.id = o.field_id
+                    WHERE f.product_id = ?
+                    """,
+                    (product["id"],),
+                ).fetchall()
+            }
             connection.execute("DELETE FROM catalog_fields WHERE product_id = ?", (product["id"],))
             for field_index, field in enumerate(product["fields"]):
-                _insert_field(connection, product["id"], {**field, "sort_order": field_index})
+                options = []
+                for option in field.get("options", []):
+                    old = previous.get((field["field_key"], option["value"]))
+                    if old is not None:
+                        option = {
+                            **option,
+                            "price_adjustment": old["price_adjustment"],
+                            "price_type": old["price_type"],
+                            "requires_quote": bool(old["requires_quote"]) or option.get("requires_quote", False),
+                        }
+                    options.append(option)
+                _insert_field(connection, product["id"], {**field, "options": options, "sort_order": field_index})
+            connection.execute(
+                "UPDATE catalog_products SET min_quantity = MAX(min_quantity, ?), max_quantity = MAX(max_quantity, ?), updated_at = ? WHERE id = ?",
+                (INVITATION_MIN_QUANTITY, INVITATION_MIN_QUANTITY, now_iso(), product["id"]),
+            )
     connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (FIELD_MIGRATION_MARKER, now_iso()))
+
+
+def _cleanup_catalog(connection: sqlite3.Connection) -> None:
+    """Remove discontinued products once and put Product Label Stickers first in the Sticker service."""
+    if _marker_set(connection, CLEANUP_MARKER):
+        return
+    for product_id in REMOVED_PRODUCTS:
+        connection.execute("DELETE FROM catalog_products WHERE id = ?", (product_id,))
+    for category in CATALOG_SEED:
+        for index, product in enumerate(category["products"]):
+            connection.execute(
+                "UPDATE catalog_products SET sort_order = ? WHERE id = ? AND category_id = ?",
+                (index, product["id"], category["id"]),
+            )
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (CLEANUP_MARKER, now_iso()))
 
 
 def _seed(connection: sqlite3.Connection) -> None:
@@ -207,14 +266,29 @@ def _field_from_row(row: sqlite3.Row) -> CatalogField:
     }
 
 
+def decode_images(raw: Any, fallback: str = "") -> list[str]:
+    """A JSON list of image paths; an older single ``image`` value becomes a one-item list."""
+    try:
+        values = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        values = []
+    images = [value for value in values if isinstance(value, str) and value] if isinstance(values, list) else []
+    if not images and fallback:
+        images = [fallback]
+    return images
+
+
 def _product_from_row(row: sqlite3.Row, category_label: str) -> CatalogProduct:
+    keys = row.keys()
+    images = [optimized_image(path) for path in decode_images(row["images"] if "images" in keys else "[]", row["image"])]
     return {
         "id": row["id"],
         "category_id": row["category_id"],
         "category_label": category_label,
         "name": row["name"],
         "description": row["description"],
-        "image": optimized_image(row["image"]),
+        "image": images[0] if images else "",
+        "images": images,
         "pricing_mode": row["pricing_mode"],
         "base_price": None if row["base_price"] is None else float(row["base_price"]),
         "min_quantity": int(row["min_quantity"]),
@@ -382,9 +456,9 @@ def _insert_product(connection: sqlite3.Connection, data: dict[str, Any]) -> Non
     connection.execute(
         """
         INSERT INTO catalog_products (
-            id, category_id, name, description, image, pricing_mode, base_price,
+            id, category_id, name, description, image, images, pricing_mode, base_price,
             min_quantity, max_quantity, event_mode, sort_order, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             data["id"],
@@ -392,6 +466,7 @@ def _insert_product(connection: sqlite3.Connection, data: dict[str, Any]) -> Non
             data["name"],
             data.get("description", ""),
             data.get("image", ""),
+            json.dumps(list(data.get("images") or ([data["image"]] if data.get("image") else []))),
             data.get("pricing_mode", "unit"),
             data.get("base_price"),
             int(data.get("min_quantity", 1)),
@@ -491,11 +566,16 @@ def create_product(data: dict[str, Any]) -> None:
 
 
 def update_product(product_id: str, updates: dict[str, Any]) -> None:
+    values = dict(updates)
+    if "images" in values:
+        images = [path for path in values["images"] if path]
+        values["images"] = json.dumps(images)
+        values["image"] = images[0] if images else ""
     _update_row(
         "catalog_products",
         product_id,
-        updates,
-        ("category_id", "name", "description", "image", "pricing_mode", "base_price", "min_quantity", "max_quantity", "event_mode", "sort_order", "active"),
+        values,
+        ("category_id", "name", "description", "image", "images", "pricing_mode", "base_price", "min_quantity", "max_quantity", "event_mode", "sort_order", "active"),
     )
 
 

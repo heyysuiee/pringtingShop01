@@ -10,7 +10,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.app.core.config import settings
 from backend.app.core.security import session_claims
-from backend.app.repositories import auth_throttle_repository, catalog_repository, customer_repository, order_repository, package_repository
+from backend.app.repositories import (
+    admin_repository,
+    auth_throttle_repository,
+    catalog_repository,
+    customer_repository,
+    order_repository,
+    package_repository,
+)
 from backend.app.routes.admin import router as admin_router
 from backend.app.routes.auth import router as auth_router
 from backend.app.routes.catalog import router as catalog_router
@@ -42,6 +49,7 @@ ADMIN_PAGES = {
     "/admin/orders": "OrderManagement.html",
     "/admin/customers": "CustomerManagement.html",
     "/admin/services": "ServicesProducts.html",
+    "/admin/packages": "PackageManagement.html",
     "/admin/pricing": "PricingManagement.html",
     "/admin/payments": "PaymentMonitoring.html",
     "/admin/reports": "SalesReports.html",
@@ -67,6 +75,7 @@ async def lifespan(app: FastAPI):
             "and cancels password resets in progress. Set it in the project-root .env file."
         )
     customer_repository.initialize()
+    admin_repository.initialize()
     auth_throttle_repository.initialize()
     order_repository.initialize()
     catalog_repository.initialize()
@@ -139,6 +148,10 @@ def _admin_login() -> FileResponse:
     return FileResponse(ADMIN_DIR / "Login.html")
 
 
+def _admin_forgot_password() -> FileResponse:
+    return FileResponse(ADMIN_DIR / "ForgotPassword.html")
+
+
 for _path, _filename in CUSTOMER_PAGES.items():
     app.add_api_route(_path, _customer_page(_filename), methods=["GET"])
 for _path, _filename in ADMIN_PAGES.items():
@@ -147,6 +160,7 @@ for _path, _target in REDIRECTS.items():
     app.add_api_route(_path, _redirect(_target), methods=["GET"])
 for _path in ("/login", "/admin", "/admin/login"):
     app.add_api_route(_path, _admin_login, methods=["GET"])
+app.add_api_route("/admin/forgot-password", _admin_forgot_password, methods=["GET"])
 
 
 @app.get("/api/health")

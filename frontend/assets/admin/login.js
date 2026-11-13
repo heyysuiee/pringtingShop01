@@ -1,9 +1,22 @@
 "use strict";
 
 const loginForm = document.querySelector("#admin-login-form");
+const emailInput = document.querySelector("#email");
 const passwordInput = document.querySelector("#password");
 const passwordToggle = document.querySelector(".password-toggle");
 const loginError = document.querySelector("#login-error");
+const RESET_EMAIL_KEY = "printshop.adminResetEmail";
+
+// The Forgot Password page saves the address so it does not have to be typed again here.
+const savedEmail = sessionStorage.getItem(RESET_EMAIL_KEY);
+sessionStorage.removeItem(RESET_EMAIL_KEY);
+if (savedEmail) emailInput.value = savedEmail;
+(emailInput.value ? passwordInput : emailInput).focus();
+
+// Carry the typed address over to the Forgot Password page (kept out of the URL).
+document.querySelector('a[href="/admin/forgot-password"]')?.addEventListener("click", () => {
+    if (emailInput.value.trim()) sessionStorage.setItem(RESET_EMAIL_KEY, emailInput.value.trim());
+});
 
 passwordToggle.addEventListener("click", () => {
     const showPassword = passwordInput.type === "password";

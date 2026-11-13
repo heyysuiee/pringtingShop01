@@ -17,6 +17,16 @@ class OrderSubmission(BaseModel):
     files: Any = None
     # Files attached to product-specific upload fields, keyed by field key: {"photo_upload": [{name, dataUrl}]}.
     field_files: Any = None
+    # "down_payment" (50% after the quotation) or "cod" (cash on delivery, no down payment).
+    payment_option: Any = None
+
+
+class AdminPaymentOption(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    payment_option: Any = None
+    note: Any = ""
+    expected_version: Any = None
 
 
 class CustomerOrderAction(BaseModel):

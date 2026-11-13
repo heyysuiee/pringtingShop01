@@ -26,10 +26,11 @@
             <nav class="sidebar-nav" aria-label="Admin navigation">
                 <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true">⌂</span>Dashboard</a>
                 <a href="/admin/orders" data-view="orders"><span class="nav-icon" aria-hidden="true">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
-                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true">♙</span>Customer Management</a>
-                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true">▣</span>Payments &amp; Transactions</a>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true">♙</span>Customer Management<span class="nav-count" id="customer-count"></span></a>
+                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true">▣</span>Payments &amp; Transactions<span class="nav-count" id="payment-count"></span></a>
                 <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true">▥</span>Sales &amp; Reports</a>
                 <a href="/admin/services" data-view="services"><span class="nav-icon" aria-hidden="true">▧</span>Services &amp; Products</a>
+                <a href="/admin/packages" data-view="packages"><span class="nav-icon" aria-hidden="true">▦</span>Package Management</a>
                 <a href="/admin/pricing" data-view="pricing"><span class="nav-icon" aria-hidden="true">₱</span>Pricing Management</a>
                 <a href="/admin/notifications" data-view="notifications" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
             </nav>
@@ -71,6 +72,7 @@
         </div>
     </dialog>
     <div class="toast-region" id="toast-region" aria-live="polite"></div>
+    <script src="/assets/mockup.js"></script>
     <script src="/assets/admin/admin-core.js"></script>
     <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>

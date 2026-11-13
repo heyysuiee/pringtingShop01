@@ -34,6 +34,12 @@ class OrderUpdates(TypedDict):
     attachments: NotRequired[list[OrderAttachment]]
     draft_attachment: NotRequired[OrderAttachment | None]
     admin_notes: NotRequired[str]
+    payment_option: NotRequired[str]
+
+
+# How a customer pays for an order.
+PAYMENT_OPTIONS = {"down_payment": "50% Down Payment", "cod": "Cash on Delivery (COD)"}
+DOWN_PAYMENT_RATE = 0.5
 
 
 class OrderRecord(TypedDict):
@@ -61,3 +67,5 @@ class OrderRecord(TypedDict):
     pricing: NotRequired[dict[str, Any]]
     # Set when the order moved to Completed (UTC ISO 8601). Never entered by hand.
     completed_at: NotRequired[str | None]
+    # "down_payment" or "cod" (see PAYMENT_OPTIONS).
+    payment_option: NotRequired[str]

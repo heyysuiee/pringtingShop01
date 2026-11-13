@@ -238,10 +238,13 @@ def build_customers(params: Mapping[str, Any]) -> Report:
         Column("email", "Email address", width=1.9),
         Column("phone", "Contact number", width=1.2),
         Column("registered_date", "Registered", "date", 1.0),
-        Column("total_orders", "Total orders", "int", 0.7),
-        Column("completed_orders", "Completed", "int", 0.75),
-        Column("pending_orders", "Pending", "int", 0.7),
-        Column("total_spent", "Amount spent", "money", 1.0),
+        Column("total_orders", "Total orders", "int", 0.6),
+        Column("completed_orders", "Completed", "int", 0.7),
+        Column("total_transaction_amount", "Total transactions", "money", 1.0),
+        Column("total_paid", "Total paid", "money", 0.95),
+        Column("outstanding_balance", "Balance", "money", 0.9),
+        Column("total_spent", "Amount spent", "money", 0.95),
+        Column("payment_status", "Payment status", width=0.95),
     ]
     return Report(
         "Customer Transaction Report",
@@ -252,18 +255,24 @@ def build_customers(params: Mapping[str, Any]) -> Report:
             ("Registration date", _range_text(params, "registered_from", "registered_to")),
             ("Ordered between", _range_text(params, "ordered_from", "ordered_to")),
             ("Order activity", activity_labels.get(reports.param_text(params, "activity", 40), "")),
+            ("Payment status", reports.param_text(params, "payment_status", 40)),
         ]),
         [
             ("Customers", len(rows), "int"),
             ("Total orders", sum(row["total_orders"] for row in rows), "int"),
             ("Completed orders", sum(row["completed_orders"] for row in rows), "int"),
+            ("Total transaction amount (confirmed totals, excluding cancelled)", reports.money(sum(row["total_transaction_amount"] for row in rows)), "money"),
+            ("Total payments received", reports.money(sum(row["total_paid"] for row in rows)), "money"),
+            ("Outstanding balance", reports.money(sum(row["outstanding_balance"] for row in rows)), "money"),
             ("Total amount spent (completed and fully paid)", reports.money(sum(row["total_spent"] for row in rows)), "money"),
         ],
         [Section("Customers", columns, rows, {
             "display_id": f"Total ({len(rows)} customers)",
             "total_orders": sum(row["total_orders"] for row in rows),
             "completed_orders": sum(row["completed_orders"] for row in rows),
-            "pending_orders": sum(row["pending_orders"] for row in rows),
+            "total_transaction_amount": reports.money(sum(row["total_transaction_amount"] for row in rows)),
+            "total_paid": reports.money(sum(row["total_paid"] for row in rows)),
+            "outstanding_balance": reports.money(sum(row["outstanding_balance"] for row in rows)),
             "total_spent": reports.money(sum(row["total_spent"] for row in rows)),
         }, "Customers")],
     )
@@ -283,6 +292,7 @@ def build_customer(params: Mapping[str, Any]) -> Report:
         Column("status", "Status", width=1.2),
         Column("total_amount", "Total amount", "money"),
         Column("amount_paid", "Amount paid", "money"),
+        Column("payment_option_label", "Payment option"),
         Column("payment_status", "Payment status"),
         Column("completion_date", "Completion date", "date"),
         Column("completion_days", "Duration (days)", "days", 0.7),
@@ -314,6 +324,10 @@ def build_customer(params: Mapping[str, Any]) -> Report:
             ("Total orders", customer["total_orders"], "int"),
             ("Completed orders", customer["completed_orders"], "int"),
             ("Pending orders", customer["pending_orders"], "int"),
+            ("Total transaction amount", customer["total_transaction_amount"], "money"),
+            ("Total payments received", customer["total_paid"], "money"),
+            ("Outstanding balance", customer["outstanding_balance"], "money"),
+            ("Payment status", customer["payment_status"], "text"),
             ("Total amount spent (completed and fully paid)", customer["total_spent"], "money"),
         ],
         [
@@ -331,15 +345,41 @@ def build_customer(params: Mapping[str, Any]) -> Report:
     )
 
 
+def _payment_section(data: dict[str, Any]) -> Section:
+    payments = data["payments"]
+    return Section(
+        "Payment summary — payments received by method",
+        [Column("method", "Payment method", width=2), Column("count", "Payments", "int"), Column("amount", "Amount received", "money")],
+        payments["by_method"],
+        {"method": f"Total ({payments['payment_count']} payments)", "count": payments["payment_count"], "amount": payments["received_total"]},
+        "Payment Summary",
+        "No payments were received in this period.",
+    )
+
+
+def _payment_summary_items(data: dict[str, Any]) -> list[tuple[str, Any, str]]:
+    payments = data["payments"]
+    return [
+        ("Payments received in period", payments["received_total"], "money"),
+        ("  of which down payments (50%)", payments["down_payments"], "money"),
+        ("  of which balance payments", payments["balance_payments"], "money"),
+        ("  of which Cash on Delivery collections", payments["cod_collections"], "money"),
+        ("Orders paying with 50% down payment", payments["orders_down_payment"], "int"),
+        ("Orders paying Cash on Delivery", payments["orders_cod"], "int"),
+        ("Outstanding balance of open orders in period", payments["outstanding_balance"], "money"),
+    ]
+
+
 def _summary_sections(data: dict[str, Any]) -> list[Section]:
     service_columns = [
         Column("service", "Service", width=2),
         Column("total_orders", "Orders requested", "int"),
-        Column("completed_orders", "Completed orders", "int"),
+        Column("completed_orders", "Completed transactions", "int"),
         Column("fully_paid_completed", "Completed & fully paid", "int"),
-        Column("revenue", "Confirmed revenue", "money"),
+        Column("revenue", "Total revenue", "money"),
         Column("revenue_share", "Share of revenue", "percent"),
         Column("average_completion_days", "Avg completion (days)", "days"),
+        Column("date_range", "Date range", width=1.6),
     ]
     trend_columns = [
         Column("label", "Period", width=1.6),
@@ -349,10 +389,10 @@ def _summary_sections(data: dict[str, Any]) -> list[Section]:
         Column("fully_paid_completed", "Completed & fully paid", "int"),
         Column("revenue", "Confirmed revenue", "money"),
     ]
-    by_service = data["by_service"]
+    by_service = [{**item, "date_range": data["period"]["label"]} for item in data["by_service"]]
     trend = data["trend"]
     return [
-        Section("Revenue by service", service_columns, by_service, {
+        Section("Revenue summary by service", service_columns, by_service, {
             "service": "All services",
             "total_orders": sum(item["total_orders"] for item in by_service),
             "completed_orders": sum(item["completed_orders"] for item in by_service),
@@ -394,10 +434,11 @@ def build_summary(params: Mapping[str, Any]) -> Report:
             ("In-progress orders", totals["processing_orders"], "int"),
             ("Cancelled / rejected orders", totals["cancelled_orders"], "int"),
             ("Fully paid orders", totals["fully_paid_orders"], "int"),
-            ("Total confirmed revenue", totals["confirmed_revenue"], "money"),
+            ("Total sales (confirmed revenue: completed and fully paid)", totals["confirmed_revenue"], "money"),
             ("Average completion duration (calendar days)", totals["average_completion_days"], "days"),
+            *_payment_summary_items(data),
         ],
-        _summary_sections(data),
+        [*_summary_sections(data), _payment_section(data)],
     )
 
 
@@ -443,6 +484,7 @@ def build_orders(params: Mapping[str, Any]) -> Report:
         Column("status", "Status", width=1.2),
         Column("total_amount", "Confirmed total", "money"),
         Column("amount_paid", "Amount paid", "money"),
+        Column("payment_option_label", "Payment option"),
         Column("payment_status", "Payment status"),
     ]
     status = reports.param_text(params, "status", 60)
@@ -476,6 +518,7 @@ def build_payments(params: Mapping[str, Any]) -> Report:
         Column("method", "Method"),
         Column("payment_reference", "Payment reference", width=1.3),
         Column("amount", "Amount received", "money"),
+        Column("payment_option_label", "Payment option"),
         Column("order_payment_status", "Order payment status"),
     ]
     return Report(

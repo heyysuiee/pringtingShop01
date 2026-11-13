@@ -12,7 +12,12 @@ FIELD_TYPES = OPTION_FIELD_TYPES + VALUE_FIELD_TYPES + FILE_FIELD_TYPES
 # Which part of the order form a field belongs to. "" is the basic specification section.
 # The Invitation ordering process uses these to build its multi-part form and to let a package
 # order skip the specification/design sections while still collecting the event and uploads.
-FIELD_SECTIONS = ("", "design", "event", "upload")
+# "options" holds choices that apply to package orders as well (for example paper finish and
+# envelope); their price adjustments are added to the package price.
+FIELD_SECTIONS = ("", "options", "design", "event", "upload")
+# Field types a package order of a non-invitation product still collects (names, text, files):
+# the package fixes the specifications, the customer only personalizes it.
+PACKAGE_PERSONALIZATION_TYPES = ("text", "textarea", "file", "date", "time")
 
 # unit: price per piece. area: price per square foot (needs width/height fields). quote: always quoted by the shop.
 PRICING_MODES = ("unit", "area", "quote")
@@ -69,7 +74,9 @@ class CatalogProduct(TypedDict):
     category_label: str
     name: str
     description: str
+    # The primary image (first of ``images``), kept for the pages that show one picture.
     image: str
+    images: list[str]
     pricing_mode: str
     base_price: float | None
     min_quantity: int
@@ -90,11 +97,15 @@ class CatalogCategory(TypedDict):
 
 
 class InvitationPackage(TypedDict):
-    """A ready-made invitation set with a fixed price and its own inclusions/add-on."""
+    """A ready-made package (set) of one product with a fixed price and its own inclusions/add-on.
+
+    The name is historical: packages started with Invitations and now exist for every service.
+    """
 
     id: str
     product_id: str
     name: str
+    description: str
     price: float
     size: str
     material: str
@@ -103,5 +114,10 @@ class InvitationPackage(TypedDict):
     add_on_price: float | None
     included_quantity: int
     image: str
+    images: list[str]
     sort_order: int
     active: bool
+
+
+# The same record under its current meaning.
+ProductPackage = InvitationPackage

@@ -1,16 +1,18 @@
 ﻿"use strict";
 
 /**
- * Order wizard. The catalog, each product's questions, and all prices come from /api/catalog, so the
- * form always reflects what the administrator configured. Price estimates are calculated by the server
- * (/api/catalog/quote) with the same rules it applies when the order is saved.
+ * Order wizard. The catalog, each product's questions, its packages, and all prices come from /api/catalog,
+ * so the form always reflects what the administrator configured. Estimates are calculated by the server
+ * (/api/catalog/quote) with the same rules it applies when the order is saved, for custom orders and
+ * package orders alike.
  *
- * Invitation products use a six-step flow: Product → Ordering Option → Configure → Event & Files →
- * Contact → Review. Packages come from /api/catalog/products/{id}/packages and are priced from the
- * package's published price and add-on charge. Every other product keeps the original four-step flow.
+ * Every product starts with an ordering option: Select Package or Customize Order.
+ *   Invitations:  Product → Ordering Option → Configure → Event & Files → Mockup → Contact & Payment → Review
+ *   Other items:  Product → Ordering Option → Details → Contact & Payment → Review
  */
 (() => {
     const DynamicForm = window.PrintShopDynamicForm;
+    const Mockup = window.InvitationMockup;
     const form = document.querySelector("#order-form");
     if (!form || !DynamicForm) return;
 
@@ -27,8 +29,6 @@
     const eventFields = $("#event-fields");
     const stepper = $("#stepper");
 
-    const invitationOption = $("#invitation-option");
-    const generalCustomize = $("#general-customize");
     const packageSection = $("#package-section");
     const customizeSection = $("#customize-section");
     const packageList = $("#package-list");
@@ -36,9 +36,12 @@
     const modeError = $("#order-mode-error");
     const configureLead = $("#configure-lead");
     const selectedPackageSummary = $("#selected-package-summary");
+    const generalPackageSummary = $("#general-package-summary");
 
     const generalFormContainer = $("#general-dynamic-fields");
+    const generalPackageContainer = $("#general-package-fields");
     const basicsContainer = $("#invitation-basics-fields");
+    const optionsContainer = $("#invitation-options-fields");
     const designContainer = $("#invitation-design-fields");
     const eventContainer = $("#invitation-event-fields");
     const uploadContainer = $("#invitation-upload-fields");
@@ -51,28 +54,23 @@
     const invitationNotes = $("#invitation-notes");
     const uploadInput = $("#artwork");
     const uploadPreviews = $("#upload-previews");
+    const paymentBreakdown = $("#payment-breakdown");
 
-    const generalEstimate = {
-        total: $("#estimate-total"),
-        status: $("#estimate-status"),
-        lines: $("#estimate-lines"),
-    };
-    const invitationEstimate = {
-        total: $("#invitation-estimate-total"),
-        status: $("#invitation-estimate-status"),
-        lines: $("#invitation-estimate-lines"),
-    };
+    const generalEstimate = { total: $("#estimate-total"), status: $("#estimate-status"), lines: $("#estimate-lines") };
+    const invitationEstimate = { total: $("#invitation-estimate-total"), status: $("#invitation-estimate-status"), lines: $("#invitation-estimate-lines") };
 
     const MAX_REFERENCE_FILES = 3;
     const MAX_ORDER_FILES = 15;
+    const DOWN_PAYMENT_RATE = 0.5;
     const money = DynamicForm.money;
     const parameters = new URLSearchParams(window.location.search);
 
     const SEQUENCES = {
         general: [
             { step: 1, label: "Product" },
-            { step: 2, label: "Customize" },
-            { step: 5, label: "Contact" },
+            { step: 2, label: "Ordering Option" },
+            { step: 8, label: "Details" },
+            { step: 5, label: "Contact & Payment" },
             { step: 6, label: "Review" },
         ],
         invitation: [
@@ -80,20 +78,22 @@
             { step: 2, label: "Ordering Option" },
             { step: 3, label: "Configure" },
             { step: 4, label: "Event & Files" },
-            { step: 5, label: "Contact" },
+            { step: 7, label: "Mockup" },
+            { step: 5, label: "Contact & Payment" },
             { step: 6, label: "Review" },
         ],
     };
+    const REVIEW_STEP = 6;
 
     const state = {
         categories: [],
         product: null,
         invitation: false,
-        mode: "", // "package" | "customize" for invitation products
+        kind: null, // mockup kind: birthday | wedding | christening
+        mode: "", // "package" | "customize"
         packages: [],
-        packagesLoading: false,
         package: null,
-        forms: {}, // general, or basics/design/event/upload for invitations
+        forms: {},
         referenceFiles: [],
         quote: null,
         quoteTimer: 0,
@@ -101,6 +101,7 @@
         sequence: SEQUENCES.general,
         activeStep: 1,
         idempotencyKey: newIdempotencyKey(),
+        mockup: { template: "", palette: 0, skip: false },
     };
 
     function newIdempotencyKey() {
@@ -131,18 +132,32 @@
         return result;
     }
 
-    /** "From ₱12.00 each", "₱20.00 per sq ft", or "Request a quote" — only administrator prices are shown. */
+    function perPiece(pkg) {
+        return pkg.included_quantity ? Math.round((pkg.price / pkg.included_quantity) * 100) / 100 : null;
+    }
+
+    /** "₱12.00 per piece", "₱20.00 per sq ft", packages "from ₱15.00 per piece", or "Request a quote". */
     function priceSummary(product) {
-        if (product.pricing_mode === "quote" || product.base_price === null) return "Request a quote";
-        return product.pricing_mode === "area"
-            ? `${money(product.base_price)} per sq ft`
-            : `From ${money(product.base_price)} each`;
+        const packages = product.packages || [];
+        const cheapest = packages.length ? Math.min(...packages.map((pkg) => perPiece(pkg) ?? Infinity)) : Infinity;
+        if (product.pricing_mode !== "quote" && product.base_price !== null) {
+            return product.pricing_mode === "area"
+                ? `${money(product.base_price)} per sq ft`
+                : `${money(product.base_price)} per piece`;
+        }
+        if (Number.isFinite(cheapest)) return `Packages from ${money(cheapest)} per piece`;
+        return "Request a quote";
+    }
+
+    function productImages(product) {
+        return (product.images && product.images.length ? product.images : (product.image ? [product.image] : []));
     }
 
     function productImage(product, className) {
-        if (product.image) {
+        const source = productImages(product)[0];
+        if (source) {
             const image = el("img", className);
-            image.src = product.image;
+            image.src = source;
             image.alt = `Sample image for ${product.name}`;
             image.loading = "lazy";
             return image;
@@ -154,6 +169,96 @@
 
     function isInvitationProduct(product) {
         return Boolean(product && (product.fields || []).some((field) => field.section === "event"));
+    }
+
+    // ---------------------------------------------------------------- lightbox (product and package photos, mockup)
+
+    const lightbox = $("#customer-lightbox");
+    const lightboxState = { items: [], index: 0 };
+
+    function openLightbox(items, index = 0) {
+        if (!lightbox || !items.length) return;
+        lightboxState.items = items;
+        showLightbox(index);
+        if (!lightbox.open) lightbox.showModal();
+    }
+
+    function showLightbox(index) {
+        const items = lightboxState.items;
+        lightboxState.index = (index + items.length) % items.length;
+        const item = items[lightboxState.index];
+        const stage = $("#lightbox-stage");
+        stage.replaceChildren();
+        if (item.node) {
+            stage.append(item.node());
+        } else {
+            const image = el("img");
+            image.src = item.src;
+            image.alt = item.alt || "";
+            stage.append(image);
+        }
+        $("#lightbox-caption").textContent = item.caption || "";
+        $("#lightbox-count").textContent = items.length > 1 ? `${lightboxState.index + 1} of ${items.length}` : "";
+        $("#lightbox-prev").hidden = items.length < 2;
+        $("#lightbox-next").hidden = items.length < 2;
+    }
+
+    if (lightbox) {
+        $("#lightbox-prev").addEventListener("click", () => showLightbox(lightboxState.index - 1));
+        $("#lightbox-next").addEventListener("click", () => showLightbox(lightboxState.index + 1));
+        lightbox.querySelector("[data-close-lightbox]").addEventListener("click", () => lightbox.close());
+        lightbox.addEventListener("click", (event) => {
+            if (event.target === lightbox) lightbox.close();
+        });
+        lightbox.addEventListener("keydown", (event) => {
+            if (event.key === "ArrowLeft") showLightbox(lightboxState.index - 1);
+            if (event.key === "ArrowRight") showLightbox(lightboxState.index + 1);
+        });
+    }
+
+    /** A main photo with thumbnails; selecting the photo opens the lightbox. */
+    function gallery(images, name, className = "") {
+        const wrapper = el("div", `photo-gallery ${className}`.trim());
+        if (!images.length) {
+            const placeholder = el("span", "photo-gallery-main product-image-placeholder", name.slice(0, 1));
+            placeholder.setAttribute("aria-hidden", "true");
+            wrapper.append(placeholder);
+            return wrapper;
+        }
+        let current = 0;
+        const items = images.map((src, index) => ({ src, alt: `${name} — photo ${index + 1}`, caption: `${name} · photo ${index + 1} of ${images.length}` }));
+        const main = el("button", "photo-gallery-main");
+        main.type = "button";
+        main.setAttribute("aria-label", `View larger photos of ${name}`);
+        const mainImage = el("img");
+        mainImage.alt = items[0].alt;
+        mainImage.src = images[0];
+        main.append(mainImage);
+        if (images.length > 1) main.append(el("span", "photo-gallery-count", `${images.length} photos`));
+        main.addEventListener("click", () => openLightbox(items, current));
+        wrapper.append(main);
+        if (images.length > 1) {
+            const thumbs = el("div", "photo-gallery-thumbs");
+            images.forEach((src, index) => {
+                const thumb = el("button", `photo-gallery-thumb${index === 0 ? " active" : ""}`);
+                thumb.type = "button";
+                thumb.setAttribute("aria-label", `Show photo ${index + 1} of ${name}`);
+                const image = el("img");
+                image.src = src;
+                image.alt = "";
+                image.loading = "lazy";
+                thumb.append(image);
+                thumb.addEventListener("click", () => {
+                    current = index;
+                    mainImage.src = src;
+                    mainImage.alt = items[index].alt;
+                    thumbs.querySelectorAll(".photo-gallery-thumb").forEach((item, position) => item.classList.toggle("active", position === index));
+                });
+                thumbs.append(thumb);
+            });
+            wrapper.append(thumbs);
+        }
+        return wrapper;
     }
 
     // ---------------------------------------------------------------- step 1: category & product
@@ -202,13 +307,9 @@
     }
 
     function onFormChange() {
-        if (state.invitation) {
-            if (state.mode === "package") renderPackageEstimate();
-            else if (state.mode === "customize") scheduleQuote();
-        } else {
-            scheduleQuote();
-        }
-        if (state.activeStep === 6) renderSummary();
+        scheduleQuote();
+        if (state.activeStep === 7) renderMockup();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
     function createForms(product) {
@@ -216,21 +317,32 @@
         if (state.invitation) {
             state.forms = {
                 basics: DynamicForm.create(basicsContainer, product, { includeSections: [""], onChange: onFormChange, idPrefix: "inv-basics" }),
+                options: DynamicForm.create(optionsContainer, product, { includeSections: ["options"], onChange: onFormChange, idPrefix: "inv-options" }),
                 design: DynamicForm.create(designContainer, product, { includeSections: ["design"], onChange: onFormChange, idPrefix: "inv-design" }),
                 event: DynamicForm.create(eventContainer, product, { includeSections: ["event"], onChange: onFormChange, idPrefix: "inv-event" }),
                 upload: DynamicForm.create(uploadContainer, product, { includeSections: ["upload"], onChange: onFormChange, idPrefix: "inv-upload" }),
             };
+            $("#invitation-options-block").hidden = !state.forms.options.fieldCount;
         } else {
+            const packageKeys = new Set(product.package_field_keys || []);
             state.forms = {
                 general: DynamicForm.create(generalFormContainer, product, { onChange: onFormChange, idPrefix: "opt" }),
+                generalPackage: DynamicForm.create(generalPackageContainer, product, {
+                    onChange: onFormChange,
+                    idPrefix: "pkg",
+                    fieldFilter: (field) => packageKeys.has(field.field_key),
+                }),
             };
         }
     }
 
     function activeForms() {
-        if (!state.invitation) return state.forms.general ? [state.forms.general] : [];
-        if (state.mode === "package") return [state.forms.event, state.forms.upload].filter(Boolean);
-        return [state.forms.basics, state.forms.design, state.forms.event, state.forms.upload].filter(Boolean);
+        const forms = state.forms;
+        if (!state.invitation) {
+            return [state.mode === "package" ? forms.generalPackage : forms.general].filter(Boolean);
+        }
+        if (state.mode === "package") return [forms.options, forms.event, forms.upload].filter(Boolean);
+        return [forms.basics, forms.options, forms.design, forms.event, forms.upload].filter(Boolean);
     }
 
     function collectValues() {
@@ -244,25 +356,9 @@
             + (state.invitation ? 0 : state.referenceFiles.length);
     }
 
-    // ---------------------------------------------------------------- step 2 + configure: product selection
+    // ---------------------------------------------------------------- product selection
 
-    function selectProduct(productId) {
-        const product = currentCategory()?.products.find((item) => item.id === productId);
-        if (!product || product === state.product) return;
-        state.product = product;
-        state.invitation = isInvitationProduct(product);
-        state.mode = "";
-        state.packages = [];
-        state.packagesLoading = false;
-        state.package = null;
-        state.quote = null;
-        state.quoteSequence += 1;
-        window.clearTimeout(state.quoteTimer);
-        packageError.textContent = "";
-        modeError.textContent = "";
-        $("#product-error").textContent = "";
-        setError("");
-
+    function renderSelectedProduct(product) {
         selectedProduct.hidden = false;
         selectedProduct.replaceChildren();
         const copy = el("div", "selected-product-copy");
@@ -272,50 +368,65 @@
             el("p", "", product.description || ""),
             el("strong", "product-price-note", priceSummary(product)),
         );
-        selectedProduct.append(productImage(product, "selected-product-image"), copy);
+        const packages = product.packages || [];
+        copy.append(el("p", "field-hint", packages.length
+            ? `${packages.length} package${packages.length === 1 ? "" : "s"} available, or customize your own order.`
+            : "Customize your own order; the shop has not published packages for this item yet."));
+        if (product.min_quantity > 1) copy.append(el("span", "min-badge", `Minimum order: ${product.min_quantity.toLocaleString()} pcs`));
+        selectedProduct.append(gallery(productImages(product), product.name, "selected-product-gallery"), copy);
+    }
 
+    function selectProduct(productId) {
+        const product = currentCategory()?.products.find((item) => item.id === productId);
+        if (!product || product === state.product) return;
+        state.product = product;
+        state.invitation = isInvitationProduct(product);
+        state.kind = Mockup ? Mockup.kindOf(product) : null;
+        state.packages = Array.isArray(product.packages) ? product.packages : [];
+        state.package = null;
+        state.quote = null;
+        state.quoteSequence += 1;
+        window.clearTimeout(state.quoteTimer);
+        packageError.textContent = "";
+        modeError.textContent = "";
+        $("#product-error").textContent = "";
+        setError("");
+
+        renderSelectedProduct(product);
         const note = pricingNote.querySelector("div");
-        if (state.invitation) {
-            note.replaceChildren(
-                el("strong", "", "Packages or a custom quotation"),
-                el("p", "", "Choose a published package with a fixed price, or customize your invitation and let the administrator send a quotation. The final amount is always confirmed before payment."),
-            );
-        } else {
-            const priced = product.pricing_mode !== "quote" && product.base_price !== null;
-            note.replaceChildren(
-                el("strong", "", priced ? "Prices set by the shop" : "Request a quote"),
-                el("p", "", priced
-                    ? "You will see a live estimate as you choose options. The administrator confirms the final amount before payment is requested."
+        const priced = product.pricing_mode !== "quote" && product.base_price !== null;
+        note.replaceChildren(
+            el("strong", "", state.packages.length ? "Packages or a customized order" : (priced ? "Prices set by the shop" : "Request a quote")),
+            el("p", "", state.packages.length
+                ? "Choose a published package with a fixed price, or customize your order. The total is calculated from the quantity and the shop confirms the final amount before payment."
+                : priced
+                    ? "You will see the price per piece and a live total as you choose options. The administrator confirms the final amount before payment is requested."
                     : "This product does not have a published price yet. Submit your options and the administrator will send a quotation."),
-            );
-        }
+        );
 
         $("#step2-product").textContent = product.name;
         $("#step2-general-product").textContent = product.name;
-        invitationOption.hidden = !state.invitation;
-        generalCustomize.hidden = state.invitation;
-        packageSection.hidden = true;
-        customizeSection.hidden = true;
-        selectedPackageSummary.hidden = true;
-        selectedPackageSummary.replaceChildren();
-        configureLead.textContent = "";
+        const largeFormat = product.category_id === "large-format" || product.pricing_mode === "area";
+        $("#customize-mode-title").textContent = state.invitation ? "Customize Your Own Invitation" : "Customize Order";
+        $("#customize-mode-note").textContent = state.invitation
+            ? "Set the printing, finish, envelope, quantity, design direction, and event details yourself."
+            : largeFormat
+                ? "Enter your exact size, material, and requirements. Priced per square foot or by quotation."
+                : "Choose your own size, material, and details. Priced from the shop's rates or by quotation.";
+        $("#package-mode-note").textContent = state.packages.length
+            ? `${state.packages.length} package${state.packages.length === 1 ? "" : "s"} with fixed prices, inclusions, and photos.`
+            : "No packages are published for this item yet.";
 
         createForms(product);
-        updateModeButtons();
-        if (state.invitation) {
-            state.referenceFiles = [];
-            renderReferenceFiles();
-            configureQuantity({ reset: true });
-            loadPackages(product.id);
-        } else {
-            configureQuantity({ reset: true });
-        }
+        state.referenceFiles = [];
+        renderReferenceFiles();
+        resetMockup();
+        renderPackages();
+        // Without packages, the customized order is the only option.
+        setMode(state.packages.length ? "" : "customize", { silent: true });
         configureLegacyEvent();
         setSequence(state.invitation ? "invitation" : "general");
-        if (state.invitation) renderPackageEstimate();
-        else scheduleQuote();
 
-        // A later step from the previous product may not exist in the new sequence.
         if (!state.sequence.some((item) => item.step === state.activeStep)) showStep(1, false);
         else syncNextButton();
 
@@ -349,9 +460,9 @@
         let min = product.min_quantity;
         let max = product.max_quantity;
         let preferred;
+        const pkg = state.mode === "package" ? state.package : null;
 
-        if (state.invitation && state.mode === "package" && state.package) {
-            const pkg = state.package;
+        if (pkg) {
             if (pkg.add_on_price === null) {
                 min = pkg.included_quantity;
                 max = pkg.included_quantity;
@@ -363,15 +474,16 @@
                 preferred = min;
                 hint.textContent = `Includes ${pkg.included_quantity.toLocaleString()} pcs. Each additional piece is ${money(pkg.add_on_price)}${pkg.add_on_label ? ` (${pkg.add_on_label.toLowerCase()})` : ""}.`;
             }
-        } else if (state.invitation && state.mode === "package") {
+        } else if (state.mode === "package") {
             hint.textContent = "Select a package to see its included quantity.";
-        } else if (state.invitation) {
-            hint.textContent = `Minimum order: ${product.min_quantity.toLocaleString()} pieces · maximum ${product.max_quantity.toLocaleString()}. The shop confirms the final quotation.`;
         } else {
             hint.textContent = product.min_quantity > 1
-                ? `Minimum order: ${product.min_quantity.toLocaleString()} pieces · maximum ${product.max_quantity.toLocaleString()}.`
-                : `Up to ${product.max_quantity.toLocaleString()} pieces.`;
+                ? `Minimum order: ${product.min_quantity.toLocaleString()} pieces · maximum ${product.max_quantity.toLocaleString()}. The total updates with the quantity.`
+                : `Up to ${product.max_quantity.toLocaleString()} pieces. The total updates with the quantity.`;
         }
+        const badge = state.invitation ? $("#invitation-min-badge") : $("#quantity-min-badge");
+        badge.hidden = min <= 1;
+        badge.textContent = min === max ? `Fixed: ${min.toLocaleString()} pcs` : `Minimum ${min.toLocaleString()} pcs`;
 
         input.min = String(min);
         input.max = String(max);
@@ -383,24 +495,17 @@
         } else if (!Number.isInteger(current) || current < min || current > max) {
             input.value = String(min);
         }
-
-        const field = input.closest(".quantity-field");
-        field?.querySelectorAll(".quantity-step").forEach((button) => {
+        input.closest(".quantity-field")?.querySelectorAll(".quantity-step").forEach((button) => {
             button.disabled = input.disabled;
         });
     }
 
     function onQuantityChange() {
-        if (state.invitation) {
-            if (state.mode === "package") renderPackageEstimate();
-            else if (state.mode === "customize") scheduleQuote();
-        } else {
-            scheduleQuote();
-        }
-        if (state.activeStep === 6) renderSummary();
+        scheduleQuote();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
-    // ---------------------------------------------------------------- invitation ordering option
+    // ---------------------------------------------------------------- ordering option (package or customize)
 
     function updateModeButtons() {
         document.querySelectorAll("[data-order-mode]").forEach((button) => {
@@ -408,28 +513,22 @@
             button.classList.toggle("selected", active);
             button.setAttribute("aria-pressed", String(active));
         });
+        const packageButton = $('[data-order-mode="package"]');
+        packageButton.disabled = !state.packages.length;
+        packageButton.setAttribute("aria-disabled", String(!state.packages.length));
     }
 
-    function syncPackageAvailability() {
-        const button = $('[data-order-mode="package"]');
-        if (!button) return;
-        const unavailable = !state.invitation || state.packagesLoading || !state.packages.length;
-        button.disabled = Boolean(unavailable);
-        button.setAttribute("aria-disabled", String(Boolean(unavailable)));
-        if (unavailable && state.mode === "package") setMode("customize", { silent: true });
-    }
-
-    /** The step-2 Next button stays locked while a package is required but not chosen. */
+    /** The Next button stays locked on the ordering step while a package is required but not chosen. */
     function syncNextButton() {
         const next = $("#btn-next");
         if (!next || !state.product) return;
-        const needsPackage = state.invitation && state.activeStep === 2
-            && state.mode === "package" && !state.package;
+        const needsPackage = state.activeStep === 2 && state.mode === "package" && !state.package;
         next.disabled = needsPackage;
         next.title = needsPackage ? "Select a package to continue." : "";
     }
 
     function setMode(mode, { silent = false } = {}) {
+        if (mode === "package" && !state.packages.length) mode = "customize";
         state.mode = mode;
         if (mode !== "package") state.package = null;
         if (!silent) {
@@ -438,45 +537,42 @@
         }
         updateModeButtons();
         packageSection.hidden = mode !== "package";
+        renderPackages();
         customizeSection.hidden = mode !== "customize";
+        generalFormContainer.hidden = mode === "package";
+        const packageFormCount = state.forms.generalPackage?.fieldCount || 0;
+        generalPackageContainer.hidden = mode !== "package" || !packageFormCount;
+        $("#general-step-title").textContent = mode === "package" ? "Package details for" : "Customize your";
+        $("#general-step-lead").textContent = mode === "package"
+            ? (packageFormCount
+                ? "Your package fixes the specifications. Add the personalization details and the quantity you need."
+                : "Your package fixes the specifications. Set the quantity and add any special instructions.")
+            : "Only the options for this product are shown. Fields marked “optional” can be left blank.";
         configureLead.textContent = mode === "package"
             ? (state.package
-                ? "Set the total pieces you need. The package price is fixed; any pieces beyond the included quantity use the set's add-on rate."
-                : "Choose a package above to open the package order form.")
-            : "Set the size, paper, quantity, and design direction you want. Required fields are marked; the shop will send a quotation before payment.";
+                ? "Choose the paper finish and envelope, then set the total pieces. The package price is fixed; extra pieces use the package's add-on rate."
+                : "Choose a package to open the package order form.")
+            : "Set the printing, finish, envelope, quantity, and design direction. Required fields are marked; the shop confirms the final amount before payment.";
         renderSelectedPackageSummary();
-
-        if (mode === "package") {
-            state.quote = null;
-            configureQuantity({ reset: true });
-            renderPackageEstimate();
-        } else {
-            configureQuantity({ reset: true });
-            scheduleQuote();
-        }
+        state.quote = null;
+        configureQuantity({ reset: true });
+        scheduleQuote();
         syncNextButton();
-        if (state.activeStep === 6) renderSummary();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
-    function renderSelectedPackageSummary() {
-        if (!selectedPackageSummary) return;
-        const pkg = state.package;
-        const visible = state.invitation && state.mode === "package" && Boolean(pkg);
-        selectedPackageSummary.hidden = !visible;
-        selectedPackageSummary.replaceChildren();
-        if (!visible) return;
-
+    function packageSummaryNode(pkg) {
+        const fragment = document.createDocumentFragment();
         const head = el("div", "selected-package-head");
-        head.append(
-            el("span", "order-step-kicker", "Selected package"),
-            el("strong", "selected-package-name", pkg.name),
-        );
-        const meta = [money(pkg.price), pkg.size, pkg.material].filter(Boolean).join(" · ");
-        selectedPackageSummary.append(head, el("p", "selected-package-meta", meta));
+        head.append(el("span", "order-step-kicker", "Selected package"), el("strong", "selected-package-name", pkg.name));
+        const unit = perPiece(pkg);
+        const meta = [money(pkg.price), unit !== null ? `≈ ${money(unit)} per piece` : "", pkg.size, pkg.material].filter(Boolean).join(" · ");
+        fragment.append(head, el("p", "selected-package-meta", meta));
+        if (pkg.description) fragment.append(el("p", "field-hint", pkg.description));
         if (pkg.inclusions?.length) {
             const list = el("ul", "package-inclusions");
             pkg.inclusions.forEach((item) => list.append(el("li", "", item)));
-            selectedPackageSummary.append(list);
+            fragment.append(list);
         }
         const change = el("button", "btn btn-ghost-dark btn-small package-change", "Change package");
         change.type = "button";
@@ -485,77 +581,52 @@
             packageSection.scrollIntoView({ behavior: "smooth", block: "center" });
             packageList.querySelector(".package-card.selected .package-select")?.focus();
         });
-        selectedPackageSummary.append(change);
+        fragment.append(change);
+        return fragment;
     }
 
-    async function loadPackages(productId) {
-        state.packagesLoading = true;
-        state.packages = [];
-        updateModeButtons();
-        syncPackageAvailability();
-        renderPackages();
-        let failed = "";
-        try {
-            const result = await requestJson(`/api/catalog/products/${encodeURIComponent(productId)}/packages`, { cache: "no-store" });
-            if (state.product?.id !== productId) return;
-            state.packages = Array.isArray(result.packages) ? result.packages : [];
-        } catch (error) {
-            if (state.product?.id !== productId) return;
-            failed = error instanceof Error ? error.message : "The packages could not be loaded.";
-        }
-        if (state.product?.id !== productId) return;
-        state.packagesLoading = false;
-        if (failed) packageError.textContent = `${failed} You can still customize your invitation.`;
-        renderPackages();
-        syncPackageAvailability();
-        if (state.mode === "package") {
-            configureQuantity({ reset: true });
-            renderPackageEstimate();
+    function renderSelectedPackageSummary() {
+        const pkg = state.mode === "package" ? state.package : null;
+        for (const target of [selectedPackageSummary, generalPackageSummary]) {
+            target.replaceChildren();
+            target.hidden = !pkg;
+            if (pkg) target.append(packageSummaryNode(pkg));
         }
     }
 
     function renderPackages() {
         packageList.replaceChildren();
-        if (state.packagesLoading) {
-            packageList.append(el("p", "package-empty", "Loading packages…"));
-            return;
-        }
         if (!state.packages.length) {
-            packageList.append(el("p", "package-empty", "No packages are available for this invitation right now. Choose “Customize Your Own Invitation” to continue."));
+            packageList.append(el("p", "package-empty", "No packages are available for this item right now. Choose “Customize Order” to continue."));
             return;
         }
         for (const pkg of state.packages) {
-            const card = el("article", "package-card");
-            if (state.package?.id === pkg.id) card.classList.add("selected");
-            const media = pkg.image
-                ? productImage({ ...pkg, image: pkg.image, name: pkg.name }, "package-card-image")
-                : el("span", "package-card-image product-image-placeholder", pkg.name.slice(0, 1));
+            const selected = state.package?.id === pkg.id;
+            const card = el("article", `package-card${selected ? " selected" : ""}`);
+            const media = gallery(pkg.images?.length ? pkg.images : (pkg.image ? [pkg.image] : productImages(state.product)), pkg.name, "package-card-gallery");
             const body = el("div", "package-card-body");
             body.append(el("h3", "package-name", pkg.name));
-            body.append(el("p", "package-price", money(pkg.price)));
-
+            const price = el("p", "package-price", money(pkg.price));
+            const unit = perPiece(pkg);
+            if (unit !== null) price.append(el("span", "package-unit-price", ` ≈ ${money(unit)} per piece`));
+            body.append(price);
+            if (pkg.description) body.append(el("p", "package-description", pkg.description));
             const meta = [];
             if (pkg.size) meta.push(pkg.size);
             if (pkg.material) meta.push(pkg.material);
             if (pkg.included_quantity) meta.push(`${pkg.included_quantity.toLocaleString()} pcs included`);
             if (meta.length) body.append(el("p", "package-meta", meta.join(" · ")));
-
             if (pkg.inclusions?.length) {
                 const list = el("ul", "package-inclusions");
                 pkg.inclusions.forEach((item) => list.append(el("li", "", item)));
                 body.append(list);
             }
-            body.append(el(
-                "p",
-                "package-addon",
-                pkg.add_on_price === null
-                    ? `Ordered at exactly ${pkg.included_quantity.toLocaleString()} pieces.`
-                    : `${pkg.add_on_label || "Additional pieces"}: ${money(pkg.add_on_price)} per additional piece.`,
-            ));
-
-            const select = el("button", "btn btn-dark package-select", state.package?.id === pkg.id ? "Selected" : "Select Package");
+            body.append(el("p", "package-addon", pkg.add_on_price === null
+                ? `Ordered at exactly ${pkg.included_quantity.toLocaleString()} pieces.`
+                : `${pkg.add_on_label || "Additional pieces"}: ${money(pkg.add_on_price)} per additional piece.`));
+            const select = el("button", "btn btn-dark package-select", selected ? "Selected ✓" : "Select Package");
             select.type = "button";
-            select.setAttribute("aria-pressed", String(state.package?.id === pkg.id));
+            select.setAttribute("aria-pressed", String(selected));
             select.addEventListener("click", () => selectPackage(pkg));
             body.append(select);
             card.append(media, body);
@@ -568,55 +639,17 @@
         packageError.textContent = "";
         renderPackages();
         configureQuantity({ reset: true });
-        renderPackageEstimate();
         renderSelectedPackageSummary();
+        state.quote = null;
+        scheduleQuote();
         syncNextButton();
-        if (state.activeStep === 6) renderSummary();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
-    function packageTotal(pkg, quantity) {
-        if (!pkg) return null;
-        const extra = pkg.add_on_price === null ? 0 : Math.max(0, quantity - pkg.included_quantity);
-        return Math.round((pkg.price + extra * (pkg.add_on_price || 0)) * 100) / 100;
-    }
-
-    function renderPackageEstimate() {
-        if (!state.invitation) return;
-        const pkg = state.package;
-        const quantity = quantityValue();
-        invitationEstimate.total.textContent = pkg ? money(packageTotal(pkg, quantity)) : "—";
-        invitationEstimate.lines.replaceChildren();
-        if (!pkg) {
-            invitationEstimate.status.textContent = "Select a package to see its total.";
-            return;
-        }
-        invitationEstimate.status.textContent = pkg.add_on_price === null
-            ? `This set is ordered at exactly ${pkg.included_quantity.toLocaleString()} pieces.`
-            : `Includes ${pkg.included_quantity.toLocaleString()} pcs · ${money(pkg.add_on_price)} per additional piece.`;
-
-        const base = el("li");
-        const baseLabel = el("span");
-        baseLabel.append(el("strong", "", pkg.name), el("small", "", `${pkg.included_quantity.toLocaleString()} pcs included`));
-        base.append(baseLabel, el("span", "estimate-amount", money(pkg.price)));
-        invitationEstimate.lines.append(base);
-
-        const extra = pkg.add_on_price === null ? 0 : Math.max(0, quantity - pkg.included_quantity);
-        if (extra > 0) {
-            const line = el("li");
-            const label = el("span");
-            label.append(el("strong", "", pkg.add_on_label || "Additional pieces"), el("small", "", `${extra.toLocaleString()} additional pcs × ${money(pkg.add_on_price)}`));
-            line.append(label, el("span", "estimate-amount", money(extra * pkg.add_on_price)));
-            invitationEstimate.lines.append(line);
-        }
-        const total = el("li");
-        total.append(el("strong", "", "Package total"), el("strong", "estimate-amount", money(packageTotal(pkg, quantity))));
-        invitationEstimate.lines.append(total);
-    }
-
-    // ---------------------------------------------------------------- step 5: legacy event details
+    // ---------------------------------------------------------------- general products: optional event details
 
     function configureLegacyEvent() {
-        // Invitation event details are catalog fields in the "event" section (step 4).
+        // Invitation event details are catalog fields in the "event" section.
         const mode = state.invitation ? "none" : (state.product?.event_mode || "none");
         eventToggle.hidden = mode !== "optional";
         if (mode !== "optional") hasEvent.checked = false;
@@ -653,24 +686,33 @@
     function scheduleQuote() {
         window.clearTimeout(state.quoteTimer);
         if (!state.product) return;
-        if (state.invitation && state.mode !== "customize") return;
-        estimateReference().status.textContent = "Updating estimate…";
+        const reference = estimateReference();
+        if (!state.mode || (state.mode === "package" && !state.package)) {
+            state.quote = null;
+            reference.total.textContent = "—";
+            reference.lines.replaceChildren();
+            reference.status.textContent = state.mode === "package" ? "Select a package to see its total." : "Choose how you would like to order.";
+            renderPaymentBreakdown();
+            return;
+        }
+        reference.status.textContent = "Updating estimate…";
         state.quoteTimer = window.setTimeout(refreshQuote, 250);
     }
 
     async function refreshQuote() {
-        if (!state.product) return;
-        if (state.invitation && state.mode !== "customize") return;
+        if (!state.product || !state.mode) return;
         const sequence = ++state.quoteSequence;
+        const body = {
+            product_id: state.product.id,
+            quantity: quantityValue() || state.product.min_quantity,
+            options: collectValues(),
+        };
+        if (state.mode === "package" && state.package) body.package_id = state.package.id;
         try {
             const quote = await requestJson("/api/catalog/quote", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    product_id: state.product.id,
-                    quantity: quantityValue() || state.product.min_quantity,
-                    options: collectValues(),
-                }),
+                body: JSON.stringify(body),
             });
             if (sequence !== state.quoteSequence) return; // a newer request is in flight
             state.quote = quote;
@@ -678,10 +720,12 @@
             if (sequence !== state.quoteSequence) return;
             state.quote = null;
             estimateReference().status.textContent = error instanceof Error ? error.message : "The estimate could not be calculated.";
+            renderPaymentBreakdown();
             return;
         }
         renderEstimate();
-        if (state.activeStep === 6) renderSummary();
+        renderPaymentBreakdown();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
     function estimateText(quote) {
@@ -691,7 +735,6 @@
     }
 
     function renderEstimate() {
-        if (state.invitation && state.mode !== "customize") return;
         const reference = estimateReference();
         const quote = state.quote;
         reference.total.textContent = estimateText(quote);
@@ -700,9 +743,11 @@
         let status;
         if (quote.requires_quote) status = quote.quote_reasons.join(" ");
         else if (quote.incomplete.length) status = quote.incomplete.join(" ");
-        else status = quote.unit_price !== null
-            ? `${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} · estimate, confirmed by the shop`
-            : "";
+        else if (quote.unit_price !== null) {
+            status = quote.pricing_mode === "package"
+                ? `≈ ${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · package price, confirmed by the shop`
+                : `${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · estimate, confirmed by the shop`;
+        } else status = "";
         reference.status.textContent = status;
         if (quote.requires_quote) return;
         quote.lines.forEach((line) => {
@@ -712,7 +757,174 @@
             item.append(label, el("span", "estimate-amount", quote.estimated_total === null && quote.pricing_mode === "area" ? "—" : money(line.amount)));
             reference.lines.append(item);
         });
+        if (quote.estimated_total !== null) {
+            const total = el("li", "estimate-total-line");
+            total.append(el("strong", "", "Total"), el("strong", "estimate-amount", money(quote.estimated_total)));
+            reference.lines.append(total);
+        }
     }
+
+    // ---------------------------------------------------------------- payment option & breakdown
+
+    function paymentOption() {
+        return form.querySelector('input[name="payment-option"]:checked')?.value || "down_payment";
+    }
+
+    function paymentRows() {
+        const cod = paymentOption() === "cod";
+        const total = state.quote?.estimated_total ?? null;
+        const rows = [["Payment option", cod ? "Cash on Delivery (COD)" : "50% Down Payment"]];
+        if (total === null) {
+            rows.push(["Total", "Confirmed by the shop's quotation"]);
+            rows.push(cod ? ["Down payment", "Not required"] : ["Down payment (50%)", "Half of the confirmed total"]);
+            rows.push([cod ? "Due on delivery / pickup" : "Balance before release", cod ? "The full confirmed total" : "The other half"]);
+            return rows;
+        }
+        const down = cod ? 0 : Math.round(total * DOWN_PAYMENT_RATE * 100) / 100;
+        rows.push(["Estimated total", money(total)]);
+        rows.push(cod ? ["Down payment", "Not required (COD)"] : ["Down payment (50%)", money(down)]);
+        rows.push([cod ? "Due on delivery / pickup" : "Balance before release", money(Math.round((total - down) * 100) / 100)]);
+        return rows;
+    }
+
+    function renderPaymentBreakdown() {
+        if (!paymentBreakdown) return;
+        paymentBreakdown.replaceChildren();
+        paymentRows().forEach(([label, value]) => {
+            const row = el("div", "payment-breakdown-row");
+            row.append(el("dt", "", label), el("dd", "", value));
+            paymentBreakdown.append(row);
+        });
+        if (state.quote?.estimated_total !== null && state.quote?.estimated_total !== undefined) {
+            paymentBreakdown.append(el("p", "field-hint", "Estimated from the shop's published prices; the administrator confirms the final amount."));
+        }
+    }
+
+    form.querySelectorAll('input[name="payment-option"]').forEach((input) => input.addEventListener("change", () => {
+        renderPaymentBreakdown();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    }));
+
+    // ---------------------------------------------------------------- invitation mockup designer
+
+    function resetMockup() {
+        const designerStep = steps.find((section) => section.dataset.step === "7");
+        if (!state.kind || !Mockup) {
+            state.mockup = { template: "", palette: 0, skip: true };
+            if (designerStep) designerStep.dataset.available = "false";
+            return;
+        }
+        const first = Mockup.templates(state.kind)[0];
+        const defaults = Mockup.defaults(state.kind);
+        state.mockup = { template: first.id, palette: 0, skip: false };
+        $("#mockup-headline").value = defaults.headline || "";
+        $("#mockup-message").value = defaults.message || "";
+        $("#mockup-skip").checked = false;
+        if (designerStep) designerStep.dataset.available = "true";
+    }
+
+    function mockupDetails() {
+        const values = state.forms.event ? state.forms.event.values() : {};
+        const names = state.kind === "wedding"
+            ? [values.bride_name, values.groom_name].filter(Boolean).join(" & ")
+            : values.celebrant_name || "";
+        return {
+            names,
+            age: values.celebrant_age !== undefined ? String(values.celebrant_age) : "",
+            date: values.event_date || "",
+            time: values.event_time || "",
+            location: values.event_location || "",
+            rsvp: values.rsvp_contact || "",
+        };
+    }
+
+    function mockupData(template = state.mockup.template, palette = state.mockup.palette) {
+        return {
+            kind: state.kind,
+            template,
+            palette,
+            headline: $("#mockup-headline").value.trim(),
+            message: $("#mockup-message").value.trim(),
+            details: mockupDetails(),
+        };
+    }
+
+    function renderMockup() {
+        if (!state.kind || !Mockup) return;
+        const templates = Mockup.templates(state.kind);
+        const designer = $("#mockup-designer");
+        designer.classList.toggle("is-disabled", state.mockup.skip);
+        designer.querySelectorAll("input, textarea, button").forEach((control) => {
+            if (control.id !== "mockup-edit-details") control.disabled = state.mockup.skip;
+        });
+
+        const templateHost = $("#mockup-templates");
+        templateHost.replaceChildren(...templates.map((template) => {
+            const selected = template.id === state.mockup.template;
+            const button = el("button", `mockup-template${selected ? " selected" : ""}`);
+            button.type = "button";
+            button.setAttribute("role", "radio");
+            button.setAttribute("aria-checked", String(selected));
+            button.disabled = state.mockup.skip;
+            const thumb = el("span", "mockup-template-thumb");
+            thumb.append(Mockup.render(mockupData(template.id, selected ? state.mockup.palette : 0)));
+            button.append(thumb, el("span", "mockup-template-name", template.name));
+            button.addEventListener("click", () => {
+                state.mockup.template = template.id;
+                state.mockup.palette = 0;
+                renderMockup();
+            });
+            return button;
+        }));
+
+        const current = templates.find((template) => template.id === state.mockup.template) || templates[0];
+        const paletteHost = $("#mockup-palettes");
+        paletteHost.replaceChildren(...current.palettes.map((palette, index) => {
+            const selected = index === state.mockup.palette;
+            const swatch = el("button", `mockup-swatch${selected ? " selected" : ""}`);
+            swatch.type = "button";
+            swatch.setAttribute("role", "radio");
+            swatch.setAttribute("aria-checked", String(selected));
+            swatch.setAttribute("aria-label", `Colour option ${index + 1}`);
+            swatch.disabled = state.mockup.skip;
+            swatch.style.background = `linear-gradient(135deg, ${palette.bg} 0 50%, ${palette.accent} 50% 100%)`;
+            swatch.addEventListener("click", () => {
+                state.mockup.palette = index;
+                renderMockup();
+            });
+            return swatch;
+        }));
+
+        const preview = $("#mockup-preview");
+        preview.replaceChildren(Mockup.render(mockupData()));
+        const details = mockupDetails();
+        const missing = [["the celebrant's name", details.names], ["the event date", details.date], ["the event location", details.location]]
+            .filter(([, value]) => !value).map(([label]) => label);
+        $("#mockup-caption").textContent = state.mockup.skip
+            ? "Mockup skipped. The shop will design from your details and uploads."
+            : `${current.name} · colour option ${state.mockup.palette + 1}. ${missing.length ? `Add ${missing.join(", ")} in Event & Files to complete the card.` : "Select the card to view it larger."}`;
+    }
+
+    function mockupPayload() {
+        if (!state.kind || state.mockup.skip || !state.mockup.template) return null;
+        return {
+            template: state.mockup.template,
+            palette: state.mockup.palette,
+            headline: $("#mockup-headline").value.trim(),
+            message: $("#mockup-message").value.trim(),
+        };
+    }
+
+    $("#mockup-skip")?.addEventListener("change", (event) => {
+        state.mockup.skip = event.target.checked;
+        renderMockup();
+    });
+    ["#mockup-headline", "#mockup-message"].forEach((selector) => $(selector)?.addEventListener("input", renderMockup));
+    $("#mockup-preview")?.addEventListener("click", () => {
+        if (!state.kind) return;
+        openLightbox([{ node: () => Mockup.render(mockupData()), caption: "Invitation mockup preview — the shop sends a final draft for your approval." }]);
+    });
+    $("#mockup-edit-details")?.addEventListener("click", () => showStep(4));
 
     // ---------------------------------------------------------------- general reference files (non-invitation)
 
@@ -763,18 +975,21 @@
 
     // ---------------------------------------------------------------- review summary
 
-    function appendGroup(title, rows) {
+    function appendGroup(title, rows, extra = null) {
         const filled = rows.filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "");
-        if (!filled.length) return;
+        if (!filled.length && !extra) return;
         const section = el("section", "summary-group");
         section.append(el("h3", "summary-group-title", title));
-        const list = el("dl", "summary order-summary");
-        filled.forEach(([label, value]) => {
-            const row = el("div", "summary-row");
-            row.append(el("dt", "", label), el("dd", "", String(value)));
-            list.append(row);
-        });
-        section.append(list);
+        if (filled.length) {
+            const list = el("dl", "summary order-summary");
+            filled.forEach(([label, value]) => {
+                const row = el("div", "summary-row");
+                row.append(el("dt", "", label), el("dd", "", String(value)));
+                list.append(row);
+            });
+            section.append(list);
+        }
+        if (extra) section.append(extra);
         summary.append(section);
     }
 
@@ -787,38 +1002,52 @@
         const product = state.product;
         if (!product) return;
         const quantity = quantityValue();
-        const kind = state.invitation
-            ? (state.mode === "package" ? "Ready-made package" : "Customized invitation")
-            : "Customized order";
+        const kind = state.mode === "package" ? "Package" : (state.invitation ? "Customized invitation" : "Customized order");
         appendGroup("Product", [
             ["Category", product.category_label],
             ["Product", product.name],
             ["Ordering option", kind],
-            ["Quantity", quantity.toLocaleString()],
+            ["Quantity", `${quantity.toLocaleString()} pcs`],
         ]);
 
-        if (state.invitation && state.mode === "package" && state.package) {
+        if (state.mode === "package" && state.package) {
             const pkg = state.package;
+            const unit = perPiece(pkg);
             appendGroup("Package", [
                 ["Package", pkg.name],
-                ["Package price", money(pkg.price)],
+                ["Package price", `${money(pkg.price)}${unit !== null ? ` (≈ ${money(unit)} per piece)` : ""}`],
                 ["Size", pkg.size],
                 ["Material", pkg.material],
                 ["Inclusions", pkg.inclusions.join("; ")],
                 ["Included quantity", `${pkg.included_quantity.toLocaleString()} pcs`],
                 ["Add-on", pkg.add_on_price === null
-                    ? "Not available — this set has a fixed quantity"
+                    ? "Not available — this package has a fixed quantity"
                     : `${pkg.add_on_label || "Additional pieces"}: ${money(pkg.add_on_price)} each`],
             ]);
         }
 
-        if (state.invitation && state.mode === "customize") {
-            appendGroup("Basic specifications", (state.forms.basics?.summary() || []).map((row) => [row.label, row.value]));
-            appendGroup("Design customization", (state.forms.design?.summary() || []).map((row) => [row.label, row.value]));
-        } else if (!state.invitation) {
-            const specs = state.forms.general?.summary() || [];
+        if (state.invitation) {
+            if (state.mode === "customize") {
+                appendGroup("Basic specifications", (state.forms.basics?.summary() || []).map((row) => [row.label, row.value]));
+                appendGroup("Design customization", (state.forms.design?.summary() || []).map((row) => [row.label, row.value]));
+            }
+            appendGroup("Paper finish & envelope", (state.forms.options?.summary() || []).map((row) => [row.label, row.value]));
+            appendGroup("Event details", (state.forms.event?.summary() || []).map((row) => [row.label, row.value]));
+            appendGroup("Photos & references", (state.forms.upload?.summary() || []).map((row) => [row.label, row.value]));
+            const mockup = mockupPayload();
+            if (mockup) {
+                const template = Mockup.templates(state.kind).find((item) => item.id === mockup.template);
+                const preview = el("div", "summary-mockup");
+                preview.append(Mockup.render(mockupData()));
+                appendGroup("Invitation mockup", [["Template", `${template?.name || mockup.template} · colour option ${mockup.palette + 1}`]], preview);
+            } else if (state.kind) {
+                appendGroup("Invitation mockup", [["Mockup", "Skipped — the shop will design from your details"]]);
+            }
+        } else {
+            const dynamicForm = state.mode === "package" ? state.forms.generalPackage : state.forms.general;
+            const specs = dynamicForm?.summary() || [];
             if (state.quote?.area_sqft) specs.push({ label: "Print area", value: `${state.quote.area_sqft} sq ft per piece` });
-            appendGroup("Your options", specs.map((row) => [row.label, row.value]));
+            appendGroup(state.mode === "package" ? "Personalization" : "Your options", specs.map((row) => [row.label, row.value]));
             if (!eventFields.hidden) {
                 const event = eventData();
                 appendGroup("Event details", [
@@ -829,11 +1058,6 @@
                     ["Venue", event.event_location],
                 ]);
             }
-        }
-
-        if (state.invitation) {
-            appendGroup("Event details", (state.forms.event?.summary() || []).map((row) => [row.label, row.value]));
-            appendGroup("Photos & references", (state.forms.upload?.summary() || []).map((row) => [row.label, row.value]));
         }
 
         appendGroup("Special instructions", [["Notes", activeNotes().value.trim()]]);
@@ -848,39 +1072,21 @@
         }
 
         const pricing = [];
-        if (state.invitation && state.mode === "package") {
-            const pkg = state.package;
-            if (!pkg) {
-                pricing.push(["Estimated total", "Select a package"]);
-            } else {
-                const extra = pkg.add_on_price === null ? 0 : Math.max(0, quantity - pkg.included_quantity);
-                pricing.push([pkg.name, `${money(pkg.price)} · ${pkg.included_quantity.toLocaleString()} pcs included`]);
-                if (extra > 0) {
-                    pricing.push([
-                        pkg.add_on_label || "Additional pieces",
-                        `${extra.toLocaleString()} pcs × ${money(pkg.add_on_price)} = ${money(extra * pkg.add_on_price)}`,
-                    ]);
-                }
-                const total = packageTotal(pkg, quantity);
-                pricing.push(["Estimated total", money(total)]);
-                pricing.push(["50% down payment (estimate)", money(total * 0.5)]);
-            }
+        const quote = state.quote;
+        if (!quote) {
+            pricing.push(["Estimate", state.mode === "package" && !state.package ? "Select a package" : "Calculating…"]);
+        } else if (quote.requires_quote) {
+            pricing.push(["Estimated total", "Quotation from the shop"], ["Why", quote.quote_reasons.join(" ")]);
+        } else if (quote.estimated_total === null) {
+            pricing.push(["Estimated total", quote.incomplete.join(" ") || "—"]);
         } else {
-            const quote = state.quote;
-            if (!quote) {
-                pricing.push(["Estimate", "Calculating…"]);
-            } else if (quote.requires_quote) {
-                pricing.push(["Estimated total", "Quotation from the shop"], ["Why", quote.quote_reasons.join(" ")]);
-            } else if (quote.estimated_total === null) {
-                pricing.push(["Estimated total", quote.incomplete.join(" ") || "—"]);
-            } else {
-                quote.lines.forEach((line) => pricing.push([line.label, `${money(line.amount)} (${line.detail})`]));
-                pricing.push(["Estimated total", money(quote.estimated_total)]);
-                pricing.push(["50% down payment (estimate)", money(quote.estimated_total * 0.5)]);
-            }
+            quote.lines.forEach((line) => pricing.push([line.label, `${money(line.amount)} (${line.detail})`]));
+            if (quote.unit_price !== null) pricing.push(["Price per piece", `${money(quote.unit_price)} × ${quote.quantity.toLocaleString()} pcs`]);
+            pricing.push(["Estimated total", money(quote.estimated_total)]);
         }
         pricing.push(["Final amount", "Confirmed by the administrator before payment is requested"]);
         appendGroup("Pricing", pricing);
+        appendGroup("Payment", paymentRows());
     }
 
     // ---------------------------------------------------------------- navigation & validation
@@ -895,23 +1101,23 @@
             return true;
         }
         if (stepNumber === 2) {
-            if (state.invitation) {
-                if (!state.mode) {
-                    modeError.textContent = "Choose how you would like to order this invitation.";
-                    return false;
-                }
-                if (state.mode === "package" && !state.package) {
-                    packageError.textContent = "Select a package to continue.";
-                    return false;
-                }
-                return true;
-            }
-            const input = generalQuantity;
-            if (!input.checkValidity()) {
-                input.reportValidity();
+            if (!state.mode) {
+                modeError.textContent = "Choose “Select Package” or “Customize Order” to continue.";
                 return false;
             }
-            if (!state.forms.general?.validate()) return false;
+            if (state.mode === "package" && !state.package) {
+                packageError.textContent = "Select a package to continue.";
+                return false;
+            }
+            return true;
+        }
+        if (stepNumber === 8) {
+            if (!generalQuantity.checkValidity()) {
+                generalQuantity.reportValidity();
+                return false;
+            }
+            const dynamicForm = state.mode === "package" ? state.forms.generalPackage : state.forms.general;
+            if (!dynamicForm?.validate()) return false;
             if (fileCount() > MAX_ORDER_FILES) {
                 setError(`Attach up to ${MAX_ORDER_FILES} files in total. Email any extra originals to the shop.`);
                 return false;
@@ -927,6 +1133,7 @@
                 if (!state.forms.basics?.validate()) return false;
                 if (!state.forms.design?.validate()) return false;
             }
+            if (!state.forms.options?.validate()) return false;
             return true;
         }
         if (stepNumber === 4) {
@@ -938,13 +1145,14 @@
             }
             return true;
         }
+        if (stepNumber === 7) return true;
         const section = steps.find((item) => Number(item.dataset.step) === stepNumber);
         const invalid = [...section.querySelectorAll("input, select, textarea")].filter((control) => !control.disabled && !control.checkValidity());
         if (invalid.length) {
             invalid[0].reportValidity();
             return false;
         }
-        if (stepNumber === 6 && !$("#acknowledge").checked) {
+        if (stepNumber === REVIEW_STEP && !$("#acknowledge").checked) {
             $("#acknowledgement-error").textContent = "Please acknowledge the order instructions before submitting.";
             $("#acknowledge").focus();
             return false;
@@ -953,19 +1161,27 @@
     }
 
     function setSequence(kind) {
-        state.sequence = SEQUENCES[kind];
-        stepper.classList.toggle("stepper-six", state.sequence.length > 4);
+        // The mockup designer exists only for Birthday, Wedding, and Christening invitations.
+        state.sequence = SEQUENCES[kind].filter((item) => item.step !== 7 || state.kind);
+        stepper.classList.add("stepper-dynamic");
+        stepper.style.setProperty("--steps", String(state.sequence.length));
         stepper.replaceChildren(...state.sequence.map((item, index) => {
             const indicator = el("li", "stepper-item");
             indicator.dataset.stepIndicator = String(item.step);
             indicator.append(el("span", "stepper-num", String(index + 1)), el("span", "stepper-label", item.label));
             return indicator;
         }));
+        // Number each step heading after its position in this product's flow.
+        state.sequence.forEach((item, index) => {
+            const section = steps.find((element) => Number(element.dataset.step) === item.step);
+            const kicker = section?.querySelector(".order-step-kicker");
+            if (kicker) kicker.textContent = kicker.textContent.replace(/^\d+\s·\s/, `${String(index + 1).padStart(2, "0")} · `);
+        });
     }
 
     function showStep(stepNumber, scroll = true) {
-        // Never reveal the package order form before a package has been chosen.
-        if (state.invitation && state.mode === "package" && !state.package && stepNumber > 2) {
+        // Never open the package order form before a package has been chosen.
+        if (state.mode === "package" && !state.package && stepNumber > 2 && stepNumber !== 1) {
             stepNumber = 2;
             packageError.textContent = "Select a package to continue.";
         }
@@ -985,7 +1201,9 @@
         $("#btn-next").hidden = index === last;
         $("#btn-submit").hidden = index !== last;
         syncNextButton();
-        if (stepNumber === 6) renderSummary();
+        if (stepNumber === 7) renderMockup();
+        if (stepNumber === 5) renderPaymentBreakdown();
+        if (stepNumber === REVIEW_STEP) renderSummary();
         if (scroll) {
             const section = steps.find((item) => Number(item.dataset.step) === stepNumber);
             section?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -996,7 +1214,7 @@
         const index = state.sequence.findIndex((item) => item.step === state.activeStep);
         const target = state.sequence[index + direction];
         if (!target) return;
-        if (direction > 0 && state.invitation && state.mode === "package" && !state.package && target.step > 2) {
+        if (direction > 0 && state.mode === "package" && !state.package && target.step > 2) {
             packageError.textContent = "Select a package to continue.";
             showStep(2);
             return;
@@ -1028,7 +1246,7 @@
                 return;
             }
         }
-        if (!validateStep(6)) return;
+        if (!validateStep(REVIEW_STEP)) return;
         const button = $("#btn-submit");
         button.disabled = true;
         button.textContent = "Submitting…";
@@ -1042,7 +1260,9 @@
                 options: collectValues(),
                 notes: activeNotes().value.trim(),
             };
-            if (state.invitation && state.mode === "package" && state.package) customization.package_id = state.package.id;
+            if (state.mode === "package" && state.package) customization.package_id = state.package.id;
+            const mockup = mockupPayload();
+            if (mockup) customization.mockup = mockup;
             const payload = {
                 customer: {
                     name: $("#name").value.trim(),
@@ -1052,6 +1272,7 @@
                 },
                 product: { id: state.product.id },
                 customization,
+                payment_option: paymentOption(),
                 has_event: state.invitation ? true : !eventFields.hidden,
                 event: state.invitation || eventFields.hidden ? {} : eventData(),
                 acknowledged: $("#acknowledge").checked,
@@ -1078,14 +1299,17 @@
         stepper.hidden = true;
         $("#confirm-ref").textContent = order.reference;
         const estimate = order.pricing?.estimated_total;
+        const payment = order.payment || {};
         const details = $("#confirm-details");
         const packageName = order.order_kind === "package" ? order.package?.name : "";
-        details.replaceChildren(
+        const lines = [
             el("p", "", `${order.product.name}${packageName ? ` · ${packageName}` : ""} · ${order.customization.quantity.toLocaleString()} pc(s) · ${order.status}`),
             el("p", "", estimate !== null && estimate !== undefined
-                ? `Estimated total: ${money(estimate)} — the administrator will confirm the final amount.`
+                ? `Estimated total: ${money(estimate)}${order.pricing.unit_price ? ` (${money(order.pricing.unit_price)} per piece)` : ""} — the administrator will confirm the final amount.`
                 : "The administrator will send a quotation for this request."),
-        );
+            el("p", "", `Payment option: ${payment.payment_option_label || "50% Down Payment"}${payment.down_payment_required ? ` · down payment ≈ ${money(payment.down_payment_required)} after confirmation` : payment.payment_option === "cod" ? " · no down payment; pay on delivery or pickup" : ""}`),
+        ];
+        details.replaceChildren(...lines);
         $("#confirm-track").href = "/customer-portal";
         const confirmation = $("#confirmation");
         confirmation.hidden = false;
@@ -1122,12 +1346,12 @@
         if (validateStep(state.activeStep)) moveStep(1);
     });
     $("#btn-back").addEventListener("click", () => moveStep(-1));
-    $("#edit-order").addEventListener("click", () => showStep(state.invitation ? 3 : 2));
+    $("#edit-order").addEventListener("click", () => showStep(state.invitation ? 3 : 8));
     $("#btn-cancel").addEventListener("click", () => {
         if (window.confirm("Cancel this order request and return to the product catalog?")) window.location.assign("/services");
     });
     form.addEventListener("input", () => {
-        if (state.activeStep === 6) renderSummary();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
     });
     form.addEventListener("submit", submitOrder);
 
@@ -1193,6 +1417,7 @@
         setSequence("general");
         populateCategories();
         showStep(1, false);
+        renderPaymentBreakdown();
     }
 
     setSequence("general");

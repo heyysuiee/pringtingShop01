@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from backend.app.models.order import OrderRecord
+from backend.app.models.order import PAYMENT_OPTIONS, OrderRecord
 from backend.app.repositories import catalog_repository, customer_repository, order_repository
 from backend.app.services import order_services
 from backend.app.utils.order_number import SHOP_TIMEZONE
@@ -260,6 +260,7 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
     images = [item for item in order["attachments"] if str(item.get("mime_type", "")).startswith("image/")]
     customization = order.get("customization") or {}
     package = customization.get("package") if isinstance(customization.get("package"), dict) else {}
+    breakdown = order_services.payment_breakdown(order)
     return {
         "reference": order["reference"],
         "customer_id": order.get("customer_id"),
@@ -282,6 +283,10 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "amount_paid": paid,
         "balance": money(total - paid) if total is not None else None,
         "payment_status": payment_status(order),
+        "payment_option": breakdown["payment_option"],
+        "payment_option_label": breakdown["payment_option_label"],
+        "down_payment_required": breakdown["down_payment_required"],
+        "down_payment_status": breakdown["down_payment_status"],
         "payment_count": len(order["payments"]),
         "completed_at": order.get("completed_at") if order["status"] == "Completed" else None,
         "completion_date": iso(completion_date(order)),
@@ -307,12 +312,15 @@ def admin_order_view(order: OrderRecord, services: ServiceIndex | None = None) -
         order_services.ADMIN_STATUS_TRANSITIONS.get(status, set()),
         key=lambda item: STATUS_ORDER.index(item) if item in STATUS_ORDER else 99,
     )
+    cod = order_services.is_cod(order)
     view["actions"] = {
         "quote": status in {"Under Review", "Awaiting Quotation"},
         "record_payment": status in order_services.PAYABLE_STATUSES and total is not None and paid < total - 0.005,
-        "send_draft": status in {"Draft Preparation", "Awaiting Customer Approval"} and total is not None and paid >= total * 0.5,
+        "send_draft": status in {"Draft Preparation", "Awaiting Customer Approval"} and total is not None
+        and (cod or paid >= total * order_services.DOWN_PAYMENT_RATE - 0.005),
         "complete_requires_payment": status == "Ready for Pickup" and not is_fully_paid(order),
         "cancel_blocked_by_payments": bool(order["payments"]),
+        "change_payment_option": order_services.payment_option_changeable(order) and status not in CANCELLED_STATUSES,
     }
     return view
 
@@ -394,6 +402,7 @@ ORDER_SORTS = {
     "paid": "amount_paid",
     "status": "status",
     "payment_status": "payment_status",
+    "payment_option": "payment_option",
 }
 
 
@@ -405,13 +414,18 @@ def order_rows(params: Mapping[str, Any], orders: list[OrderRecord] | None = Non
     service = param_text(params, "service", 80)
     pay = param_text(params, "payment_status", 40)
     kind = param_text(params, "kind", 20)
+    option = param_text(params, "payment_option", 20)
     if kind and kind not in {"package", "customize"}:
         raise bad_request("Select a valid order type.")
+    if option and option not in PAYMENT_OPTIONS:
+        raise bad_request("Select a valid payment option.")
     start, end = date_range(params, "date_from", "date_to", "Request date")
     rows = []
     for order in orders:
         row = order_row(order, services)
         if kind and row["order_kind"] != kind:
+            continue
+        if option and row["payment_option"] != option:
             continue
         if status:
             group = STATUS_GROUPS.get(status)
@@ -459,10 +473,15 @@ def payment_rows(params: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[
     method = param_text(params, "method", 60)
     service = param_text(params, "service", 80)
     pay = param_text(params, "payment_status", 40)
+    option = param_text(params, "payment_option", 20)
+    if option and option not in PAYMENT_OPTIONS:
+        raise bad_request("Select a valid payment option.")
     start, end = date_range(params, "date_from", "date_to", "Payment date")
     rows = []
     for order in orders:
         base = order_row(order, services)
+        if option and base["payment_option"] != option:
+            continue
         for index, payment in enumerate(order["payments"], start=1):
             row = {
                 "id": f"{order['reference']}-P{index}",
@@ -482,6 +501,8 @@ def payment_rows(params: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[
                 "order_paid": base["amount_paid"],
                 "order_balance": base["balance"],
                 "order_payment_status": base["payment_status"],
+                "payment_option": base["payment_option"],
+                "payment_option_label": base["payment_option_label"],
                 "payment_number": index,
             }
             if method and row["method"] != method:
@@ -512,6 +533,17 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
         )),
         "fully_paid_orders": sum(1 for order in active if is_fully_paid(order)),
         "awaiting_quotation": sum(1 for order in active if order["total_amount"] is None and order["status"] != "Completed"),
+        "awaiting_down_payment": sum(1 for order in active if order["status"] == "Awaiting Down Payment"),
+        "down_payments_due": money(sum(
+            order_services.payment_breakdown(order)["down_payment_remaining"] or 0
+            for order in active if order["status"] == "Awaiting Down Payment"
+        )),
+        "cod_orders": sum(1 for order in active if order_services.is_cod(order) and order["status"] != "Completed"),
+        "cod_due": money(sum(
+            max(0.0, float(order["total_amount"]) - paid_amount(order))
+            for order in active
+            if order_services.is_cod(order) and order["total_amount"] is not None and order["status"] != "Completed"
+        )),
         "orders_with_balance": [
             {
                 "reference": order["reference"],
@@ -519,6 +551,7 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
                 "product": (order.get("product") or {}).get("name", ""),
                 "balance": money(float(order["total_amount"]) - paid_amount(order)),
                 "status": order["status"],
+                "payment_option_label": PAYMENT_OPTIONS[order_services.payment_option(order)],
             }
             for order in active
             if order["total_amount"] is not None
@@ -542,9 +575,25 @@ CUSTOMER_SORTS = {
     "completed": "completed_orders",
     "pending": "pending_orders",
     "spent": "total_spent",
+    "transactions": "total_transaction_amount",
+    "paid": "total_paid",
+    "balance": "outstanding_balance",
+    "payment_status": "payment_status",
     "last_order": "last_order_at",
 }
 CUSTOMER_ACTIVITY = {"with_orders", "no_orders", "with_pending", "with_completed", "repeat", "with_spend", "no_spend"}
+# A customer's overall payment standing across their non-cancelled orders.
+CUSTOMER_PAYMENT_STATUSES = ("With balance", "Fully paid", "Awaiting quotation", "No transactions")
+
+
+def customer_payment_status(active: list[OrderRecord], outstanding: float) -> str:
+    if not active:
+        return "No transactions"
+    if outstanding > 0.005:
+        return "With balance"
+    if all(order["total_amount"] is None for order in active):
+        return "Awaiting quotation"
+    return "Fully paid"
 
 
 def display_customer_id(customer_id: str) -> str:
@@ -563,6 +612,9 @@ def _orders_by_customer(orders: list[OrderRecord], customers: list[dict[str, Any
 
 
 def customer_stats(customer: Mapping[str, Any], orders: list[OrderRecord]) -> dict[str, Any]:
+    active = [order for order in orders if order["status"] not in CANCELLED_STATUSES]
+    quoted = [order for order in active if order["total_amount"] is not None]
+    outstanding = money(sum(max(0.0, float(order["total_amount"]) - paid_amount(order)) for order in quoted))
     return {
         "id": customer["id"],
         "display_id": display_customer_id(customer["id"]),
@@ -579,6 +631,10 @@ def customer_stats(customer: Mapping[str, Any], orders: list[OrderRecord]) -> di
         "cancelled_orders": sum(1 for order in orders if order["status"] in CANCELLED_STATUSES),
         "total_spent": money(sum(confirmed_revenue(order) for order in orders)),
         "total_paid": money(sum(paid_amount(order) for order in orders)),
+        # Confirmed totals of every order that is not cancelled or rejected (completed or still open).
+        "total_transaction_amount": money(sum(float(order["total_amount"]) for order in quoted)),
+        "outstanding_balance": outstanding,
+        "payment_status": customer_payment_status(active, outstanding),
         "last_order_at": max((order["created_at"] for order in orders), default=None),
         "last_order_date": iso(local_date(max((order["created_at"] for order in orders), default=None))),
     }
@@ -592,6 +648,9 @@ def customer_rows(params: Mapping[str, Any]) -> list[dict[str, Any]]:
     activity = param_text(params, "activity", 40)
     if activity and activity not in CUSTOMER_ACTIVITY:
         raise bad_request("Select a valid order activity filter.")
+    pay = param_text(params, "payment_status", 40)
+    if pay and pay not in CUSTOMER_PAYMENT_STATUSES:
+        raise bad_request("Select a valid customer payment status.")
     reg_start, reg_end = date_range(params, "registered_from", "registered_to", "Registration date")
     ord_start, ord_end = date_range(params, "ordered_from", "ordered_to", "Order date")
     rows = []
@@ -618,6 +677,8 @@ def customer_rows(params: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         if activity == "no_spend" and row["total_spent"] > 0:
             continue
+        if pay and row["payment_status"] != pay:
+            continue
         rows.append(row)
     return sort_rows(rows, params, CUSTOMER_SORTS, "registered")
 
@@ -628,8 +689,12 @@ def customer_list(params: Mapping[str, Any]) -> dict[str, Any]:
     result["summary"] = {
         "customers": len(rows),
         "total_spent": money(sum(row["total_spent"] for row in rows)),
+        "total_transaction_amount": money(sum(row["total_transaction_amount"] for row in rows)),
+        "total_paid": money(sum(row["total_paid"] for row in rows)),
+        "outstanding_balance": money(sum(row["outstanding_balance"] for row in rows)),
         "with_orders": sum(1 for row in rows if row["total_orders"]),
     }
+    result["payment_statuses"] = list(CUSTOMER_PAYMENT_STATUSES)
     return result
 
 
@@ -905,6 +970,56 @@ def revenue_trend(completed: list[dict[str, Any]], start: date | None, end: date
     return buckets
 
 
+def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], start: date | None, end: date | None) -> dict[str, Any]:
+    """Money received in the period (by payment date) and how open orders are being paid.
+
+    Payments on a 50% down payment order count as the down payment until half of the confirmed total
+    is covered; the rest is the balance. Payments on Cash on Delivery orders are COD collections.
+    Payments are cash flow, not revenue: revenue is still recognized only when an order is completed
+    and fully paid.
+    """
+    received = down = balance = cod = 0.0
+    count = 0
+    methods: dict[str, dict[str, Any]] = {}
+    for order in orders:
+        option = order_services.payment_option(order)
+        total = order["total_amount"]
+        threshold = float(total) * order_services.DOWN_PAYMENT_RATE if total is not None else 0.0
+        cumulative = 0.0
+        for payment in sorted(order["payments"], key=lambda item: item.get("received_at") or ""):
+            amount = money(payment.get("amount"))
+            if option == "cod":
+                parts = (0.0, 0.0, amount)
+            else:
+                down_part = max(0.0, min(amount, threshold - cumulative))
+                parts = (down_part, amount - down_part, 0.0)
+            cumulative += amount
+            if not in_range(local_date(payment.get("received_at")), start, end):
+                continue
+            count += 1
+            received += amount
+            down += parts[0]
+            balance += parts[1]
+            cod += parts[2]
+            method = payment.get("method") or "Other"
+            entry = methods.setdefault(method, {"method": method, "count": 0, "amount": 0.0})
+            entry["count"] += 1
+            entry["amount"] = money(entry["amount"] + amount)
+    active = [row for row in requested if row["status"] not in CANCELLED_STATUSES]
+    return {
+        "received_total": money(received),
+        "payment_count": count,
+        "down_payments": money(down),
+        "balance_payments": money(balance),
+        "cod_collections": money(cod),
+        "by_method": sorted(methods.values(), key=lambda item: (-item["amount"], item["method"])),
+        "orders_down_payment": sum(1 for row in active if row["payment_option"] == "down_payment"),
+        "orders_cod": sum(1 for row in active if row["payment_option"] == "cod"),
+        "outstanding_balance": money(sum(row["balance"] or 0 for row in active if row["status"] != "Completed")),
+        "awaiting_down_payment": sum(1 for row in active if row["status"] == "Awaiting Down Payment"),
+    }
+
+
 def business_summary(params: Mapping[str, Any]) -> dict[str, Any]:
     """Overall performance for a period.
 
@@ -921,6 +1036,7 @@ def business_summary(params: Mapping[str, Any]) -> dict[str, Any]:
         raise bad_request("Select a valid service.")
     if selected:
         rows = [row for row in rows if row["service_id"] == selected]
+        orders = [order for order in orders if services.resolve(order)["id"] == selected]
     requested = [row for row in rows if in_range(local_date(row["created_at"]), start, end)]
     completed = [
         row for row in rows
@@ -970,6 +1086,45 @@ def business_summary(params: Mapping[str, Any]) -> dict[str, Any]:
             key=lambda row: row["completed_at"] or "",
             reverse=True,
         ),
+        "payments": payment_summary(orders, requested, start, end),
+    }
+
+
+# ================================================================== notification badges
+
+
+def action_counts() -> dict[str, Any]:
+    """How many records wait for the administrator, for the sidebar and dashboard badges."""
+    orders = order_repository.list_orders()
+    customers = customer_repository.list_customers()
+    counts = {status: 0 for status in STATUS_ORDER}
+    for order in orders:
+        counts[order["status"]] = counts.get(order["status"], 0) + 1
+    week_ago = today_local() - timedelta(days=6)
+    collect_before_release = sum(
+        1 for order in orders
+        if order["status"] == "Ready for Pickup" and not is_fully_paid(order)
+    )
+    new_requests = counts["Pending Confirmation"]
+    to_review = counts["Under Review"] + counts["Awaiting Quotation"]
+    awaiting_down_payment = counts["Awaiting Down Payment"]
+    new_customers = sum(1 for customer in customers if (local_date(customer["created_at"]) or date.min) >= week_ago)
+    return {
+        "new_requests": new_requests,
+        "to_review": to_review,
+        "awaiting_down_payment": awaiting_down_payment,
+        "draft_preparation": counts["Draft Preparation"],
+        "awaiting_customer_approval": counts["Awaiting Customer Approval"],
+        "in_production": counts["Approved for Printing"] + counts["In Production"],
+        "ready_for_pickup": counts["Ready for Pickup"],
+        "collect_before_release": collect_before_release,
+        "new_customers": new_customers,
+        # Sidebar badges.
+        "orders": new_requests + to_review,
+        "payments": awaiting_down_payment + collect_before_release,
+        "customers": new_customers,
+        # Changes whenever any order or registration changes, so pages know to refresh.
+        "signature": f"{len(orders)}:{max((order['updated_at'] for order in orders), default='')}:{len(customers)}",
     }
 
 

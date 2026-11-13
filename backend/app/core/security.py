@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException, Request, Response
 
 from backend.app.core.config import settings
-from backend.app.repositories import customer_repository
+from backend.app.repositories import admin_repository, customer_repository
 
 
 SESSION_COOKIE = "impress_session"
@@ -107,7 +107,12 @@ def create_session_cookie(
     ``None`` keeps the standard 12-hour cookie (administrators and new registrations).
     """
     ttl = REMEMBER_TTL_SECONDS if remember else SESSION_TTL_SECONDS
-    version = customer_repository.get_session_version(subject) if role == "customer" else None
+    if role == "customer":
+        version = customer_repository.get_session_version(subject)
+    elif role == "admin":
+        version = admin_repository.get_session_version()
+    else:
+        version = None
     response.set_cookie(
         SESSION_COOKIE,
         create_session_token(subject, role, ttl, version),
@@ -133,6 +138,10 @@ def session_claims(request: Request, role: str | None = None) -> dict[str, Any] 
         # (on this or any other device) stops working. Cookies from before versioning count as 0.
         current = customer_repository.get_session_version(claims["sub"])
         if current is None or claims.get("ver", 0) != current:
+            return None
+    elif claims["role"] == "admin":
+        # The administrator password reset also signs out sessions issued before the change.
+        if claims.get("ver", 0) != admin_repository.get_session_version():
             return None
     return claims
 

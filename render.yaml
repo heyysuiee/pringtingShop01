@@ -1,0 +1,49 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Create the service from the Render dashboard: New > Blueprint > pick this repository.
+services:
+  - type: web
+    name: printing-shop-system
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/app/requirements.txt
+    # Render's proxy terminates HTTPS, so uvicorn must trust its X-Forwarded-Proto/For headers
+    # (FORWARDED_ALLOW_IPS below); the same-origin check, secure cookies and rate limits rely on them.
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    envVars:
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: PRINTSHOP_ENVIRONMENT
+        value: production
+      - key: PRINTSHOP_SECRET_KEY
+        generateValue: true
+      # The service's own *.onrender.com host is added automatically (RENDER_EXTERNAL_HOSTNAME).
+      # Add custom domains here, comma-separated.
+      - key: PRINTSHOP_ALLOWED_HOSTS
+        value: localhost
+      # Free instances have no persistent disk: this SQLite file and uploads are wiped on every
+      # redeploy, restart and spin-down. Set TURSO_DATABASE_URL/TURSO_AUTH_TOKEN to keep data.
+      - key: PRINTSHOP_DATABASE_PATH
+        value: /opt/render/project/src/backend/data/orders.sqlite3
+      - key: PRINTSHOP_UPLOAD_DIR
+        value: /opt/render/project/src/backend/data/order_uploads
+      # Prompted for when the Blueprint is created.
+      - key: PRINTSHOP_ADMIN_EMAIL
+        sync: false
+      - key: PRINTSHOP_ADMIN_PASSWORD_HASH
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: PRINTSHOP_SMTP_HOST
+        sync: false
+      - key: PRINTSHOP_SMTP_PORT
+        value: "587"
+      - key: PRINTSHOP_SMTP_USERNAME
+        sync: false
+      - key: PRINTSHOP_SMTP_PASSWORD
+        sync: false
+      - key: PRINTSHOP_SMTP_FROM
+        sync: false

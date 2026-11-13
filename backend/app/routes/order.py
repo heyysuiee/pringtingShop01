@@ -11,6 +11,7 @@ from backend.app.schemas.order import (
     AdminDraft,
     AdminOrderStatus,
     AdminPayment,
+    AdminPaymentOption,
     AdminQuotation,
     CustomerOrderAction,
     CustomerOrderChanges,
@@ -136,6 +137,16 @@ def admin_record_payment(
 ) -> dict[str, Any]:
     require_admin(request)
     return order_services.record_payment(reference, payload.model_dump())
+
+
+@router.post("/api/admin/orders/{reference}/payment-option")
+def admin_update_payment_option(
+    reference: str,
+    payload: AdminPaymentOption,
+    request: Request,
+) -> dict[str, Any]:
+    require_admin(request)
+    return order_services.update_payment_option(reference, payload.model_dump())
 
 
 @router.post("/api/admin/orders/{reference}/draft")

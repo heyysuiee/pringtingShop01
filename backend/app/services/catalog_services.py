@@ -29,6 +29,7 @@ from backend.app.models.catalog import (
     FIELD_SECTIONS,
     FIELD_TYPES,
     OPTION_FIELD_TYPES,
+    PACKAGE_PERSONALIZATION_TYPES,
     PRICE_TYPES,
     PRICING_MODES,
     CatalogField,
@@ -36,13 +37,15 @@ from backend.app.models.catalog import (
     FieldOption,
     InvitationPackage,
 )
-from backend.app.repositories import catalog_repository
+from backend.app.repositories import catalog_repository, package_repository
 
 
 CURRENCY = "PHP"
 MAX_PRICE = 10_000_000
 MAX_QUANTITY = 50_000
 MAX_FILES_PER_FIELD = 10
+# Images per product or package (the admin gallery and the customer gallery show all of them).
+MAX_IMAGES = 12
 CATALOG_IMAGE_DIR = settings.upload_dir / "catalog"
 CATALOG_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 CATALOG_IMAGE_TYPES = {
@@ -65,20 +68,33 @@ def _bad(detail: str, status: int = 422) -> HTTPException:
 # ================================================================== public reads
 
 
+def _with_packages(categories: list[Any]) -> list[Any]:
+    """Attach each product's active packages and the field keys a package order still asks for."""
+    grouped: dict[str, list[InvitationPackage]] = {}
+    for package in package_repository.list_all_packages(active_only=True):
+        grouped.setdefault(package["product_id"], []).append(package)
+    for category in categories:
+        for product in category["products"]:
+            product["packages"] = grouped.get(product["id"], [])  # type: ignore[typeddict-unknown-key]
+            product["package_field_keys"] = [field["field_key"] for field in package_fields(product)["fields"]]  # type: ignore[typeddict-unknown-key]
+    return categories
+
+
 def public_catalog() -> dict[str, Any]:
     """Active categories that have at least one active product, with every active field and option.
 
-    This is everything the order form needs to render without extra requests.
+    This is everything the order form needs to render without extra requests, including each
+    product's published packages.
     """
     categories = [category for category in catalog_repository.load_catalog(active_only=True) if category["products"]]
-    return {"currency": CURRENCY, "categories": categories}
+    return {"currency": CURRENCY, "categories": _with_packages(categories)}
 
 
 def public_catalog_full() -> dict[str, Any]:
     """Every active category, including categories that have no active products yet."""
     return {
         "currency": CURRENCY,
-        "categories": catalog_repository.load_catalog(active_only=True),
+        "categories": _with_packages(catalog_repository.load_catalog(active_only=True)),
     }
 
 
@@ -277,13 +293,58 @@ def calculate_price(product: CatalogProduct, quantity: int, selections: dict[str
 
 
 def quote(payload: dict[str, Any]) -> dict[str, Any]:
+    """Live estimate for the order page: a custom configuration, or a package with its add-ons."""
     product = orderable_product(payload.get("product_id"))
     quantity = _number(payload.get("quantity"))
     quantity_value = int(quantity) if quantity is not None and quantity >= 1 and quantity.is_integer() else product["min_quantity"]
-    quantity_value = max(1, min(quantity_value, MAX_QUANTITY))
+    # Estimates use a quantity the product can actually be ordered at (e.g. invitations: at least 20).
+    quantity_value = max(product["min_quantity"], min(quantity_value, product["max_quantity"], MAX_QUANTITY))
     raw = payload.get("options")
-    selections = _parse_selections(product, raw if isinstance(raw, dict) else {}, strict=False)
+    raw_options = raw if isinstance(raw, dict) else {}
+    package_id = payload.get("package_id")
+    if package_id not in (None, ""):
+        package = orderable_package(product, package_id)
+        quantity_value = package_quantity(product, package, quantity_value)
+        scoped = package_fields(product)
+        selections = _parse_selections(scoped, raw_options, strict=False)
+        return _package_pricing(package, quantity_value, scoped, selections)
+    selections = _parse_selections(product, raw_options, strict=False)
     return calculate_price(product, quantity_value, selections)
+
+
+def orderable_package(product: CatalogProduct, package_id: Any) -> InvitationPackage:
+    """The selected package, confirmed to be active and offered for this exact product."""
+    if not isinstance(package_id, str) or not package_id.strip():
+        raise _bad("Choose a package for this product.")
+    package = package_repository.get_package(package_id.strip())
+    if package is None or not package["active"] or package["product_id"] != product["id"]:
+        raise _bad(f"The selected package is not available for {product['name']}. Choose another package.")
+    return package
+
+
+def package_quantity(product: CatalogProduct, package: InvitationPackage, requested: int) -> int:
+    """The nearest quantity a package can be ordered at (used for live estimates only)."""
+    if package["add_on_price"] is None:
+        return package["included_quantity"]
+    low = max(product["min_quantity"], package["included_quantity"])
+    return max(low, min(requested, min(product["max_quantity"], MAX_QUANTITY)))
+
+
+def package_fields(product: CatalogProduct) -> CatalogProduct:
+    """The part of a product's order form that a package order still shows.
+
+    The package fixes the specifications. Invitations keep their finish and envelope options, the
+    structured event details, and the photo uploads. Other products keep the "options" section and
+    their personalization questions (names, text to print, dates, and file uploads).
+    """
+    if product_has_event_section(product):
+        fields = [field for field in product["fields"] if field["section"] in {"options", "event", "upload"}]
+    else:
+        fields = [
+            field for field in product["fields"]
+            if field["section"] == "options" or field["field_type"] in PACKAGE_PERSONALIZATION_TYPES
+        ]
+    return {**product, "fields": fields}
 
 
 # ================================================================== order validation
@@ -444,8 +505,15 @@ def _package_specifications(package: InvitationPackage) -> list[dict[str, str]]:
     return rows
 
 
-def _package_pricing(package: InvitationPackage, quantity: int) -> dict[str, Any]:
-    """Price a package order from the package's published price and add-on charge only."""
+def _package_pricing(
+    package: InvitationPackage,
+    quantity: int,
+    scoped: CatalogProduct | None = None,
+    selections: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Price a package order from the package's published price, its add-on charge, and the price
+    adjustments of the options the customer chose in the "options" section (paper finish, envelope).
+    """
     included = package["included_quantity"]
     price = round(package["price"], 2)
     add_on = package["add_on_price"]
@@ -463,17 +531,47 @@ def _package_pricing(package: InvitationPackage, quantity: int) -> dict[str, Any
                 "detail": f"{extra:,} additional pcs × {money(float(add_on))}",
                 "amount": round(extra * float(add_on), 2),
             })
+    reasons: list[str] = []
+    if scoped is not None and selections:
+        for field in _visible_fields(scoped, selections):
+            if field["section"] != "options" or field["field_type"] not in OPTION_FIELD_TYPES:
+                continue
+            options = _options_by_value(field)
+            value = selections.get(field["field_key"])
+            for item in value if isinstance(value, list) else [value]:
+                option = options.get(item) if isinstance(item, str) else None
+                if option is None:
+                    continue
+                if option["requires_quote"]:
+                    reasons.append(f"{field['label']}: “{option['label']}” is priced by quotation.")
+                    continue
+                adjustment = option["price_adjustment"]
+                if not adjustment:
+                    continue
+                sign = "+" if adjustment > 0 else "−"
+                label = f"{field['label']}: {option['label']}"
+                if option["price_type"] == "per_order":
+                    amount = round(adjustment, 2)
+                    detail = f"{sign}{money(abs(adjustment))} per order"
+                else:
+                    amount = round(adjustment * quantity, 2)
+                    detail = f"{sign}{money(abs(adjustment))} each × {quantity:,}"
+                lines.append({"label": label, "detail": detail, "amount": amount})
+                total = round(total + amount, 2)
+    total = max(0.0, total)
+    estimated = None if reasons else total
     return {
         "currency": CURRENCY,
         "pricing_mode": "package",
         "base_price": None,
         "quantity": quantity,
         "area_sqft": None,
-        "unit_price": None,
+        # The effective price of one piece, so customers can compare packages.
+        "unit_price": round(estimated / quantity, 2) if estimated is not None and quantity else None,
         "lines": lines,
-        "estimated_total": total,
-        "requires_quote": False,
-        "quote_reasons": [],
+        "estimated_total": estimated,
+        "requires_quote": bool(reasons),
+        "quote_reasons": reasons,
         "incomplete": [],
         "package_id": package["id"],
         "package_name": package["name"],
@@ -496,17 +594,18 @@ def evaluate_order(
 
     Returns (quantity, selections, specifications, event_rows, pricing). ``specifications`` and
     ``event_rows`` are the human-readable, ordered label/value lists the admin dashboard and the
-    customer portal display. ``sections`` limits validation to the form sections a package order
-    still shows; ``package`` prices from the package instead of the product's option prices.
+    customer portal display. ``sections`` limits validation to the given form sections; with a
+    ``package`` the form is limited to what a package order shows (``package_fields``) and the price
+    comes from the package instead of the product's option prices.
     """
     if isinstance(quantity, bool) or not isinstance(quantity, int):
         raise _bad("Quantity must be a whole number.")
     low, high = product["min_quantity"], min(product["max_quantity"], MAX_QUANTITY)
     if quantity < low or quantity > high:
-        raise _bad(f"Quantity for {product['name']} must be between {low:,} and {high:,}.")
+        raise _bad(f"Quantity for {product['name']} must be between {low:,} and {high:,} pieces (minimum order {low:,}).")
     if not isinstance(raw_selections, dict):
         raw_selections = {}
-    scoped = _section_scoped(product, sections)
+    scoped = package_fields(product) if package is not None else _section_scoped(product, sections)
     counts = {key: len(names) for key, names in file_names.items()}
     selections = _parse_selections(scoped, raw_selections, strict=True, file_counts=counts)
     specifications: list[dict[str, str]] = []
@@ -527,7 +626,7 @@ def evaluate_order(
             continue
         specifications.append({"key": key, "label": field["label"], "value": value, "type": field["field_type"]})
     if package is not None:
-        pricing = _package_pricing(package, quantity)
+        pricing = _package_pricing(package, quantity, scoped, selections)
         specifications = _package_specifications(package) + specifications
     else:
         pricing = calculate_price(scoped, quantity, selections)
@@ -662,6 +761,59 @@ def _save_catalog_image(upload: Any) -> str:
     return f"/api/catalog/images/{filename}"
 
 
+def _image_paths(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list) or len(value) > MAX_IMAGES:
+        raise _bad(f"{label}: add at most {MAX_IMAGES} images.")
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise _bad(f"{label}: each image must be a site path.")
+        path = item.strip()
+        if not path:
+            continue
+        if not path.startswith("/") or len(path) > 300:
+            raise _bad(f"{label}: image paths must start with “/” and be at most 300 characters.")
+        if path not in cleaned:
+            cleaned.append(path)
+    return cleaned
+
+
+def resolve_images(payload: dict[str, Any], current: list[str], *, creating: bool, label: str) -> list[str] | None:
+    """The new image list for a product or package, or None when the payload does not change it.
+
+    ``images``         the complete ordered list of existing image paths to keep (removing/reordering).
+    ``image_uploads``  new image files ({name, dataUrl}) added after them.
+    ``image``          (older clients) the path of the primary image.
+    ``image_upload``   (older clients) one new file that replaces the primary image.
+    """
+    images: list[str] | None = None
+    if "images" in payload:
+        images = _image_paths(payload.get("images"), label)
+    elif creating or "image" in payload:
+        path = payload.get("image") or ""
+        if not isinstance(path, str):
+            raise _bad(f"{label} image path must be text.")
+        path = path.strip()
+        if path and (not path.startswith("/") or len(path) > 300):
+            raise _bad("Image path must be a site path that starts with “/”, or upload an image.")
+        images = ([path] if path else []) + [item for item in current[1:] if item != path]
+    if payload.get("image_upload"):
+        saved = _save_catalog_image(payload["image_upload"])
+        base = images if images is not None else list(current)
+        images = [saved] + base[1:]
+    uploads = payload.get("image_uploads")
+    if uploads:
+        if not isinstance(uploads, list) or len(uploads) > MAX_IMAGES:
+            raise _bad(f"{label}: upload at most {MAX_IMAGES} images at a time.")
+        base = images if images is not None else list(current)
+        if len(base) + len(uploads) > MAX_IMAGES:
+            raise _bad(f"{label}: a product or package can have at most {MAX_IMAGES} images.")
+        images = base + [_save_catalog_image(upload) for upload in uploads]
+    if images is not None and len(images) > MAX_IMAGES:
+        raise _bad(f"{label}: a product or package can have at most {MAX_IMAGES} images.")
+    return images
+
+
 def catalog_image(filename: str) -> FileResponse:
     if not re.fullmatch(r"[0-9a-f]{32}\.(jpg|png|webp)", filename):
         raise _bad("Image not found.", 404)
@@ -688,13 +840,10 @@ def _product_values(payload: dict[str, Any], current: CatalogProduct | None) -> 
         values["category_id"] = category_id
     if wants("description"):
         values["description"] = _text(payload, "description", "Description", 600)
-    if payload.get("image_upload"):
-        values["image"] = _save_catalog_image(payload["image_upload"])
-    elif wants("image"):
-        image = _text(payload, "image", "Image path", 300)
-        if image and not image.startswith("/"):
-            raise _bad("Image path must be a site path that starts with “/”, or upload an image.")
-        values["image"] = image
+    images = resolve_images(payload, current["images"] if current else [], creating=creating, label="Product")
+    if images is not None:
+        values["images"] = images
+        values["image"] = images[0] if images else ""
     if wants("pricing_mode"):
         values["pricing_mode"] = _choice(payload, "pricing_mode", "Pricing method", PRICING_MODES, "unit")
     if wants("base_price"):
