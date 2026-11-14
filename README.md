@@ -58,6 +58,22 @@ docs/                       Setup and API notes
 
 Forgot-password codes, the customer portal, and the order reference format are documented in [docs/customer-accounts.md](docs/customer-accounts.md), including the environment variables and the SMTP setup steps.
 
+## Order, quotation, and payment workflow
+
+**Fixed-price package orders.** The order total is the package's published price plus its add-on rate, calculated by the server. The customer picks **50% Down Payment** or **Cash on Delivery (COD)** at checkout. The administrator confirms the order and shares the payment instructions (`POST /api/admin/orders/{ref}/confirm`). A down-payment order then waits for its verified 50%; a COD order goes straight to Draft Preparation.
+
+**Customized orders** (and packages whose options need a quote):
+
+1. The customer submits specifications and reference images. No payment option is chosen yet.
+2. The administrator reviews the request and enters the quotation by hand (`/quotation`, with `cod_allowed`). Prices are never calculated for customized orders; the catalog estimate is shown only as a reference.
+3. The customer accepts or declines it in the customer portal (`/api/orders/{ref}/quotation/accept|decline`). Accepting means choosing the 50% down payment, or COD only when the administrator allowed it. A declined quotation can be revised and sent again; a revision clears any earlier acceptance.
+4. For a down payment, the customer reports the payment with its reference number and an optional proof image (`/api/orders/{ref}/payments`). The administrator verifies or rejects it (`/payment-submissions/{id}/verify|reject`). For COD, the administrator confirms the arrangement (`/confirm-cod`) or declines COD by re-sending the quotation without it.
+5. Draft → customer approval or revision requests → **In Production** (needs an approved draft and the verified down payment) → **Ready for Pickup** or **Out for Delivery** (from the order's fulfillment choice) → **Completed** (only when fully paid).
+
+**Delivery or pickup** is chosen at checkout, independent of the payment option. Delivery requires the recipient name, contact number, house number/street, barangay, city/municipality, and province (landmark optional). Orders placed before this existed count as store pickup.
+
+**Payment safeguards.** A reported payment never counts as paid until it is verified, and only one can wait for verification at a time. While one is pending, the administrator cannot record a separate payment for the same order. A submission can be verified once and becomes exactly one payment record. A payment reference number can be used only once across all orders. Payments cannot exceed the balance. Nothing can be paid before a package order is confirmed or a customized quotation is accepted, and orders with reported or recorded payments cannot be cancelled from the portal. Outstanding balances and customer transaction totals count only agreed prices: an unaccepted quotation or an unconfirmed package order is not money owed.
+
 ## Admin side
 
 Every admin page reads from the database; there is no sample data. Tables (orders, customers, payments, reports, catalog) support search, filters, sorting, and pagination, and a row opens its details. Order details show the catalog sample and every uploaded image (JPG, PNG, WebP) in a gallery with a large viewer (zoom, pan, fullscreen); the files are served only to an administrator session. Available actions depend on the order's status, ask for confirmation, and are refused with HTTP 409 if the order changed since it was opened.

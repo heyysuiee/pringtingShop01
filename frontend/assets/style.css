@@ -5907,3 +5907,131 @@ span.photo-gallery-main {
     border-radius: 8px;
     box-shadow: 0 10px 26px rgba(43, 43, 43, 0.18);
 }
+
+/* Delivery or store pickup, and the payment note for customized orders */
+
+.fulfillment-options .delivery-fields {
+    margin-top: 6px;
+}
+
+.payment-after-quote {
+    margin: 22px 0 0;
+    padding: 16px 18px;
+    border: 1px dashed #bdbdbd;
+    border-radius: 16px;
+    background: #fafafa;
+    color: var(--order-ink);
+}
+
+.payment-after-quote p {
+    margin: 6px 0 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.payment-option-card.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+/* Customer portal: quotation response and payment panels */
+
+.customer-panel {
+    display: grid;
+    gap: 12px;
+    margin: 22px 0;
+    padding: 20px;
+    border: 1px solid #d4d4d4;
+    border-radius: 13px;
+    background: #ffffff;
+}
+
+.customer-panel[hidden] {
+    display: none;
+}
+
+.customer-panel h3 {
+    margin: 0;
+    color: var(--order-ink);
+    font-family: var(--serif);
+    font-size: 1.35rem;
+}
+
+.customer-panel h4 {
+    margin: 6px 0 0;
+    font-size: 1rem;
+}
+
+.customer-panel .payment-options {
+    margin: 0;
+}
+
+.customer-panel textarea.input {
+    width: 100%;
+}
+
+.customer-panel .notice {
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #f4f1ec;
+    color: #2b2b2b;
+    line-height: 1.55;
+}
+
+.payment-instructions {
+    padding: 12px 14px;
+    border-left: 3px solid var(--order-brown);
+    background: #fafafa;
+}
+
+.payment-instructions p {
+    margin: 4px 0 0;
+    white-space: pre-wrap;
+}
+
+.payment-submit-form {
+    display: grid;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid #e3e3e3;
+}
+
+.payment-submit-form h4,
+.payment-submit-form p {
+    margin: 0;
+}
+
+.payment-submit-form label {
+    display: grid;
+    gap: 4px;
+    font-size: 0.9rem;
+}
+
+.payment-submit-form .btn {
+    justify-self: start;
+}
+
+.payment-submissions {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.payment-submissions li {
+    display: grid;
+    gap: 2px;
+    padding: 10px 12px;
+    border: 1px solid #e3e3e3;
+    border-radius: 10px;
+}
+
+.payment-submissions .submission-rejected {
+    border-color: #e2b4b4;
+}
+
+.payment-submissions .submission-verified {
+    border-color: #b9d8bd;
+}

@@ -134,6 +134,8 @@
 
 .status-badge.completed::before,
 .status-badge.fully-paid::before,
+.status-badge.verified::before,
+.status-badge.accepted-by-the-customer::before,
 .status-badge.available::before,
 .status-badge.shown::before {
     background: var(--status-good) !important;
@@ -144,13 +146,21 @@
 .status-badge.awaiting-customer-approval::before,
 .status-badge.approved-for-printing::before,
 .status-badge.in-production::before,
-.status-badge.ready-for-pickup::before {
+.status-badge.ready-for-pickup::before,
+.status-badge.out-for-delivery::before,
+.status-badge.quotation-sent::before,
+.status-badge.waiting-for-the-customer::before {
     background: var(--status-info) !important;
 }
 
 .status-badge.pending-confirmation::before,
 .status-badge.awaiting-quotation::before,
 .status-badge.awaiting-down-payment::before,
+.status-badge.awaiting-cod-confirmation::before,
+.status-badge.quotation-declined::before,
+.status-badge.declined-by-the-customer::before,
+.status-badge.pending-verification::before,
+.status-badge.awaiting-verification::before,
 .status-badge.partially-paid::before,
 .status-badge.pending::before {
     background: var(--status-warning) !important;
@@ -1952,4 +1962,28 @@ button.notification-item:hover {
     .stats-grid-6 {
         grid-template-columns: 1fr;
     }
+}
+
+/* ---------------------------------------------------------------- payment verification */
+
+.proof-preview {
+    display: inline-block;
+    margin: 10px 0 0;
+}
+
+.proof-preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 240px;
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+}
+
+.submission-history {
+    margin-top: 14px;
+}
+
+.submission-history h4 {
+    margin: 0 0 6px;
+    font-size: 13.5px;
 }

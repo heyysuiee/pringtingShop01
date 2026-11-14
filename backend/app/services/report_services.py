@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from backend.app.models.order import PAYMENT_OPTIONS, OrderRecord
+from backend.app.models.order import FULFILLMENT_METHODS, PAYMENT_OPTIONS, OrderRecord
 from backend.app.repositories import catalog_repository, customer_repository, order_repository
 from backend.app.services import order_services
 from backend.app.utils.order_number import SHOP_TIMEZONE
@@ -30,20 +30,7 @@ from backend.app.utils.order_number import SHOP_TIMEZONE
 PENDING_STATUSES = order_services.PENDING_STATUSES
 PROCESSING_STATUSES = order_services.PROCESSING_STATUSES
 CANCELLED_STATUSES = order_services.CANCELLED_STATUSES
-STATUS_ORDER = [
-    "Pending Confirmation",
-    "Under Review",
-    "Awaiting Quotation",
-    "Awaiting Down Payment",
-    "Draft Preparation",
-    "Awaiting Customer Approval",
-    "Approved for Printing",
-    "In Production",
-    "Ready for Pickup",
-    "Completed",
-    "Rejected",
-    "Cancelled",
-]
+STATUS_ORDER = list(order_services.ORDER_STATUSES)
 STATUS_GROUPS = {
     "pending": PENDING_STATUSES,
     "processing": PROCESSING_STATUSES,
@@ -288,6 +275,13 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "down_payment_required": breakdown["down_payment_required"],
         "down_payment_status": breakdown["down_payment_status"],
         "payment_count": len(order["payments"]),
+        "pending_verification": breakdown["pending_verification"],
+        "payments_to_verify": len(order_services.pending_submissions(order)),
+        "fulfillment_method": order_services.fulfillment_method(order),
+        "fulfillment_label": FULFILLMENT_METHODS[order_services.fulfillment_method(order)],
+        "quotation_status": order_services.quotation(order).get("status", ""),
+        "fixed_price": order_services.is_fixed_price(order),
+        "price_agreed": order_services.price_agreed(order),
         "completed_at": order.get("completed_at") if order["status"] == "Completed" else None,
         "completion_date": iso(completion_date(order)),
         "completion_days": completion_days(order),
@@ -308,20 +302,23 @@ def admin_order_view(order: OrderRecord, services: ServiceIndex | None = None) -
     paid = row["amount_paid"]
     view["summary"] = row
     view["customer_id"] = order.get("customer_id")
-    view["allowed_statuses"] = sorted(
-        order_services.ADMIN_STATUS_TRANSITIONS.get(status, set()),
-        key=lambda item: STATUS_ORDER.index(item) if item in STATUS_ORDER else 99,
-    )
-    cod = order_services.is_cod(order)
+    view["allowed_statuses"] = order_services.allowed_transitions(order)
+    pending = order_services.pending_submissions(order)
+    chosen = bool(order_services.payment_option(order))
+    payable = status in order_services.PAYABLE_STATUSES and total is not None and chosen and paid < total - 0.005
     view["actions"] = {
-        "quote": status in {"Under Review", "Awaiting Quotation"},
-        "record_payment": status in order_services.PAYABLE_STATUSES and total is not None and paid < total - 0.005,
-        "send_draft": status in {"Draft Preparation", "Awaiting Customer Approval"} and total is not None
-        and (cod or paid >= total * order_services.DOWN_PAYMENT_RATE - 0.005),
-        "complete_requires_payment": status == "Ready for Pickup" and not is_fully_paid(order),
-        "cancel_blocked_by_payments": bool(order["payments"]),
+        "quote": order_services.quotable(order),
+        "confirm_package": order_services.is_fixed_price(order) and status in {"Pending Confirmation", "Under Review"},
+        "confirm_cod": status == "Awaiting COD Confirmation" and order_services.is_cod(order),
+        "verify_payments": payable and bool(pending),
+        "record_payment": payable and not pending,
+        "send_draft": status in {"Draft Preparation", "Awaiting Customer Approval"} and order_services.down_payment_met(order),
+        "start_production_blocked": status == "Approved for Printing" and not order_services.down_payment_met(order),
+        "complete_requires_payment": status in order_services.RELEASE_STATUSES and not is_fully_paid(order),
+        "cancel_blocked_by_payments": bool(order["payments"]) or bool(pending),
         "change_payment_option": order_services.payment_option_changeable(order) and status not in CANCELLED_STATUSES,
     }
+    view["payment_methods"] = list(order_services.PAYMENT_METHODS)
     return view
 
 
@@ -529,11 +526,26 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
         "total_received": money(sum(paid_amount(order) for order in orders)),
         "outstanding_balance": money(sum(
             max(0.0, float(order["total_amount"]) - paid_amount(order))
-            for order in active if order["total_amount"] is not None
+            for order in active if order_services.price_agreed(order)
         )),
         "fully_paid_orders": sum(1 for order in active if is_fully_paid(order)),
-        "awaiting_quotation": sum(1 for order in active if order["total_amount"] is None and order["status"] != "Completed"),
+        "awaiting_quotation": sum(1 for order in active if not order_services.price_agreed(order) and order["status"] != "Completed"),
         "awaiting_down_payment": sum(1 for order in active if order["status"] == "Awaiting Down Payment"),
+        "awaiting_cod_confirmation": sum(1 for order in active if order["status"] == "Awaiting COD Confirmation"),
+        "payments_to_verify": [
+            {
+                "reference": order["reference"],
+                "customer_name": order["customer"].get("name", ""),
+                "submission_id": item["id"],
+                "amount": money(item.get("amount")),
+                "method": item.get("method", ""),
+                "payment_reference": item.get("reference", ""),
+                "submitted_at": item.get("submitted_at"),
+                "has_proof": bool(item.get("proof")),
+            }
+            for order in active
+            for item in order_services.pending_submissions(order)
+        ],
         "down_payments_due": money(sum(
             order_services.payment_breakdown(order)["down_payment_remaining"] or 0
             for order in active if order["status"] == "Awaiting Down Payment"
@@ -542,7 +554,7 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
         "cod_due": money(sum(
             max(0.0, float(order["total_amount"]) - paid_amount(order))
             for order in active
-            if order_services.is_cod(order) and order["total_amount"] is not None and order["status"] != "Completed"
+            if order_services.is_cod(order) and order_services.price_agreed(order) and order["status"] != "Completed"
         )),
         "orders_with_balance": [
             {
@@ -551,7 +563,7 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
                 "product": (order.get("product") or {}).get("name", ""),
                 "balance": money(float(order["total_amount"]) - paid_amount(order)),
                 "status": order["status"],
-                "payment_option_label": PAYMENT_OPTIONS[order_services.payment_option(order)],
+                "payment_option_label": order_services.payment_option_label(order),
             }
             for order in active
             if order["total_amount"] is not None
@@ -591,7 +603,7 @@ def customer_payment_status(active: list[OrderRecord], outstanding: float) -> st
         return "No transactions"
     if outstanding > 0.005:
         return "With balance"
-    if all(order["total_amount"] is None for order in active):
+    if not any(order_services.price_agreed(order) for order in active):
         return "Awaiting quotation"
     return "Fully paid"
 
@@ -613,7 +625,8 @@ def _orders_by_customer(orders: list[OrderRecord], customers: list[dict[str, Any
 
 def customer_stats(customer: Mapping[str, Any], orders: list[OrderRecord]) -> dict[str, Any]:
     active = [order for order in orders if order["status"] not in CANCELLED_STATUSES]
-    quoted = [order for order in active if order["total_amount"] is not None]
+    # Only agreed prices count: an unaccepted quotation or an unconfirmed package order is not owed yet.
+    quoted = [order for order in active if order_services.price_agreed(order)]
     outstanding = money(sum(max(0.0, float(order["total_amount"]) - paid_amount(order)) for order in quoted))
     return {
         "id": customer["id"],
@@ -1015,7 +1028,7 @@ def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], 
         "by_method": sorted(methods.values(), key=lambda item: (-item["amount"], item["method"])),
         "orders_down_payment": sum(1 for row in active if row["payment_option"] == "down_payment"),
         "orders_cod": sum(1 for row in active if row["payment_option"] == "cod"),
-        "outstanding_balance": money(sum(row["balance"] or 0 for row in active if row["status"] != "Completed")),
+        "outstanding_balance": money(sum(row["balance"] or 0 for row in active if row["price_agreed"] and row["status"] != "Completed")),
         "awaiting_down_payment": sum(1 for row in active if row["status"] == "Awaiting Down Payment"),
     }
 
@@ -1103,10 +1116,18 @@ def action_counts() -> dict[str, Any]:
     week_ago = today_local() - timedelta(days=6)
     collect_before_release = sum(
         1 for order in orders
-        if order["status"] == "Ready for Pickup" and not is_fully_paid(order)
+        if order["status"] in order_services.RELEASE_STATUSES and not is_fully_paid(order)
+    )
+    payments_to_verify = sum(
+        1 for order in orders
+        if order["status"] not in CANCELLED_STATUSES and order_services.pending_submissions(order)
     )
     new_requests = counts["Pending Confirmation"]
-    to_review = counts["Under Review"] + counts["Awaiting Quotation"]
+    # Requests the administrator must act on: review/quote, re-quote after a decline, confirm a COD arrangement.
+    to_review = (
+        counts["Under Review"] + counts["Awaiting Quotation"]
+        + counts["Quotation Declined"] + counts["Awaiting COD Confirmation"]
+    )
     awaiting_down_payment = counts["Awaiting Down Payment"]
     new_customers = sum(1 for customer in customers if (local_date(customer["created_at"]) or date.min) >= week_ago)
     return {
@@ -1117,11 +1138,16 @@ def action_counts() -> dict[str, Any]:
         "awaiting_customer_approval": counts["Awaiting Customer Approval"],
         "in_production": counts["Approved for Printing"] + counts["In Production"],
         "ready_for_pickup": counts["Ready for Pickup"],
+        "out_for_delivery": counts["Out for Delivery"],
+        "quotation_sent": counts["Quotation Sent"],
+        "quotation_declined": counts["Quotation Declined"],
+        "awaiting_cod_confirmation": counts["Awaiting COD Confirmation"],
+        "payments_to_verify": payments_to_verify,
         "collect_before_release": collect_before_release,
         "new_customers": new_customers,
         # Sidebar badges.
         "orders": new_requests + to_review,
-        "payments": awaiting_down_payment + collect_before_release,
+        "payments": payments_to_verify + collect_before_release,
         "customers": new_customers,
         # Changes whenever any order or registration changes, so pages know to refresh.
         "signature": f"{len(orders)}:{max((order['updated_at'] for order in orders), default='')}:{len(customers)}",
@@ -1174,10 +1200,17 @@ def dashboard() -> dict[str, Any]:
 
 def _classify(text: str) -> tuple[str, str]:
     rules: list[tuple[Callable[[str], bool], str, str]] = [
+        (lambda value: value.startswith("Customer submitted a payment"), "Payment submitted for verification", "customer"),
         (lambda value: value.startswith("Customer submitted"), "New order request", "customer"),
         (lambda value: value.startswith("Customer approved"), "Draft approved by customer", "customer"),
         (lambda value: value.startswith("Customer requested draft changes"), "Customer requested draft changes", "customer"),
         (lambda value: value.startswith("Customer cancelled"), "Order cancelled by customer", "customer"),
+        (lambda value: value.startswith("Customer accepted the quotation"), "Quotation accepted", "customer"),
+        (lambda value: value.startswith("Customer declined the quotation"), "Quotation declined", "customer"),
+        (lambda value: "verified the customer's payment" in value, "Payment verified", "admin"),
+        (lambda value: "could not verify the customer's payment" in value, "Payment submission rejected", "admin"),
+        (lambda value: "confirmed the Cash on Delivery" in value, "COD arrangement confirmed", "admin"),
+        (lambda value: "confirmed the package order" in value, "Package order confirmed", "admin"),
         (lambda value: "recorded PHP" in value, "Payment recorded", "admin"),
         (lambda value: "quotation of PHP" in value, "Quotation sent", "admin"),
         (lambda value: "attached draft" in value, "Draft sent for approval", "admin"),

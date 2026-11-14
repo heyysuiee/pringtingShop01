@@ -298,7 +298,7 @@
                 <!-- 06 · Contact & payment -->
                 <section class="wizard-step" data-step="5" data-wizard-section="contact" aria-labelledby="step5-title">
                     <p class="order-step-kicker" id="step5-kicker">05 · Contact &amp; payment</p>
-                    <h2 id="step5-title" class="step-title">Your contact details &amp; payment option</h2>
+                    <h2 id="step5-title" class="step-title">Contact, delivery &amp; payment</h2>
                     <div class="form-grid">
                         <div class="field"><label for="name" class="field-label">Full name</label><input id="name"
                                 class="input" autocomplete="name" maxlength="120" required></div>
@@ -335,17 +335,76 @@
                                 maxlength="240" placeholder="Venue, city, or full address"></div>
                     </fieldset>
 
-                    <fieldset class="payment-options" aria-describedby="payment-option-hint">
+                    <fieldset class="payment-options fulfillment-options" aria-describedby="fulfillment-hint">
+                        <legend class="field-label">Delivery or pickup</legend>
+                        <p class="field-hint" id="fulfillment-hint">Choose how you will receive your order. This is
+                            separate from how you pay.</p>
+                        <div class="payment-option-grid">
+                            <label class="payment-option-card">
+                                <input type="radio" name="fulfillment-method" value="pickup" checked>
+                                <span class="payment-option-body">
+                                    <strong>Store Pickup</strong>
+                                    <small>Collect your order at the shop. No delivery address needed.</small>
+                                </span>
+                            </label>
+                            <label class="payment-option-card">
+                                <input type="radio" name="fulfillment-method" value="delivery">
+                                <span class="payment-option-body">
+                                    <strong>Delivery</strong>
+                                    <small>We deliver to the address below. The shop confirms delivery
+                                        arrangements with you.</small>
+                                </span>
+                            </label>
+                        </div>
+                        <div class="delivery-fields" id="delivery-fields" hidden>
+                            <div class="form-grid">
+                                <div class="field"><label for="delivery-name" class="field-label">Customer
+                                        name</label><input id="delivery-name" class="input" autocomplete="name"
+                                        maxlength="120" data-delivery-field="recipient_name"></div>
+                                <div class="field"><label for="delivery-phone" class="field-label">Contact
+                                        number</label><input id="delivery-phone" class="input" type="tel"
+                                        autocomplete="tel" maxlength="40" placeholder="09XX XXX XXXX"
+                                        data-delivery-field="contact_number"></div>
+                                <div class="field"><label for="delivery-street" class="field-label">House number /
+                                        Street</label><input id="delivery-street" class="input"
+                                        autocomplete="address-line1" maxlength="200" data-delivery-field="street"></div>
+                                <div class="field"><label for="delivery-barangay"
+                                        class="field-label">Barangay</label><input id="delivery-barangay" class="input"
+                                        autocomplete="address-line2" maxlength="120"
+                                        data-delivery-field="barangay"></div>
+                                <div class="field"><label for="delivery-city" class="field-label">City /
+                                        Municipality</label><input id="delivery-city" class="input"
+                                        autocomplete="address-level2" maxlength="120" data-delivery-field="city"></div>
+                                <div class="field"><label for="delivery-province"
+                                        class="field-label">Province</label><input id="delivery-province"
+                                        class="input" autocomplete="address-level1" maxlength="120"
+                                        data-delivery-field="province"></div>
+                            </div>
+                            <div class="field"><label for="delivery-landmark" class="field-label">Landmark <span
+                                        class="optional">(optional)</span></label><input id="delivery-landmark"
+                                    class="input" maxlength="200" placeholder="e.g. Beside the barangay hall"
+                                    data-delivery-field="landmark" data-optional="true"></div>
+                        </div>
+                    </fieldset>
+
+                    <div class="payment-after-quote" id="payment-after-quote" hidden>
+                        <strong>Payment is arranged after your quotation</strong>
+                        <p>Customized orders are priced by the shop. You will receive a quotation in the customer
+                            portal; after you accept it you choose the 50% down payment or, when the shop allows it,
+                            Cash on Delivery. Nothing is paid now.</p>
+                    </div>
+
+                    <fieldset class="payment-options" id="payment-options" aria-describedby="payment-option-hint">
                         <legend class="field-label">Payment option</legend>
-                        <p class="field-hint" id="payment-option-hint">Choose how you will pay. The administrator
-                            confirms the final amount first, then shares the payment instructions.</p>
+                        <p class="field-hint" id="payment-option-hint">This package has a fixed published price.
+                            Choose how you will pay; the shop confirms the order and shares the payment instructions.</p>
                         <div class="payment-option-grid">
                             <label class="payment-option-card">
                                 <input type="radio" name="payment-option" value="down_payment" checked>
                                 <span class="payment-option-body">
                                     <strong>50% Down Payment</strong>
-                                    <small>Pay half after the quotation is confirmed; the draft is prepared once it is
-                                        received. Pay the balance before release.</small>
+                                    <small>Pay half after the shop confirms your order; the draft is prepared once it
+                                        is verified. Pay the balance before release.</small>
                                 </span>
                             </label>
                             <label class="payment-option-card">
@@ -374,12 +433,15 @@
                                     provided]</strong> for better print quality.</li>
                             <li>Provide the celebrant’s name and any applicable event details.</li>
                             <li>Include the event date, time, and location when applicable.</li>
-                            <li>Any price shown is an estimate from the shop's published prices. The administrator
-                                confirms the final amount before payment is requested.</li>
+                            <li>Package orders use the package's published price. Customized orders are priced by the
+                                administrator's quotation, which you accept or decline in the customer portal before
+                                any payment.</li>
                             <li>With the 50% down payment option, half of the confirmed amount is paid before the
-                                draft is prepared and the balance before release. With Cash on Delivery (COD), no down
-                                payment is needed and the full amount is paid on delivery or pickup. Payment
-                                instructions come from the shop administrator.</li>
+                                draft is prepared and the balance before release. You can submit your payment
+                                reference and receipt in the portal; the shop verifies it. With Cash on Delivery (COD),
+                                no down payment is needed and the full amount is paid on delivery or pickup. For
+                                customized orders, COD is available only when the shop allows it. Payment instructions
+                                come from the shop administrator.</li>
                             <li>We will send a draft layout via chat for you to check and approve.</li>
                             <li class="approval-rule">NO APPROVAL, NO PRINT.</li>
                             <li>Order processing takes approximately 2–5 days. This is processing time, not a guaranteed
@@ -387,8 +449,8 @@
                         </ol>
                     </section>
                     <label class="order-acknowledgement"><input id="acknowledge" type="checkbox" required><span>I have
-                            reviewed my details and understand the order instructions, including my payment option
-                            (50% down payment or Cash on Delivery) and “NO APPROVAL, NO PRINT.”</span></label>
+                            reviewed my details and understand the order instructions, including how payment is
+                            arranged (50% down payment or Cash on Delivery) and “NO APPROVAL, NO PRINT.”</span></label>
                     <p class="field-error" id="acknowledgement-error" role="alert"></p>
                 </section>
 
@@ -405,8 +467,8 @@
                 <span class="confirm-badge" aria-hidden="true">✓</span>
                 <p class="order-step-kicker">Request received</p>
                 <h2>Your order is pending confirmation</h2>
-                <p>The shop administrator must review your request. Payment instructions will be provided by the
-                    administrator. No payment has been recorded and printing has not started.</p>
+                <p id="confirm-lead">The shop administrator must review your request. Payment instructions will be
+                    provided by the administrator. No payment has been recorded and printing has not started.</p>
                 <p class="field-hint">Your reference number (it includes today's date):</p>
                 <p class="order-ref" id="confirm-ref"></p>
                 <div id="confirm-details" class="confirmation-details"></div>

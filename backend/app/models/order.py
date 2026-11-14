@@ -35,11 +35,28 @@ class OrderUpdates(TypedDict):
     draft_attachment: NotRequired[OrderAttachment | None]
     admin_notes: NotRequired[str]
     payment_option: NotRequired[str]
+    quotation: NotRequired[dict[str, Any]]
+    payment_submissions: NotRequired[list[dict[str, Any]]]
 
 
-# How a customer pays for an order.
+# How a customer pays for an order. An empty payment option means "not chosen yet": customized
+# orders choose it only after accepting the administrator's quotation.
 PAYMENT_OPTIONS = {"down_payment": "50% Down Payment", "cod": "Cash on Delivery (COD)"}
+PAYMENT_OPTION_PENDING_LABEL = "Chosen after the quotation is accepted"
 DOWN_PAYMENT_RATE = 0.5
+
+# How the finished order reaches the customer. Older orders have no fulfillment and were picked up.
+FULFILLMENT_METHODS = {"pickup": "Store Pickup", "delivery": "Delivery"}
+# Delivery address fields, in display order: (key, label, required, max length).
+DELIVERY_FIELDS = (
+    ("recipient_name", "Customer name", True, 120),
+    ("contact_number", "Contact number", True, 40),
+    ("street", "House number / Street", True, 200),
+    ("barangay", "Barangay", True, 120),
+    ("city", "City / Municipality", True, 120),
+    ("province", "Province", True, 120),
+    ("landmark", "Landmark", False, 200),
+)
 
 
 class OrderRecord(TypedDict):
@@ -67,5 +84,15 @@ class OrderRecord(TypedDict):
     pricing: NotRequired[dict[str, Any]]
     # Set when the order moved to Completed (UTC ISO 8601). Never entered by hand.
     completed_at: NotRequired[str | None]
-    # "down_payment" or "cod" (see PAYMENT_OPTIONS).
+    # "down_payment", "cod" (see PAYMENT_OPTIONS), or "" while a customized order waits for its quotation.
     payment_option: NotRequired[str]
+    # {"method": "pickup" | "delivery", plus the DELIVERY_FIELDS for deliveries}. Independent of payment.
+    fulfillment: NotRequired[dict[str, Any]]
+    # The administrator's quotation and the customer's response:
+    # {"amount", "cod_allowed", "revision", "sent_at", "status": "sent" | "accepted" | "declined",
+    #  "responded_at", "decline_reason", "note", "cod_confirmed_at"}.
+    quotation: NotRequired[dict[str, Any]]
+    # Payments reported by the customer (reference + proof), waiting for the administrator to verify:
+    # {"id", "amount", "method", "reference", "proof", "submitted_at", "status": "pending" | "verified" | "rejected",
+    #  "reviewed_at", "review_note"}. A verified submission becomes exactly one entry in payments.
+    payment_submissions: NotRequired[list[dict[str, Any]]]

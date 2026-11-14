@@ -766,11 +766,36 @@
 
     // ---------------------------------------------------------------- payment option & breakdown
 
+    /**
+     * A package with a complete published total is a fixed-price order: the customer picks the payment option now.
+     * Customized orders (and packages whose options need a quote) are priced by the shop's quotation, and the
+     * payment option is chosen in the customer portal after the quotation is accepted.
+     */
+    function isFixedPrice() {
+        if (state.mode !== "package" || !state.package) return false;
+        const quote = state.quote;
+        if (!quote) return true; // the package total is still loading
+        return quote.estimated_total !== null && quote.estimated_total > 0 && !quote.requires_quote;
+    }
+
     function paymentOption() {
         return form.querySelector('input[name="payment-option"]:checked')?.value || "down_payment";
     }
 
+    function syncPaymentSection() {
+        const fixed = isFixedPrice();
+        $("#payment-options").hidden = !fixed;
+        $("#payment-after-quote").hidden = fixed;
+    }
+
     function paymentRows() {
+        if (!isFixedPrice()) {
+            return [
+                ["Payment option", "Chosen after you accept the shop's quotation"],
+                ["Down payment (50%)", "Half of the accepted quotation, if you choose the down payment"],
+                ["Cash on Delivery", "Available only when the shop allows it for your order"],
+            ];
+        }
         const cod = paymentOption() === "cod";
         const total = state.quote?.estimated_total ?? null;
         const rows = [["Payment option", cod ? "Cash on Delivery (COD)" : "50% Down Payment"]];
@@ -781,7 +806,7 @@
             return rows;
         }
         const down = cod ? 0 : Math.round(total * DOWN_PAYMENT_RATE * 100) / 100;
-        rows.push(["Estimated total", money(total)]);
+        rows.push(["Package total", money(total)]);
         rows.push(cod ? ["Down payment", "Not required (COD)"] : ["Down payment (50%)", money(down)]);
         rows.push([cod ? "Due on delivery / pickup" : "Balance before release", money(Math.round((total - down) * 100) / 100)]);
         return rows;
@@ -789,14 +814,16 @@
 
     function renderPaymentBreakdown() {
         if (!paymentBreakdown) return;
+        syncPaymentSection();
         paymentBreakdown.replaceChildren();
+        if (!isFixedPrice()) return;
         paymentRows().forEach(([label, value]) => {
             const row = el("div", "payment-breakdown-row");
             row.append(el("dt", "", label), el("dd", "", value));
             paymentBreakdown.append(row);
         });
         if (state.quote?.estimated_total !== null && state.quote?.estimated_total !== undefined) {
-            paymentBreakdown.append(el("p", "field-hint", "Estimated from the shop's published prices; the administrator confirms the final amount."));
+            paymentBreakdown.append(el("p", "field-hint", "From the package's published price and add-on rate. The shop confirms the order before payment."));
         }
     }
 
@@ -804,6 +831,51 @@
         renderPaymentBreakdown();
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }));
+
+    // ---------------------------------------------------------------- delivery or store pickup
+
+    const deliveryFields = $("#delivery-fields");
+    const deliveryInputs = [...deliveryFields.querySelectorAll("[data-delivery-field]")];
+
+    function fulfillmentMethod() {
+        return form.querySelector('input[name="fulfillment-method"]:checked')?.value || "pickup";
+    }
+
+    /** Address fields are shown, enabled, and required only for delivery; pickup needs no address. */
+    function syncFulfillment() {
+        const delivery = fulfillmentMethod() === "delivery";
+        deliveryFields.hidden = !delivery;
+        deliveryInputs.forEach((input) => {
+            input.disabled = !delivery;
+            input.required = delivery && input.dataset.optional !== "true";
+        });
+        if (delivery) {
+            // Start from the contact details; the recipient can be someone else.
+            if (!$("#delivery-name").value.trim()) $("#delivery-name").value = $("#name").value.trim();
+            if (!$("#delivery-phone").value.trim()) $("#delivery-phone").value = $("#phone").value.trim();
+        }
+    }
+
+    function fulfillmentPayload() {
+        if (fulfillmentMethod() !== "delivery") return { method: "pickup" };
+        const result = { method: "delivery" };
+        deliveryInputs.forEach((input) => { result[input.dataset.deliveryField] = input.value.trim(); });
+        return result;
+    }
+
+    function fulfillmentRows() {
+        if (fulfillmentMethod() !== "delivery") return [["Method", "Store Pickup — no delivery address needed"]];
+        return [
+            ["Method", "Delivery"],
+            ...deliveryInputs.map((input) => [input.closest(".field").querySelector("label").textContent.replace("(optional)", "").trim(), input.value.trim()]),
+        ];
+    }
+
+    form.querySelectorAll('input[name="fulfillment-method"]').forEach((input) => input.addEventListener("change", () => {
+        syncFulfillment();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    }));
+    syncFulfillment();
 
     // ---------------------------------------------------------------- invitation mockup designer
 
@@ -1084,8 +1156,11 @@
             if (quote.unit_price !== null) pricing.push(["Price per piece", `${money(quote.unit_price)} × ${quote.quantity.toLocaleString()} pcs`]);
             pricing.push(["Estimated total", money(quote.estimated_total)]);
         }
-        pricing.push(["Final amount", "Confirmed by the administrator before payment is requested"]);
+        pricing.push(["Final amount", isFixedPrice()
+            ? "The package's published price; the shop confirms the order before payment"
+            : "Set by the shop's quotation, which you accept or decline before any payment"]);
         appendGroup("Pricing", pricing);
+        appendGroup("Delivery or pickup", fulfillmentRows());
         appendGroup("Payment", paymentRows());
     }
 
@@ -1272,7 +1347,9 @@
                 },
                 product: { id: state.product.id },
                 customization,
-                payment_option: paymentOption(),
+                // Customized orders choose the payment option after accepting the quotation.
+                payment_option: isFixedPrice() ? paymentOption() : null,
+                fulfillment: fulfillmentPayload(),
                 has_event: state.invitation ? true : !eventFields.hidden,
                 event: state.invitation || eventFields.hidden ? {} : eventData(),
                 acknowledged: $("#acknowledge").checked,
@@ -1302,13 +1379,28 @@
         const payment = order.payment || {};
         const details = $("#confirm-details");
         const packageName = order.order_kind === "package" ? order.package?.name : "";
+        const fulfillment = order.fulfillment || {};
         const lines = [
             el("p", "", `${order.product.name}${packageName ? ` · ${packageName}` : ""} · ${order.customization.quantity.toLocaleString()} pc(s) · ${order.status}`),
-            el("p", "", estimate !== null && estimate !== undefined
-                ? `Estimated total: ${money(estimate)}${order.pricing.unit_price ? ` (${money(order.pricing.unit_price)} per piece)` : ""} — the administrator will confirm the final amount.`
-                : "The administrator will send a quotation for this request."),
-            el("p", "", `Payment option: ${payment.payment_option_label || "50% Down Payment"}${payment.down_payment_required ? ` · down payment ≈ ${money(payment.down_payment_required)} after confirmation` : payment.payment_option === "cod" ? " · no down payment; pay on delivery or pickup" : ""}`),
         ];
+        if (order.fixed_price) {
+            lines.push(
+                el("p", "", `Package total: ${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece)` : ""}.`),
+                el("p", "", `Payment option: ${payment.payment_option_label}${payment.payment_option === "cod"
+                    ? " · no down payment; pay the full amount on delivery or pickup"
+                    : ` · 50% down payment ${money(payment.down_payment_required)}, balance ${money(payment.remaining_after_down_payment)}`}. Pay after the shop confirms your order.`),
+            );
+        } else {
+            lines.push(
+                el("p", "", estimate !== null && estimate !== undefined
+                    ? `Estimated total: ${money(estimate)} — the shop will send a quotation for you to accept or decline.`
+                    : "The shop will send a quotation for you to accept or decline."),
+                el("p", "", "After you accept the quotation, choose the 50% down payment or, when the shop allows it, Cash on Delivery."),
+            );
+        }
+        lines.push(el("p", "", `Fulfillment: ${fulfillment.label || "Store Pickup"}${fulfillment.method === "delivery"
+            ? ` to ${fulfillment.address.filter((row) => ["street", "barangay", "city", "province"].includes(row.key)).map((row) => row.value).join(", ")}`
+            : ""}.`));
         details.replaceChildren(...lines);
         $("#confirm-track").href = "/customer-portal";
         const confirmation = $("#confirmation");

@@ -63,6 +63,15 @@ def initialize() -> None:
             # How the customer pays: "down_payment" (50% after the quotation, balance before release)
             # or "cod" (cash on delivery: no down payment, the full amount is paid on delivery/pickup).
             connection.execute("ALTER TABLE orders ADD COLUMN payment_option TEXT NOT NULL DEFAULT 'down_payment'")
+        if "fulfillment" not in columns:
+            # Delivery or store pickup (JSON). Existing orders keep '{}', which means store pickup.
+            connection.execute("ALTER TABLE orders ADD COLUMN fulfillment TEXT NOT NULL DEFAULT '{}'")
+        if "quotation" not in columns:
+            # The administrator's quotation, COD permission, and the customer's acceptance (JSON).
+            connection.execute("ALTER TABLE orders ADD COLUMN quotation TEXT NOT NULL DEFAULT '{}'")
+        if "payment_submissions" not in columns:
+            # Payments reported by the customer with a reference/proof, waiting for verification (JSON).
+            connection.execute("ALTER TABLE orders ADD COLUMN payment_submissions TEXT NOT NULL DEFAULT '[]'")
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key)"
         )
@@ -96,6 +105,9 @@ def decode_row(row: sqlite3.Row | None) -> OrderRecord | None:
     for key in ("customer", "product", "customization", "event_details", "payments", "attachments", "history"):
         result[key] = json.loads(result[key])
     result["pricing"] = json.loads(result.get("pricing") or "{}")
+    result["fulfillment"] = json.loads(result.get("fulfillment") or "{}")
+    result["quotation"] = json.loads(result.get("quotation") or "{}")
+    result["payment_submissions"] = json.loads(result.get("payment_submissions") or "[]")
     if result["draft_attachment"]:
         result["draft_attachment"] = json.loads(result["draft_attachment"])
     return cast(OrderRecord, result)
@@ -160,8 +172,9 @@ def create_order(order: dict[str, Any], idempotency_key: str) -> str:
             INSERT INTO orders (
                 reference, created_at, updated_at, customer, product, customization,
                 event_details, has_event, acknowledged, status, total_amount,
-                attachments, history, customer_id, idempotency_key, pricing, payment_option
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                attachments, history, customer_id, idempotency_key, pricing, payment_option,
+                fulfillment, quotation, payment_submissions
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reference,
@@ -174,17 +187,26 @@ def create_order(order: dict[str, Any], idempotency_key: str) -> str:
                 int(order["has_event"]),
                 1,
                 order["status"],
-                None,
+                # Fixed-price package orders store the package total; customized orders wait for a quotation.
+                order.get("total_amount"),
                 json.dumps(order["attachments"]),
                 json.dumps(order["history"]),
                 order.get("customer_id"),
                 idempotency_key,
                 json.dumps(order.get("pricing") or {}),
-                order.get("payment_option") or "down_payment",
+                # "" (chosen after the quotation) is kept; a missing value means the older default.
+                _stored_payment_option(order.get("payment_option", "down_payment")),
+                json.dumps(order.get("fulfillment") or {}),
+                json.dumps(order.get("quotation") or {}),
+                json.dumps(order.get("payment_submissions") or []),
             ),
         )
     order["reference"] = reference
     return reference
+
+
+def _stored_payment_option(value: object) -> str:
+    return value if isinstance(value, str) else "down_payment"
 
 
 class StaleOrderError(Exception):
@@ -218,6 +240,10 @@ def _apply_updates(order: OrderRecord, updates: OrderUpdates) -> None:
         order["admin_notes"] = updates["admin_notes"]
     if "payment_option" in updates:
         order["payment_option"] = updates["payment_option"]
+    if "quotation" in updates:
+        order["quotation"] = updates["quotation"]
+    if "payment_submissions" in updates:
+        order["payment_submissions"] = updates["payment_submissions"]
 
 
 def update_order(
@@ -255,7 +281,9 @@ def update_order(
             "history": json.dumps(current["history"]),
             "admin_notes": current["admin_notes"],
             "completed_at": current.get("completed_at"),
-            "payment_option": current.get("payment_option") or "down_payment",
+            "payment_option": _stored_payment_option(current.get("payment_option", "down_payment")),
+            "quotation": json.dumps(current.get("quotation") or {}),
+            "payment_submissions": json.dumps(current.get("payment_submissions") or []),
         }
         connection.execute(
             """
@@ -264,7 +292,8 @@ def update_order(
                 payments = :payments, attachments = :attachments,
                 draft_attachment = :draft_attachment, history = :history,
                 admin_notes = :admin_notes, completed_at = :completed_at,
-                payment_option = :payment_option
+                payment_option = :payment_option, quotation = :quotation,
+                payment_submissions = :payment_submissions
             WHERE reference = :reference
             """,
             {**values, "reference": reference},

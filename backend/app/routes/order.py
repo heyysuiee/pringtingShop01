@@ -8,13 +8,17 @@ from fastapi.responses import FileResponse
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin, require_session
 from backend.app.schemas.order import (
+    AdminConfirmation,
     AdminDraft,
     AdminOrderStatus,
     AdminPayment,
     AdminPaymentOption,
     AdminQuotation,
+    AdminSubmissionReview,
     CustomerOrderAction,
     CustomerOrderChanges,
+    CustomerPaymentSubmission,
+    CustomerQuotationResponse,
     OrderSubmission,
 )
 from backend.app.services import order_services
@@ -94,6 +98,38 @@ def cancel_customer_order(
     return order_services.cancel_customer_order(reference, payload.email)
 
 
+@router.post("/api/orders/{reference}/quotation/accept")
+def accept_quotation(
+    reference: str,
+    payload: CustomerQuotationResponse,
+    request: Request,
+) -> dict[str, Any]:
+    """The customer accepts the quotation and chooses the 50% down payment or (when allowed) COD."""
+    require_same_origin(request)
+    return order_services.accept_quotation(reference, payload.email, payload.model_dump())
+
+
+@router.post("/api/orders/{reference}/quotation/decline")
+def decline_quotation(
+    reference: str,
+    payload: CustomerQuotationResponse,
+    request: Request,
+) -> dict[str, Any]:
+    require_same_origin(request)
+    return order_services.decline_quotation(reference, payload.email, payload.model_dump())
+
+
+@router.post("/api/orders/{reference}/payments")
+def submit_customer_payment(
+    reference: str,
+    payload: CustomerPaymentSubmission,
+    request: Request,
+) -> dict[str, Any]:
+    """The customer reports a payment (reference and optional proof); the administrator verifies it."""
+    require_same_origin(request)
+    return order_services.submit_customer_payment(reference, payload.email, payload.model_dump())
+
+
 @router.get("/api/admin/orders")
 def admin_orders(request: Request) -> dict[str, Any]:
     """Orders with server-side search, filters (status, service, payment status, dates), sorting, and pages."""
@@ -127,6 +163,49 @@ def admin_quote(
 ) -> dict[str, Any]:
     require_admin(request)
     return order_services.set_quotation(reference, payload.model_dump())
+
+
+@router.post("/api/admin/orders/{reference}/confirm")
+def admin_confirm_package(
+    reference: str,
+    payload: AdminConfirmation,
+    request: Request,
+) -> dict[str, Any]:
+    """Confirm a fixed-price package order at its published total."""
+    require_admin(request)
+    return order_services.confirm_package_order(reference, payload.model_dump())
+
+
+@router.post("/api/admin/orders/{reference}/confirm-cod")
+def admin_confirm_cod(
+    reference: str,
+    payload: AdminConfirmation,
+    request: Request,
+) -> dict[str, Any]:
+    require_admin(request)
+    return order_services.confirm_cod(reference, payload.model_dump())
+
+
+@router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/verify")
+def admin_verify_submission(
+    reference: str,
+    submission_id: str,
+    payload: AdminSubmissionReview,
+    request: Request,
+) -> dict[str, Any]:
+    require_admin(request)
+    return order_services.verify_payment_submission(reference, submission_id, payload.model_dump())
+
+
+@router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/reject")
+def admin_reject_submission(
+    reference: str,
+    submission_id: str,
+    payload: AdminSubmissionReview,
+    request: Request,
+) -> dict[str, Any]:
+    require_admin(request)
+    return order_services.reject_payment_submission(reference, submission_id, payload.model_dump())
 
 
 @router.post("/api/admin/orders/{reference}/payments")
