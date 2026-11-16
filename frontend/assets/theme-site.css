@@ -245,6 +245,19 @@
     padding-right: 0.06em;
 }
 
+.hero-copy h1 span {
+    color: #fff;
+}
+
+.hero-btn-primary,
+.hero-btn-secondary,
+.btn-cta-primary,
+.btn-cta-secondary {
+    letter-spacing: 0.02em;
+    text-transform: none;
+    font-size: 0.95rem;
+}
+
 .hero-copy .description {
     color: var(--text-secondary);
 }
@@ -317,6 +330,19 @@
 .mp-proof-strip {
     position: relative;
     z-index: 2;
+    padding: 28px 0;
+    border-bottom: 0;
+}
+
+.mp-proof-strip-grid {
+    gap: 16px;
+    background: transparent;
+}
+
+.mp-proof-item,
+.mp-proof-item + .mp-proof-item {
+    padding: 24px 22px;
+    border-left: 1px solid var(--line);
 }
 
 .mp-proof-item {
@@ -850,7 +876,7 @@ textarea:disabled {
 
 .product-option:hover .product-option-body,
 .package-card:hover,
-.order-mode-card:hover,
+.order-mode-card:hover:not(:disabled),
 .payment-option-card:hover .payment-option-body,
 .choice-chip:hover .choice-chip-body {
     border-color: rgba(255, 255, 255, 0.24);
@@ -860,7 +886,7 @@ textarea:disabled {
 .product-option input:checked + .product-option-body,
 .payment-option-card input:checked + .payment-option-body,
 .choice-chip input:checked + .choice-chip-body,
-.order-mode-card:has(input:checked),
+.order-mode-card.selected,
 .package-card:has(input:checked),
 .package-card.selected,
 .package-card.is-selected {
@@ -1294,4 +1320,31 @@ textarea:disabled {
 .auth-code-input {
     letter-spacing: 0.4em;
     font-variant-numeric: tabular-nums;
+}
+
+.customer-lightbox {
+    margin: auto;
+}
+
+/* Long order references must wrap on phones instead of widening the account panel */
+.portal-account-panel > *,
+.order-history-card > * {
+    min-width: 0;
+}
+
+.order-history-main .field-hint,
+.order-history-meta .field-hint {
+    overflow-wrap: anywhere;
+}
+
+/* Services and sample-work section titles use the same display weight as the rest of the site */
+.service-page h2,
+.service-page h3,
+.sample-work-page h2,
+.sample-work-page h3,
+.sample-dialog h2,
+.service-page .service-category-heading h3 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.03em;
 }

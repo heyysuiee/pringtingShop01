@@ -204,7 +204,8 @@
     /** Disable a button while an async task runs, so actions cannot be submitted twice. */
     async function busy(button, task, label = "Saving…") {
         if (button?.disabled) return undefined;
-        const original = button?.textContent;
+        // Keep the original child nodes (icons included) to put back afterwards.
+        const original = button ? Array.from(button.childNodes) : [];
         if (button) {
             button.disabled = true;
             button.setAttribute("aria-busy", "true");
@@ -216,7 +217,7 @@
             if (button?.isConnected) {
                 button.disabled = false;
                 button.removeAttribute("aria-busy");
-                button.textContent = original;
+                button.replaceChildren(...original);
             }
         }
     }

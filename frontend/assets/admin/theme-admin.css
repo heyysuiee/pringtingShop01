@@ -144,9 +144,12 @@ body.admin-page {
     font-weight: 600;
 }
 
+.icon-button {
+    display: inline-grid;
+}
+
 .icon-button,
 .mobile-menu-button {
-    display: inline-grid;
     place-items: center;
     width: 42px;
     min-width: 42px;
@@ -225,14 +228,21 @@ body.admin-page {
     white-space: nowrap;
 }
 
+/* chevron drawn with borders, so it does not depend on the font having a glyph */
 .profile-caret {
-    color: var(--text-muted);
-    font-size: 11px;
+    width: 7px;
+    height: 7px;
+    margin: 0 4px 4px 2px;
+    border-right: 2px solid var(--text-muted);
+    border-bottom: 2px solid var(--text-muted);
+    font-size: 0;
+    transform: rotate(45deg);
     transition: transform var(--dur) var(--ease);
 }
 
 .profile-menu[open] .profile-caret {
-    transform: rotate(180deg);
+    margin-bottom: -2px;
+    transform: rotate(-135deg);
 }
 
 .profile-menu-list {
@@ -310,7 +320,6 @@ body.admin-page {
 
 .panel,
 .stat-card,
-.settings-row,
 .prototype-banner,
 .report-filter-panel {
     border: 1px solid var(--line);
@@ -330,6 +339,19 @@ body.admin-page {
     color: var(--text-primary);
     font-weight: 700;
     letter-spacing: -0.01em;
+}
+
+/* Rows inside a panel are inset, not another floating card */
+.settings-row {
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow: none;
+}
+
+.settings-row + .settings-row {
+    margin-top: 10px;
 }
 
 /* ---------- Statistic cards ---------- */
@@ -881,6 +903,7 @@ button.hbar-row:hover {
     background: rgba(0, 0, 0, 0.35);
 }
 
+.viewer-thumb.active,
 .gallery-thumb.active {
     border-color: var(--accent-pink);
     box-shadow: 0 0 0 2px rgba(255, 62, 157, 0.3);
@@ -990,6 +1013,24 @@ button.notification-item:hover {
 
     .profile-trigger {
         padding: 4px;
+    }
+}
+
+/* Tablet and phone sidebars show full labels, so the counts need their numbers back
+   and the brand keeps its two-line lockup. */
+@media (max-width: 980px) {
+    .sidebar-nav a:not(.active) .nav-count,
+    .sidebar-nav .nav-count {
+        position: static;
+        min-width: 20px;
+        height: 20px;
+        margin-left: auto;
+        padding: 0 5px;
+        font-size: 10px;
+    }
+
+    .admin-brand > span:last-child {
+        display: grid;
     }
 }
 
