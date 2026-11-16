@@ -113,9 +113,23 @@
         );
     }
 
+    // Presentation only: each stat glyph gets a Lucide icon and an accent colour (see theme-admin.css).
+    const STAT_ICONS = {
+        "👥": ["users", "purple"], "▤": ["clipboard-list", "cyan"], "◷": ["clock", "orange"], "⚒": ["loader-circle", "purple"],
+        "✓": ["circle-check", "green"], "✕": ["circle-x", "red"], "₱": ["philippine-peso", "pink"], "⚑": ["flag", "orange"],
+        "½": ["percent", "cyan"], "⛟": ["truck", "cyan"], "⌕": ["search", "purple"], "⏱": ["timer", "cyan"],
+    };
+
+    function statIcon(icon) {
+        const [name] = STAT_ICONS[icon] || [];
+        const svg = name && window.PrintIcons ? window.PrintIcons.svg(name, { size: 18 }) : null;
+        return h("span", { className: "stat-icon", "aria-hidden": "true" }, svg || icon || "");
+    }
+
     function statCard({ label, value, foot, icon, onClick, tone }) {
-        const card = h(onClick ? "button" : "article", { className: `stat-card${onClick ? " stat-card-link" : ""}${tone ? ` stat-${tone}` : ""}`, type: onClick ? "button" : null },
-            h("span", { className: "stat-top" }, h("span", { className: "stat-label", text: label }), h("span", { className: "stat-icon", "aria-hidden": "true", text: icon || "" })),
+        const accent = (STAT_ICONS[icon] || [])[1] || "pink";
+        const card = h(onClick ? "button" : "article", { className: `stat-card stat-accent-${accent}${onClick ? " stat-card-link" : ""}${tone ? ` stat-${tone}` : ""}`, type: onClick ? "button" : null },
+            h("span", { className: "stat-top" }, h("span", { className: "stat-label", text: label }), statIcon(icon)),
             h("span", { className: "stat-value", text: value }),
             foot ? h("span", { className: "stat-foot", text: foot }) : null,
         );
@@ -222,6 +236,7 @@
 
     function renderView() {
         document.querySelector("#current-section").textContent = LABELS[activeView];
+        window.PrintIcons?.hydrate(viewRoot);
         document.querySelectorAll("[data-view]").forEach((link) => {
             const active = link.dataset.view === activeView;
             link.classList.toggle("active", active);
@@ -1980,6 +1995,10 @@
     // ================================================================ global events
 
     document.addEventListener("click", async (event) => {
+        // The top-bar profile menu closes on any click outside it or on one of its items.
+        document.querySelectorAll(".profile-menu[open]").forEach((menu) => {
+            if (!menu.contains(event.target) || event.target.closest(".profile-menu-list")) menu.removeAttribute("open");
+        });
         const viewLink = event.target.closest("[data-view]");
         if (viewLink) {
             event.preventDefault();
@@ -2024,7 +2043,9 @@
     });
 
     document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") document.querySelector("#admin-sidebar")?.classList.remove("open");
+        if (event.key !== "Escape") return;
+        document.querySelector("#admin-sidebar")?.classList.remove("open");
+        document.querySelectorAll(".profile-menu[open]").forEach((menu) => menu.removeAttribute("open"));
     });
     dialog.addEventListener("close", () => {
         dialog.classList.remove("admin-dialog-wide", "admin-dialog-xl");

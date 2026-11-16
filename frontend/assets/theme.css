@@ -1,0 +1,514 @@
+/* ==========================================================================
+   ImPRESSion PrintShop — Dark Glass design system
+   Shared by the storefront, the customer portal, and the admin workspace.
+   Load order on every page: legacy page CSS → theme.css → theme-site.css or admin/theme-admin.css.
+   Legacy stylesheets reference these tokens, so palette changes belong here.
+   ========================================================================== */
+
+:root {
+    color-scheme: dark;
+
+    /* Surfaces */
+    --bg-primary: #08090D;
+    --bg-secondary: #101116;
+    --bg-elevated: #171922;
+    --glass-1: rgba(255, 255, 255, 0.05);
+    --glass-2: rgba(255, 255, 255, 0.08);
+    --glass-3: rgba(255, 255, 255, 0.12);
+    --glass-hover: rgba(255, 255, 255, 0.1);
+    --glass-solid: rgba(23, 25, 34, 0.9);      /* menus, dialogs, sticky bars: readable over busy content */
+    --glass-tint: linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
+
+    /* Accents */
+    --accent-pink: #FF3E9D;
+    --accent-purple: #9333EA;
+    --accent-cyan: #00D6FF;
+    --accent-green: #22C55E;
+    --accent-orange: #F59E0B;
+    --danger: #F87171;
+    --accent-pink-light: #FF7AC0;
+    --accent-purple-light: #C084FC;
+
+    --accent-soft: rgba(255, 62, 157, 0.14);
+    --purple-soft: rgba(147, 51, 234, 0.16);
+    --cyan-soft: rgba(0, 214, 255, 0.12);
+    --success-soft: rgba(34, 197, 94, 0.13);
+    --warning-soft: rgba(245, 158, 11, 0.14);
+    --danger-soft: rgba(248, 113, 113, 0.13);
+
+    --grad-brand: linear-gradient(135deg, #FF3E9D 0%, #C026D3 52%, #9333EA 100%);
+    --grad-brand-hover: linear-gradient(135deg, #FF5AAD 0%, #D13FE3 52%, #A24BF0 100%);
+    --grad-text: linear-gradient(110deg, #FF7AC0 0%, #E879F9 45%, #A78BFA 100%);
+
+    /* Text */
+    --text-primary: #FFFFFF;
+    --text-secondary: #D1D5DB;
+    --text-muted: #9CA3AF;
+    --text-on-accent: #FFFFFF;
+
+    /* Lines */
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --line-accent: rgba(255, 62, 157, 0.5);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+    /* Shape & depth */
+    --radius-xs: 6px;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 18px;
+    --radius-xl: 24px;
+    --radius-pill: 999px;
+    --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.32);
+    --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.42);
+    --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.55);
+    --shadow-glow: 0 10px 30px rgba(255, 62, 157, 0.28);
+    --blur: 18px;
+
+    /* Type */
+    --font-sans: "Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-display: "Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+
+    /* Motion */
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --dur: 180ms;
+}
+
+/* ---------- Page canvas ---------- */
+
+html {
+    min-height: 100%;
+    background-color: var(--bg-primary);
+    background-image:
+        radial-gradient(1100px 620px at 8% -8%, rgba(147, 51, 234, 0.16), transparent 62%),
+        radial-gradient(900px 560px at 100% 0%, rgba(255, 62, 157, 0.11), transparent 60%),
+        radial-gradient(900px 700px at 50% 115%, rgba(0, 214, 255, 0.05), transparent 60%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+}
+
+body,
+body.inner-page,
+body.auth-page,
+body.order-system,
+body.portal-system,
+body.admin-page {
+    background: transparent;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+}
+
+::selection {
+    background: rgba(255, 62, 157, 0.35);
+    color: #fff;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--accent-pink);
+    outline-offset: 2px;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.24); }
+
+/* ---------- Form controls (low specificity: page rules still win) ---------- */
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]), select, textarea) {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.04);
+    border-color: var(--line-strong);
+}
+
+:where(input, select, textarea)::placeholder {
+    color: rgba(209, 213, 219, 0.5);
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):focus {
+    border-color: rgba(255, 62, 157, 0.65);
+    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.14);
+    outline: none;
+}
+
+select option,
+select optgroup {
+    background-color: var(--bg-elevated);
+    color: var(--text-primary);
+}
+
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"],
+progress {
+    accent-color: var(--accent-pink);
+}
+
+input[type="file"] {
+    color: var(--text-secondary);
+}
+
+input[type="file"]::file-selector-button {
+    margin-right: 12px;
+    padding: 8px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-pill);
+    background: var(--glass-2);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+input[type="file"]::file-selector-button:hover {
+    background: var(--accent-soft);
+    border-color: var(--line-accent);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--text-primary);
+    -webkit-box-shadow: 0 0 0 1000px #1b1d27 inset;
+    caret-color: var(--text-primary);
+    transition: background-color 9999s ease-out 0s;
+}
+
+/* ==========================================================================
+   Reusable components
+   New markup uses these class names; theme-site.css and admin/theme-admin.css
+   map the existing page classes onto the same look.
+   ========================================================================== */
+
+/* Glass surface */
+.glass,
+.glass-card {
+    background: var(--glass-tint), var(--glass-1);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm), var(--glass-highlight);
+    -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
+    backdrop-filter: blur(var(--blur)) saturate(140%);
+}
+
+.glass-card {
+    padding: 22px;
+}
+
+.glass-card.is-interactive {
+    transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.glass-card.is-interactive:hover {
+    transform: translateY(-3px);
+    border-color: rgba(255, 62, 157, 0.35);
+    box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 62, 157, 0.12);
+}
+
+/* Brand mark */
+.brand-mark,
+.brand-badge {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    background: var(--grad-brand);
+    color: #fff;
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 800;
+    font-style: normal;
+    letter-spacing: -0.03em;
+    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.gradient-text {
+    background: var(--grad-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 20px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-pill);
+    background: var(--glass-2);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.92rem;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform var(--dur) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.btn:hover {
+    background: var(--glass-3);
+    border-color: rgba(255, 255, 255, 0.26);
+}
+
+.btn-primary {
+    border-color: transparent;
+    background: var(--grad-brand);
+    color: var(--text-on-accent);
+    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.btn-primary:hover {
+    background: var(--grad-brand-hover);
+    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    transform: translateY(-1px);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Status badges: one colour per meaning */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-pill);
+    background: var(--glass-2);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.badge-pink   { color: #FF8CC6; background: var(--accent-soft);  border-color: rgba(255, 62, 157, 0.35); }
+.badge-purple { color: #C4A5FF; background: var(--purple-soft);  border-color: rgba(147, 51, 234, 0.4); }
+.badge-cyan   { color: #67E8F9; background: var(--cyan-soft);    border-color: rgba(0, 214, 255, 0.32); }
+.badge-green  { color: #4ADE80; background: var(--success-soft); border-color: rgba(34, 197, 94, 0.35); }
+.badge-orange { color: #FBBF24; background: var(--warning-soft); border-color: rgba(245, 158, 11, 0.38); }
+.badge-red    { color: #FCA5A5; background: var(--danger-soft);  border-color: rgba(248, 113, 113, 0.38); }
+
+/* Order and payment status colours, shared by the admin tables, the customer portal and order pages.
+   Scripts add the status as a slug class: "Pending Confirmation" → .pending-confirmation */
+.status-badge,
+.order-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    padding: 4px 11px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-pill);
+    background: var(--glass-2);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.status-badge.completed,
+.status-badge.fully-paid,
+.status-badge.verified,
+.status-badge.accepted-by-the-customer,
+.status-badge.available,
+.status-badge.shown,
+.order-status-pill.completed,
+.order-status-pill.fully-paid,
+.order-status-pill.verified,
+.order-status-pill.accepted-by-the-customer,
+.order-status-pill.available,
+.order-status-pill.shown,
+.status-banner.completed,
+.status-banner.fully-paid,
+.status-banner.verified,
+.status-banner.accepted-by-the-customer,
+.status-banner.available,
+.status-banner.shown {
+    border-color: rgba(34, 197, 94, 0.38);
+    background: var(--success-soft);
+    color: #4ADE80;
+}
+
+.status-badge.under-review,
+.status-badge.draft-preparation,
+.status-badge.awaiting-customer-approval,
+.status-badge.approved-for-printing,
+.status-badge.quotation-sent,
+.status-badge.waiting-for-the-customer,
+.order-status-pill.under-review,
+.order-status-pill.draft-preparation,
+.order-status-pill.awaiting-customer-approval,
+.order-status-pill.approved-for-printing,
+.order-status-pill.quotation-sent,
+.order-status-pill.waiting-for-the-customer,
+.status-banner.under-review,
+.status-banner.draft-preparation,
+.status-banner.awaiting-customer-approval,
+.status-banner.approved-for-printing,
+.status-banner.quotation-sent,
+.status-banner.waiting-for-the-customer {
+    border-color: rgba(0, 214, 255, 0.34);
+    background: var(--cyan-soft);
+    color: #67E8F9;
+}
+
+.status-badge.in-production,
+.status-badge.ready-for-pickup,
+.status-badge.out-for-delivery,
+.order-status-pill.in-production,
+.order-status-pill.ready-for-pickup,
+.order-status-pill.out-for-delivery,
+.status-banner.in-production,
+.status-banner.ready-for-pickup,
+.status-banner.out-for-delivery {
+    border-color: rgba(168, 85, 247, 0.42);
+    background: var(--purple-soft);
+    color: #D8B4FE;
+}
+
+.status-badge.pending-confirmation,
+.status-badge.awaiting-quotation,
+.status-badge.awaiting-down-payment,
+.status-badge.awaiting-cod-confirmation,
+.status-badge.pending-verification,
+.status-badge.awaiting-verification,
+.status-badge.partially-paid,
+.status-badge.pending,
+.order-status-pill.pending-confirmation,
+.order-status-pill.awaiting-quotation,
+.order-status-pill.awaiting-down-payment,
+.order-status-pill.awaiting-cod-confirmation,
+.order-status-pill.pending-verification,
+.order-status-pill.awaiting-verification,
+.order-status-pill.partially-paid,
+.order-status-pill.pending,
+.status-banner.pending-confirmation,
+.status-banner.awaiting-quotation,
+.status-banner.awaiting-down-payment,
+.status-banner.awaiting-cod-confirmation,
+.status-banner.pending-verification,
+.status-banner.awaiting-verification,
+.status-banner.partially-paid,
+.status-banner.pending {
+    border-color: rgba(245, 158, 11, 0.4);
+    background: var(--warning-soft);
+    color: #FBBF24;
+}
+
+.status-badge.quotation-declined,
+.status-badge.declined-by-the-customer,
+.status-badge.rejected,
+.status-badge.cancelled,
+.status-badge.unpaid,
+.order-status-pill.quotation-declined,
+.order-status-pill.declined-by-the-customer,
+.order-status-pill.rejected,
+.order-status-pill.cancelled,
+.order-status-pill.unpaid,
+.status-banner.quotation-declined,
+.status-banner.declined-by-the-customer,
+.status-banner.rejected,
+.status-banner.cancelled,
+.status-banner.unpaid {
+    border-color: rgba(248, 113, 113, 0.4);
+    background: var(--danger-soft);
+    color: #FCA5A5;
+}
+
+/* Loading skeleton */
+.skeleton {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+    animation: skeleton-shimmer 1.4s infinite;
+}
+
+@keyframes skeleton-shimmer {
+    to { transform: translateX(100%); }
+}
+
+/* Shared motion */
+@keyframes theme-fade-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes theme-dialog-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes theme-backdrop-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes theme-toast-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+}
+
+/* Native dialogs everywhere get the glass frame and an animated, blurred backdrop */
+dialog::backdrop {
+    background: rgba(5, 6, 9, 0.66);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    animation: theme-backdrop-in 200ms ease both;
+}
+
+dialog[open] {
+    animation: theme-dialog-in 220ms var(--ease) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}

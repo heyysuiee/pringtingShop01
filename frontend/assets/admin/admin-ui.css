@@ -2,19 +2,19 @@
    Builds on dashboard.css (layout, buttons, panels) and keeps its neutral palette. */
 
 :root {
-    --viz-1: #2a78d6;           /* single data series (bars, columns) */
-    --viz-1-soft: #cde2fb;
-    --viz-grid: #e6e6e6;
-    --status-good: #0ca30c;
-    --status-warning: #fab219;
-    --status-critical: #d03b3b;
-    --status-info: #2a78d6;
-    --status-neutral: #8a8a8a;
-    --ui-surface: #ffffff;
-    --ui-subtle: #f4f4f4;
-    --ui-text: #2b2b2b;
-    --ui-muted: #5c5c5c;
-    --ui-border: #d4d4d4;
+    --viz-1: var(--accent-pink);
+    --viz-1-soft: rgba(255, 62, 157, 0.18);
+    --viz-grid: rgba(255, 255, 255, 0.07);
+    --status-good: var(--accent-green);
+    --status-warning: var(--accent-orange);
+    --status-critical: var(--danger);
+    --status-info: var(--accent-cyan);
+    --status-neutral: var(--text-muted);
+    --ui-surface: var(--glass-1);
+    --ui-subtle: var(--glass-2);
+    --ui-text: var(--text-primary);
+    --ui-muted: var(--text-secondary);
+    --ui-border: var(--line);
 }
 
 .visually-hidden {
@@ -33,8 +33,8 @@
     z-index: 100;
     padding: 8px 12px;
     border-radius: 8px;
-    background: var(--ui-text);
-    color: #ffffff;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
 }
 
 .skip-link:focus {
@@ -48,7 +48,7 @@
     width: 14px;
     height: 14px;
     border: 2px solid var(--ui-border);
-    border-top-color: var(--ui-text);
+    border-top-color: var(--line-accent);
     border-radius: 50%;
     vertical-align: -2px;
     animation: ui-spin 0.8s linear infinite;
@@ -93,7 +93,7 @@
 
 .toast-success .toast-icon {
     background: var(--status-good);
-    color: #ffffff;
+    color: var(--text-primary);
 }
 
 .toast-error {
@@ -102,17 +102,17 @@
 
 .toast-error .toast-icon {
     background: var(--status-critical);
-    color: #ffffff;
+    color: var(--text-primary);
 }
 
 .button-danger-strong {
     border-color: var(--status-critical) !important;
-    background: #ffffff !important;
-    color: #a12424 !important;
+    background: var(--glass-1) !important;
+    color: var(--danger) !important;
 }
 
 .button-danger-strong:hover:not(:disabled) {
-    background: #fbeaea !important;
+    background: var(--danger-soft) !important;
 }
 
 .button[aria-busy="true"] {
@@ -182,7 +182,7 @@
 
 .section-title {
     margin: 22px 0 12px;
-    font-family: "Playfair Display", Georgia, serif;
+    font-family: var(--font-display);
     font-size: 22px;
     font-weight: 600;
 }
@@ -228,11 +228,11 @@
 }
 
 .stat-card-link:hover {
-    border-color: var(--ui-text) !important;
+    border-color: var(--line-accent) !important;
 }
 
 .stat-card.stat-highlight {
-    border-color: var(--ui-text) !important;
+    border-color: var(--line-accent) !important;
     box-shadow: inset 0 3px 0 var(--viz-1), var(--admin-shadow, none);
 }
 
@@ -288,7 +288,7 @@
     gap: 10px 12px;
     margin-bottom: 16px;
     padding: 14px;
-    border: 1px solid var(--admin-border, #b3b3b3);
+    border: 1px solid var(--admin-border, var(--line-strong));
     border-radius: var(--admin-radius, 14px);
     background: var(--ui-surface);
 }
@@ -326,9 +326,9 @@
 .filter-field input {
     min-height: 42px;
     padding: 0 10px;
-    border: 1px solid var(--admin-border, #b3b3b3);
+    border: 1px solid var(--admin-border, var(--line-strong));
     border-radius: var(--admin-control-radius, 9px);
-    background: #ffffff;
+    background: var(--glass-1);
     color: var(--ui-text);
     font: inherit;
     font-size: 14px;
@@ -336,8 +336,8 @@
 
 .filter-field select:focus,
 .filter-field input:focus {
-    border-color: var(--ui-text);
-    outline: 3px solid rgba(43, 43, 43, 0.16);
+    border-color: var(--line-accent);
+    outline: 3px solid rgba(255, 255, 255, 0.144);
     outline-offset: 1px;
 }
 
@@ -393,9 +393,9 @@
     gap: 8px;
     min-height: 38px;
     padding: 0 14px;
-    border: 1px solid var(--admin-border, #b3b3b3);
+    border: 1px solid var(--admin-border, var(--line-strong));
     border-radius: 999px;
-    background: #ffffff;
+    background: var(--glass-1);
     color: var(--ui-text);
     font: inherit;
     font-size: 13.5px;
@@ -404,13 +404,13 @@
 }
 
 .segmented-button:hover {
-    border-color: var(--ui-text);
+    border-color: var(--line-accent);
 }
 
 .segmented-button.active {
-    border-color: var(--ui-text);
-    background: var(--ui-text);
-    color: #ffffff;
+    border-color: var(--line-accent);
+    background: var(--grad-brand);
+    color: var(--text-primary);
 }
 
 .segmented-count {
@@ -425,7 +425,7 @@
 
 .segmented-button.active .segmented-count {
     background: rgba(255, 255, 255, 0.2);
-    color: #ffffff;
+    color: var(--text-primary);
 }
 
 /* ---------------------------------------------------------------- data tables */
@@ -485,7 +485,7 @@
 }
 
 .clickable-row:hover td {
-    background: #f1f1f1;
+    background: var(--glass-1);
 }
 
 .clickable-row:focus-visible {
@@ -499,7 +499,7 @@
 
 .clickable-row:hover td:first-child,
 .clickable-row:focus-visible td:first-child {
-    box-shadow: inset 3px 0 0 var(--ui-text);
+    box-shadow: inset 3px 0 0 rgba(255, 62, 157, 0.35);
 }
 
 .data-table tbody tr:hover {
@@ -520,7 +520,7 @@
 }
 
 .table-error {
-    color: #a12424 !important;
+    color: var(--danger) !important;
 }
 
 .table-footer {
@@ -547,9 +547,9 @@
 .table-footer select {
     min-height: 36px;
     padding: 0 8px;
-    border: 1px solid var(--admin-border, #b3b3b3);
+    border: 1px solid var(--admin-border, var(--line-strong));
     border-radius: 8px;
-    background: #ffffff;
+    background: var(--glass-1);
     font: inherit;
     font-size: 13px;
 }
@@ -567,9 +567,9 @@
 }
 
 .pager-number.active {
-    border-color: var(--ui-text);
-    background: var(--ui-text);
-    color: #ffffff;
+    border-color: var(--line-accent);
+    background: var(--accent-soft);
+    color: var(--text-primary);
 }
 
 .pager-gap {
@@ -592,7 +592,7 @@
     gap: 4px;
     margin-bottom: 16px;
     overflow-x: auto;
-    border-bottom: 1px solid var(--admin-border, #b3b3b3);
+    border-bottom: 1px solid var(--admin-border, var(--line-strong));
 }
 
 .tab-button {
@@ -614,7 +614,7 @@
 }
 
 .tab-button.active {
-    border-bottom-color: var(--ui-text);
+    border-bottom-color: var(--line-accent);
     color: var(--ui-text);
 }
 
@@ -698,7 +698,7 @@ button.hbar-row {
 .vchart-plot {
     position: relative;
     height: 210px;
-    border-bottom: 1px solid #bdbdbd;
+    border-bottom: 1px solid var(--line-strong);
 }
 
 .vchart-grid {
@@ -778,8 +778,8 @@ button.hbar-row {
     padding: 8px 10px;
     border: 1px solid var(--ui-border);
     border-radius: 8px;
-    background: #ffffff;
-    box-shadow: 0 8px 24px rgba(43, 43, 43, 0.16);
+    background: var(--glass-1);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.512);
     color: var(--ui-text);
     font-size: 12.5px;
     pointer-events: none;
@@ -918,7 +918,7 @@ button.hbar-row {
     padding: 14px 16px;
     border: 1px solid var(--ui-border);
     border-radius: 12px;
-    background: #ffffff;
+    background: var(--glass-1);
 }
 
 .fact-card h3,
@@ -1001,7 +1001,7 @@ button.hbar-row {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: var(--ui-text);
+    background: var(--bg-elevated);
     content: "";
 }
 
@@ -1015,9 +1015,9 @@ button.hbar-row {
 
 .actions-card {
     padding: 16px;
-    border: 2px solid var(--ui-text);
+    border: 2px solid var(--line-accent);
     border-radius: 12px;
-    background: #fafafa;
+    background: var(--glass-1);
 }
 
 .action-buttons {
@@ -1086,11 +1086,11 @@ button.hbar-row {
     border: 1px solid var(--ui-border);
     border-radius: 12px;
     background:
-        linear-gradient(45deg, #f2f2f2 25%, transparent 25%) 0 0 / 20px 20px,
-        linear-gradient(-45deg, #f2f2f2 25%, transparent 25%) 0 10px / 20px 20px,
-        linear-gradient(45deg, transparent 75%, #f2f2f2 75%) 10px -10px / 20px 20px,
-        linear-gradient(-45deg, transparent 75%, #f2f2f2 75%) -10px 0 / 20px 20px,
-        #fbfbfb;
+        linear-gradient(45deg, var(--glass-1) 25%, transparent 25%) 0 0 / 20px 20px,
+        linear-gradient(-45deg, var(--glass-1) 25%, transparent 25%) 0 10px / 20px 20px,
+        linear-gradient(45deg, transparent 75%, var(--glass-1) 75%) 10px -10px / 20px 20px,
+        linear-gradient(-45deg, transparent 75%, var(--glass-1) 75%) -10px 0 / 20px 20px,
+        var(--glass-1);
     cursor: zoom-in;
 }
 
@@ -1107,8 +1107,8 @@ button.hbar-row {
     left: 10px;
     padding: 4px 9px;
     border-radius: 999px;
-    background: rgba(43, 43, 43, 0.82);
-    color: #ffffff;
+    background: rgba(8, 9, 13, 0.82);
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 600;
 }
@@ -1119,16 +1119,16 @@ button.hbar-row {
     bottom: 10px;
     padding: 5px 10px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.94);
-    box-shadow: 0 2px 8px rgba(43, 43, 43, 0.18);
+    background: rgba(16, 17, 22, 0.92);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
     font-size: 12.5px;
     font-weight: 700;
 }
 
 .gallery-main:hover .gallery-zoom-hint,
 .gallery-main:focus-visible .gallery-zoom-hint {
-    background: var(--ui-text);
-    color: #ffffff;
+    background: var(--accent-soft);
+    color: var(--text-primary);
 }
 
 .gallery-name {
@@ -1153,7 +1153,7 @@ button.hbar-row {
     overflow: hidden;
     border: 2px solid var(--ui-border);
     border-radius: 9px;
-    background: #ffffff;
+    background: var(--glass-1);
     cursor: pointer;
 }
 
@@ -1164,7 +1164,7 @@ button.hbar-row {
 }
 
 .gallery-thumb.active {
-    border-color: var(--ui-text);
+    border-color: var(--line-accent);
 }
 
 .gallery-open {
@@ -1220,7 +1220,7 @@ button.hbar-row {
     padding: 12px;
     border: 1px solid var(--ui-border);
     border-radius: 10px;
-    background: #ffffff;
+    background: var(--glass-1);
 }
 
 .mini-stat span,
@@ -1250,9 +1250,9 @@ button.hbar-row {
     display: grid;
     gap: 4px;
     padding: 14px;
-    border: 1px solid var(--admin-border, #b3b3b3);
+    border: 1px solid var(--admin-border, var(--line-strong));
     border-radius: 12px;
-    background: #ffffff;
+    background: var(--glass-1);
     color: var(--ui-text);
     font: inherit;
     text-align: left;
@@ -1260,16 +1260,16 @@ button.hbar-row {
 }
 
 .service-card:hover {
-    border-color: var(--ui-text);
+    border-color: var(--line-accent);
 }
 
 .service-card.active {
-    border: 2px solid var(--ui-text);
+    border: 2px solid var(--line-accent);
     box-shadow: inset 0 3px 0 var(--viz-1);
 }
 
 .service-card-revenue {
-    font-family: "Playfair Display", Georgia, serif;
+    font-family: var(--font-display);
     font-size: 22px;
 }
 
@@ -1307,7 +1307,7 @@ button.notification-item {
 }
 
 button.notification-item:hover {
-    border-color: var(--ui-text);
+    border-color: var(--line-accent);
 }
 
 .notification-item h2 {
@@ -1370,7 +1370,7 @@ button.notification-item:hover {
 }
 
 .image-viewer::backdrop {
-    background: rgba(12, 12, 12, 0.92);
+    background: rgba(8, 9, 13, 0.92);
 }
 
 .viewer-frame {
@@ -1378,8 +1378,8 @@ button.notification-item:hover {
     grid-template-rows: auto minmax(0, 1fr) auto auto;
     width: 100%;
     height: 100%;
-    background: rgba(12, 12, 12, 0.96);
-    color: #ffffff;
+    background: rgba(8, 9, 13, 0.96);
+    color: var(--text-primary);
 }
 
 .viewer-toolbar {
@@ -1389,7 +1389,7 @@ button.notification-item:hover {
     justify-content: space-between;
     gap: 8px 16px;
     padding: 10px 14px;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(8, 9, 13, 0.55);
 }
 
 .viewer-heading {
@@ -1433,7 +1433,7 @@ button.notification-item:hover {
     border: 1px solid rgba(255, 255, 255, 0.28);
     border-radius: 9px;
     background: rgba(255, 255, 255, 0.08);
-    color: #ffffff;
+    color: var(--text-primary);
     font: inherit;
     font-size: 15px;
     font-weight: 700;
@@ -1486,8 +1486,8 @@ button.notification-item:hover {
     max-width: none;
     user-select: none;
     image-rendering: auto;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-    background: #ffffff;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+    background: var(--glass-1);
 }
 
 .viewer-status {
@@ -1496,7 +1496,7 @@ button.notification-item:hover {
     display: grid;
     place-items: center;
     padding: 20px;
-    color: #e6e6e6;
+    color: var(--text-secondary);
     font-size: 14px;
     text-align: center;
 }
@@ -1507,7 +1507,7 @@ button.notification-item:hover {
 
 .viewer-status .spinner {
     border-color: rgba(255, 255, 255, 0.3);
-    border-top-color: #ffffff;
+    border-top-color: var(--line);
 }
 
 .viewer-nav {
@@ -1545,7 +1545,7 @@ button.notification-item:hover {
     overflow: hidden;
     border: 2px solid rgba(255, 255, 255, 0.25);
     border-radius: 8px;
-    background: #222222;
+    background: var(--bg-elevated);
     cursor: pointer;
 }
 
@@ -1556,7 +1556,7 @@ button.notification-item:hover {
 }
 
 .viewer-thumb.active {
-    border-color: #ffffff;
+    border-color: var(--line);
 }
 
 .viewer-frame:fullscreen {
@@ -1726,8 +1726,8 @@ button.notification-item:hover {
 
 .product-thumb-button:hover .product-thumb,
 .product-thumb-button:focus-visible .product-thumb {
-    border-color: var(--ui-text);
-    box-shadow: 0 0 0 2px var(--ui-text);
+    border-color: var(--line-accent);
+    box-shadow: 0 0 0 2px rgba(255, 62, 157, 0.35);
 }
 
 .thumb-count {
@@ -1737,8 +1737,8 @@ button.notification-item:hover {
     min-width: 20px;
     padding: 1px 6px;
     border-radius: 999px;
-    background: var(--ui-text);
-    color: #ffffff;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
     font-size: 11px;
     font-weight: 700;
     text-align: center;
@@ -1867,7 +1867,7 @@ button.notification-item:hover {
     width: 100%;
     height: auto;
     border-radius: 8px;
-    box-shadow: 0 8px 22px rgba(43, 43, 43, 0.18);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
 }
 
 .mockup-dialog svg {
@@ -1902,7 +1902,7 @@ button.notification-item:hover {
 }
 
 .attention-item:hover {
-    border-color: var(--ui-text);
+    border-color: var(--line-accent);
 }
 
 .attention-item strong {
@@ -1915,7 +1915,7 @@ button.notification-item:hover {
 
 .attention-item.has-items strong {
     background: var(--status-critical);
-    color: #ffffff;
+    color: var(--text-primary);
 }
 
 .nav-count.is-new {
@@ -1945,7 +1945,7 @@ button.notification-item:hover {
 
 .sidebar-nav .nav-count:not(:empty) {
     background: var(--status-critical);
-    color: #ffffff;
+    color: var(--text-primary);
 }
 
 .stats-grid-6 {

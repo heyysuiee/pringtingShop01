@@ -4,11 +4,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#061A0C">
+    <meta name="theme-color" content="#08090D">
     <meta name="description"
         content="Place a custom print order online. Choose your product, upload artwork or request design help, and submit for proof approval.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="/assets/style.css">
     <link rel="stylesheet" href="/assets/auth.css">
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/theme-site.css">
     <title>Place an Order — Printing Shop</title>
 </head>
 
@@ -24,7 +29,7 @@
     <!-- Main Navigation Bar -->
     <nav class="nav" aria-label="Main navigation">
         <div class="nav-brand">
-            <a href="/home">printing shop</a>
+            <a class="brand-link" href="/home" aria-label="ImPRESSion PrintShop home"><span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word">ImPRESSion <span>PrintShop</span></span></a>
         </div>
         <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
             <span></span><span></span><span></span>
@@ -505,6 +510,10 @@
                 <button type="button" class="btn btn-ghost-dark btn-small" id="lightbox-prev">‹ Previous</button>
                 <span id="lightbox-count"></span>
                 <button type="button" class="btn btn-ghost-dark btn-small" id="lightbox-next">Next ›</button>
+            </div>
+            <div class="lightbox-tools">
+                <button type="button" class="btn btn-ghost-dark btn-small" id="lightbox-zoom" aria-pressed="false">Zoom in</button>
+                <button type="button" class="btn btn-ghost-dark btn-small" id="lightbox-fullscreen" aria-pressed="false">Full screen</button>
             </div>
         </div>
     </dialog>

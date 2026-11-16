@@ -3,16 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#f6f3ed">
+    <meta name="theme-color" content="#08090D">
     <meta name="robots" content="noindex, nofollow">
     <link rel="icon" href="data:,">
     <title>Order Management — ImPRESSion PrintShop Admin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Loaded without blocking the first paint; system fonts are used until it arrives (or if offline). -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="/assets/admin/dashboard.css">
     <link rel="stylesheet" href="/assets/admin/admin-ui.css">
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/admin/theme-admin.css">
 </head>
 <body class="admin-page" data-admin-view="orders">
     <a class="skip-link" href="#view-root">Skip to content</a>
@@ -24,19 +26,19 @@
             </a>
             <div class="sidebar-label">WORKSPACE</div>
             <nav class="sidebar-nav" aria-label="Admin navigation">
-                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true">⌂</span>Dashboard</a>
-                <a href="/admin/orders" data-view="orders" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
-                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true">♙</span>Customer Management<span class="nav-count" id="customer-count"></span></a>
-                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true">▣</span>Payments &amp; Transactions<span class="nav-count" id="payment-count"></span></a>
-                <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true">▥</span>Sales &amp; Reports</a>
-                <a href="/admin/services" data-view="services"><span class="nav-icon" aria-hidden="true">▧</span>Services &amp; Products</a>
-                <a href="/admin/packages" data-view="packages"><span class="nav-icon" aria-hidden="true">▦</span>Package Management</a>
-                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon" aria-hidden="true">₱</span>Pricing Management</a>
-                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
+                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true" data-icon="layout-dashboard">⌂</span>Dashboard</a>
+                <a href="/admin/orders" data-view="orders" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true" data-icon="clipboard-list">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true" data-icon="users">♙</span>Customer Management<span class="nav-count" id="customer-count"></span></a>
+                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true" data-icon="wallet">▣</span>Payments &amp; Transactions<span class="nav-count" id="payment-count"></span></a>
+                <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true" data-icon="chart-column">▥</span>Sales &amp; Reports</a>
+                <a href="/admin/services" data-view="services"><span class="nav-icon" aria-hidden="true" data-icon="shopping-bag">▧</span>Services &amp; Products</a>
+                <a href="/admin/packages" data-view="packages"><span class="nav-icon" aria-hidden="true" data-icon="package">▦</span>Package Management</a>
+                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon" aria-hidden="true" data-icon="tag">₱</span>Pricing Management</a>
+                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true" data-icon="bell">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
             </nav>
             <div class="sidebar-bottom">
-                <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</a>
-                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon" aria-hidden="true">↪</span>Log out</button>
+                <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true" data-icon="settings">⚙</span>Settings</a>
+                <button class="logout-button" type="button" data-action="logout"><span class="nav-icon" aria-hidden="true" data-icon="log-out">↪</span>Log out</button>
                 <div class="sidebar-user">
                     <span class="avatar" aria-hidden="true">A</span>
                     <span><strong>Administrator</strong><small data-admin-email></small></span>
@@ -45,11 +47,19 @@
         </aside>
         <div class="workspace">
             <header class="topbar">
-                <button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu">☰</button>
+                <button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu"><span data-icon="menu" aria-hidden="true">☰</span></button>
                 <div class="breadcrumb"><span>Admin</span><span aria-hidden="true">/</span><strong id="current-section">Order Management</strong></div>
                 <div class="topbar-actions">
-                    <button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications">♧<span class="notification-dot" hidden></span></button>
+                    <button class="icon-button" type="button" aria-label="Open notifications" data-view="notifications"><span data-icon="bell" aria-hidden="true">♧</span><span class="notification-dot" hidden></span></button>
                     <div class="topbar-date" id="today-date"></div>
+                    <details class="profile-menu">
+                        <summary class="profile-trigger" aria-label="Administrator menu"><span class="avatar" aria-hidden="true">A</span><span class="profile-name"><strong>Administrator</strong><small data-admin-email></small></span><span class="profile-caret" aria-hidden="true">▾</span></summary>
+                        <div class="profile-menu-list" role="menu">
+                            <a href="/admin/settings" data-view="settings" role="menuitem"><span class="nav-icon" aria-hidden="true" data-icon="settings">⚙</span>Account settings</a>
+                            <a href="/admin/notifications" data-view="notifications" role="menuitem"><span class="nav-icon" aria-hidden="true" data-icon="bell">♧</span>Notifications</a>
+                            <button type="button" data-action="logout" role="menuitem"><span class="nav-icon" aria-hidden="true" data-icon="log-out">↪</span>Log out</button>
+                        </div>
+                    </details>
                 </div>
             </header>
             <main class="main-content">
@@ -59,7 +69,7 @@
                             <h1>Customer requests &amp; orders</h1>
                             <p>Every customer request in one table: search, filter, and sort by reference number, customer, service, date requested, amount, payment, and status. Select a row for the complete transaction.</p>
                         </div>
-                        <div class="page-heading-actions"><button class="button" type="button" data-action="refresh-view">↻ Refresh</button></div>
+                        <div class="page-heading-actions"><button class="button" type="button" data-action="refresh-view"><span data-icon="refresh-cw" data-icon-size="16" aria-hidden="true">↻</span> Refresh</button></div>
                     </header>
                     <div data-view-body><div class="loading-block" role="status"><span class="spinner" aria-hidden="true"></span> Loading…</div></div>
                 </div>
@@ -74,6 +84,7 @@
     </dialog>
     <div class="toast-region" id="toast-region" aria-live="polite"></div>
     <script src="/assets/mockup.js"></script>
+    <script src="/assets/icons.js"></script>
     <script src="/assets/admin/admin-core.js"></script>
     <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>

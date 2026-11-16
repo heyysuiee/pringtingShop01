@@ -201,9 +201,73 @@
         $("#lightbox-count").textContent = items.length > 1 ? `${lightboxState.index + 1} of ${items.length}` : "";
         $("#lightbox-prev").hidden = items.length < 2;
         $("#lightbox-next").hidden = items.length < 2;
+        setLightboxZoom(false);
+        const zoomButton = $("#lightbox-zoom");
+        if (zoomButton) zoomButton.hidden = Boolean(item.node); // zoom applies to photos, not the live mockup
+    }
+
+    // Zoom: the photo scales up and follows the pointer, so any part of it can be inspected.
+    function setLightboxZoom(zoomed) {
+        const stage = $("#lightbox-stage");
+        const button = $("#lightbox-zoom");
+        if (!stage) return;
+        stage.classList.toggle("is-zoomed", zoomed);
+        const image = stage.querySelector("img");
+        if (image && !zoomed) image.style.transformOrigin = "";
+        if (button) {
+            button.setAttribute("aria-pressed", String(zoomed));
+            button.textContent = zoomed ? "Zoom out" : "Zoom in";
+        }
+    }
+
+    function panLightbox(event) {
+        const stage = $("#lightbox-stage");
+        const image = stage?.querySelector("img");
+        if (!image || !stage.classList.contains("is-zoomed")) return;
+        const rect = image.getBoundingClientRect();
+        const x = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
+        const y = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100));
+        image.style.transformOrigin = `${x}% ${y}%`;
+    }
+
+    // Full screen: the native API when the browser allows it, otherwise a viewport-filling layout.
+    function setLightboxFullscreen(on) {
+        lightbox.classList.toggle("is-fullscreen", on);
+        const button = $("#lightbox-fullscreen");
+        if (button) {
+            button.setAttribute("aria-pressed", String(on));
+            button.textContent = on ? "Exit full screen" : "Full screen";
+        }
     }
 
     if (lightbox) {
+        const stage = $("#lightbox-stage");
+        stage.addEventListener("click", (event) => {
+            if (!event.target.closest("img")) return;
+            const zoomed = !stage.classList.contains("is-zoomed");
+            setLightboxZoom(zoomed);
+            if (zoomed) panLightbox(event);
+        });
+        stage.addEventListener("pointermove", panLightbox);
+        $("#lightbox-zoom")?.addEventListener("click", () => setLightboxZoom(!stage.classList.contains("is-zoomed")));
+        $("#lightbox-fullscreen")?.addEventListener("click", async () => {
+            const on = !lightbox.classList.contains("is-fullscreen");
+            setLightboxFullscreen(on);
+            try {
+                if (on && lightbox.requestFullscreen && !document.fullscreenElement) await lightbox.requestFullscreen();
+                if (!on && document.fullscreenElement) await document.exitFullscreen();
+            } catch {
+                // The CSS layout already fills the viewport when native full screen is unavailable.
+            }
+        });
+        document.addEventListener("fullscreenchange", () => {
+            if (!document.fullscreenElement && lightbox.classList.contains("is-fullscreen")) setLightboxFullscreen(false);
+        });
+        lightbox.addEventListener("close", () => {
+            setLightboxZoom(false);
+            setLightboxFullscreen(false);
+            if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        });
         $("#lightbox-prev").addEventListener("click", () => showLightbox(lightboxState.index - 1));
         $("#lightbox-next").addEventListener("click", () => showLightbox(lightboxState.index + 1));
         lightbox.querySelector("[data-close-lightbox]").addEventListener("click", () => lightbox.close());

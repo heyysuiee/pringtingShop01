@@ -4,9 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#263126">
+    <meta name="theme-color" content="#08090D">
     <meta name="description" content="Thoughtfully made prints, invitations, Sintra boards, souvenirs, and keepsakes for life's special moments.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
     <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/theme-site.css">
     <title>Printing Shop — Made for your moments</title>
 </head>
 
@@ -32,8 +37,8 @@
     <!-- Main Navigation Bar -->
     <nav class="nav home-nav" aria-label="Main navigation">
         <div class="nav-brand">
-            <a class="home-nav-brand-link" href="/home">
-                <span data-home-field="brand">printing shop</span>
+            <a class="home-nav-brand-link brand-link" href="/home" aria-label="ImPRESSion PrintShop home">
+                <span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word" data-home-field="brand">ImPRESSion <span>PrintShop</span></span>
             </a>
         </div>
         <button class="nav-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="navLinks" aria-label="Open menu">
@@ -475,7 +480,7 @@
             <div class="footer-grid">
                 <!-- Col 1: Brand Info -->
                 <div class="footer-col footer-brand-col">
-                    <span class="footer-brand">printing shop</span>
+                    <span class="footer-brand"><span class="brand-mark" aria-hidden="true">iP</span>ImPRESSion PrintShop</span>
                     <p class="footer-tagline">imPRESSions Print Works — Thoughtfully made prints and keepsakes tailored for life's most cherished memories.</p>
                     <div class="footer-contact-details">
                         <p>📍 123 Main Street, Anytown, USA</p>

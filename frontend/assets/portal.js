@@ -28,6 +28,9 @@
         return element;
     };
 
+    // "Pending Confirmation" → "pending-confirmation": the class that colours the status badge.
+    const statusSlug = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
     function money(value) {
         return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value);
     }
@@ -116,7 +119,7 @@
                 : order.order_kind === "customize" ? "Customized order" : "";
             main.append(make("span", "service-tag", order.product.category), make("h2", "", order.product.name), make("p", "field-hint", [order.reference, `Submitted ${formatDate(order.created_at)}`, kind].filter(Boolean).join(" · ")));
             const meta = make("div", "order-history-meta");
-            meta.append(make("span", "order-status-pill", order.status), make("span", "payment-status", paymentSummary(order)));
+            meta.append(make("span", `order-status-pill ${statusSlug(order.status)}`, order.status), make("span", "payment-status", paymentSummary(order)));
             if (order.total_amount !== null) {
                 const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
                 meta.append(make("span", "field-hint", `Total ${money(order.total_amount)} · Balance ${money(Math.max(0, order.total_amount - received))}`));
@@ -433,7 +436,9 @@
         document.querySelector("#detail-item").textContent = order.product.name;
         document.querySelector("#detail-meta").textContent = `Submitted ${formatDate(order.created_at)} · Quantity ${order.customization.quantity}`;
         document.querySelector("#detail-ref").textContent = order.reference;
-        document.querySelector("#detail-status").textContent = order.status;
+        const statusBanner = document.querySelector("#detail-status");
+        statusBanner.textContent = order.status;
+        statusBanner.className = `status-banner ${statusSlug(order.status)}`;
         renderTimeline(order);
 
         const summary = document.querySelector("#detail-summary");

@@ -16,6 +16,9 @@
 
     let activeCustomer = null;
 
+    // "Pending Confirmation" → "pending-confirmation": the class that colours the status badge.
+    const statusSlug = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
     function showMessage(text, isError = false) {
         if (!message) return;
         message.textContent = text;
@@ -109,8 +112,11 @@
                 details.className = "field-hint";
                 const option = order.payment?.payment_option;
                 const paying = option === "cod" ? "Cash on Delivery" : option ? "50% down payment" : "payment chosen after the quotation";
-                details.textContent = `${order.reference} · ${order.status} · ${order.customization.quantity} item(s) · ${paying}`;
-                main.append(category, title, details);
+                details.textContent = `${order.reference} · ${order.customization.quantity} item(s) · ${paying}`;
+                const status = document.createElement("span");
+                status.className = `order-status-pill ${statusSlug(order.status)}`;
+                status.textContent = order.status;
+                main.append(category, title, status, details);
                 const viewOrder = document.createElement("button");
                 viewOrder.className = "btn btn-dark btn-small";
                 viewOrder.type = "button";
