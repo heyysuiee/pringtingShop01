@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from backend.app.core.config import settings
-from backend.app.repositories import customer_repository
+from backend.app.repositories import audit_repository, customer_repository, notification_repository
 from backend.app.database.connection import connection_scope
 from backend.app.models.order import OrderRecord, OrderUpdates
 from backend.app.utils.clock import now_iso
@@ -18,6 +18,8 @@ UPLOAD_DIR = settings.upload_dir
 
 def initialize() -> None:
     customer_repository.initialize()
+    audit_repository.initialize()
+    notification_repository.initialize()
     with connection_scope() as connection:
         connection.execute(
             """
@@ -72,6 +74,9 @@ def initialize() -> None:
         if "payment_submissions" not in columns:
             # Payments reported by the customer with a reference/proof, waiting for verification (JSON).
             connection.execute("ALTER TABLE orders ADD COLUMN payment_submissions TEXT NOT NULL DEFAULT '[]'")
+        if "quotation_history" not in columns:
+            # Every quotation the administrator sent (amount, previous amount, note, timestamps, response) (JSON).
+            connection.execute("ALTER TABLE orders ADD COLUMN quotation_history TEXT NOT NULL DEFAULT '[]'")
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key)"
         )
@@ -108,6 +113,7 @@ def decode_row(row: sqlite3.Row | None) -> OrderRecord | None:
     result["fulfillment"] = json.loads(result.get("fulfillment") or "{}")
     result["quotation"] = json.loads(result.get("quotation") or "{}")
     result["payment_submissions"] = json.loads(result.get("payment_submissions") or "[]")
+    result["quotation_history"] = json.loads(result.get("quotation_history") or "[]")
     if result["draft_attachment"]:
         result["draft_attachment"] = json.loads(result["draft_attachment"])
     return cast(OrderRecord, result)
@@ -158,11 +164,11 @@ def _reserve_reference(connection: sqlite3.Connection, created_at: str) -> str:
         sequence += 1
 
 
-def create_order(order: dict[str, Any], idempotency_key: str) -> str:
+def create_order(order: dict[str, Any], idempotency_key: str, audit: dict[str, Any] | None = None) -> str:
     """Insert an order and return its server-generated reference number.
 
     The reference is chosen inside an immediate write transaction, so concurrent submissions
-    are serialized and cannot receive the same reference.
+    are serialized and cannot receive the same reference. ``audit`` is written in the same transaction.
     """
     with connection_scope() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -173,8 +179,8 @@ def create_order(order: dict[str, Any], idempotency_key: str) -> str:
                 reference, created_at, updated_at, customer, product, customization,
                 event_details, has_event, acknowledged, status, total_amount,
                 attachments, history, customer_id, idempotency_key, pricing, payment_option,
-                fulfillment, quotation, payment_submissions
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fulfillment, quotation, payment_submissions, quotation_history
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reference,
@@ -199,8 +205,11 @@ def create_order(order: dict[str, Any], idempotency_key: str) -> str:
                 json.dumps(order.get("fulfillment") or {}),
                 json.dumps(order.get("quotation") or {}),
                 json.dumps(order.get("payment_submissions") or []),
+                json.dumps(order.get("quotation_history") or []),
             ),
         )
+        if audit:
+            audit_repository.insert(connection, reference, order["created_at"], audit)
     order["reference"] = reference
     return reference
 
@@ -244,6 +253,8 @@ def _apply_updates(order: OrderRecord, updates: OrderUpdates) -> None:
         order["quotation"] = updates["quotation"]
     if "payment_submissions" in updates:
         order["payment_submissions"] = updates["payment_submissions"]
+    if "quotation_history" in updates:
+        order["quotation_history"] = updates["quotation_history"]
 
 
 def update_order(
@@ -251,11 +262,17 @@ def update_order(
     updates: OrderUpdates,
     event: str,
     expected_version: int | None = None,
+    audit: dict[str, Any] | None = None,
+    notifications: list[dict[str, Any]] | None = None,
 ) -> OrderRecord | None:
     """Apply ``updates`` and append ``event`` to the history in one write transaction.
 
     When ``expected_version`` is given, the update is refused with StaleOrderError if the order was
     changed in the meantime, so a double-submitted or out-of-date action is never applied twice.
+
+    ``audit`` ({"action", "actor_type", "actor_id", "details"}) is written to the audit log and each of
+    ``notifications`` to the customer's notifications, in the same transaction. A notification whose
+    ``dedupe_key`` was already used is skipped; each dict gets ``"created": True | False``.
     """
     with connection_scope() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -265,6 +282,7 @@ def update_order(
         if expected_version is not None and order_version(current) != expected_version:
             raise StaleOrderError(reference)
         previous_status = current["status"]
+        previous_total = current["total_amount"]
         _apply_updates(current, updates)
         current["updated_at"] = now_iso()
         current["history"].append({"at": current["updated_at"], "text": event})
@@ -284,6 +302,7 @@ def update_order(
             "payment_option": _stored_payment_option(current.get("payment_option", "down_payment")),
             "quotation": json.dumps(current.get("quotation") or {}),
             "payment_submissions": json.dumps(current.get("payment_submissions") or []),
+            "quotation_history": json.dumps(current.get("quotation_history") or []),
         }
         connection.execute(
             """
@@ -293,9 +312,20 @@ def update_order(
                 draft_attachment = :draft_attachment, history = :history,
                 admin_notes = :admin_notes, completed_at = :completed_at,
                 payment_option = :payment_option, quotation = :quotation,
-                payment_submissions = :payment_submissions
+                payment_submissions = :payment_submissions, quotation_history = :quotation_history
             WHERE reference = :reference
             """,
             {**values, "reference": reference},
         )
+        if audit:
+            details = dict(audit.get("details") or {})
+            if current["status"] != previous_status:
+                details.setdefault("status_from", previous_status)
+                details.setdefault("status_to", current["status"])
+            if current["total_amount"] != previous_total:
+                details.setdefault("total_from", previous_total)
+                details.setdefault("total_to", current["total_amount"])
+            audit_repository.insert(connection, reference, current["updated_at"], {**audit, "details": details})
+        for notification in notifications or []:
+            notification["created"] = notification_repository.insert(connection, reference, current["updated_at"], notification)
     return current

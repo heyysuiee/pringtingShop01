@@ -17,9 +17,11 @@ from fastapi.responses import FileResponse
 
 from backend.app.core.security import session_claims
 from backend.app.models.order import (
+    CUSTOMER_PAYMENT_METHOD,
     DELIVERY_FIELDS,
     DOWN_PAYMENT_RATE,
     FULFILLMENT_METHODS,
+    NEW_ORDER_PAYMENT_OPTION,
     PAYMENT_OPTION_PENDING_LABEL,
     PAYMENT_OPTIONS,
     OrderAttachment,
@@ -27,9 +29,9 @@ from backend.app.models.order import (
     OrderRecord,
     OrderUpdates,
 )
-from backend.app.repositories import customer_repository, order_repository
+from backend.app.repositories import audit_repository, customer_repository, notification_repository, order_repository
 from backend.app.schemas.user import normalize_email, validate_phone
-from backend.app.services import auth_services, catalog_services, mockup_services, package_services
+from backend.app.services import auth_services, catalog_services, mockup_services, notification_services, package_services
 from backend.app.utils.clock import now_iso
 from backend.app.utils.images import optimized_image
 
@@ -48,14 +50,17 @@ ALLOWED_UPLOADS = {
 }
 # Every order status in workflow order.
 #
+# Every order requires a 50% down payment, and only an administrator-verified payment confirms an order.
+#
 # Customized orders:  Pending Confirmation → Under Review → (Awaiting Quotation) → Quotation Sent
-#   → the customer accepts and picks a payment option (or declines → Quotation Declined → revised quotation)
-#   → Awaiting Down Payment (verified 50%) or Awaiting COD Confirmation (administrator confirms COD)
+#   → the customer accepts (or declines → Quotation Declined → revised quotation)
+#   → Awaiting Down Payment → the administrator verifies the 50% down payment → Confirmed
 #   → Draft Preparation → Awaiting Customer Approval → Approved for Printing → In Production
 #   → Ready for Pickup / Out for Delivery → Completed (fully paid).
-# Fixed-price package orders use the published package total and the payment option chosen at checkout:
-#   Pending Confirmation → (Under Review) → administrator confirms → Awaiting Down Payment or, for COD,
-#   Draft Preparation → … the same draft, production, and fulfillment steps.
+# Fixed-price package orders use the published package total (saved with the order):
+#   Pending Confirmation → (Under Review) → administrator approves and requests the down payment
+#   → Awaiting Down Payment → verified 50% → Confirmed → … the same draft, production, and fulfillment steps.
+# "Awaiting COD Confirmation" only exists on orders placed while Cash on Delivery was still offered.
 ORDER_STATUSES = (
     "Pending Confirmation",
     "Under Review",
@@ -64,6 +69,7 @@ ORDER_STATUSES = (
     "Quotation Declined",
     "Awaiting COD Confirmation",
     "Awaiting Down Payment",
+    "Confirmed",
     "Draft Preparation",
     "Awaiting Customer Approval",
     "Approved for Printing",
@@ -85,7 +91,9 @@ PENDING_STATUSES = {
     "Awaiting Down Payment",
 }
 RELEASE_STATUSES = {"Ready for Pickup", "Out for Delivery"}
-PROCESSING_STATUSES = {"Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production"} | RELEASE_STATUSES
+# Active orders: confirmed by a verified down payment and not finished yet.
+PROCESSING_STATUSES = {"Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production"} | RELEASE_STATUSES
+DRAFTABLE_STATUSES = {"Confirmed", "Draft Preparation", "Awaiting Customer Approval"}
 CANCELLED_STATUSES = {"Cancelled", "Rejected"}
 # Payments can be recorded only after the price is final and the customer has chosen how to pay (a customized
 # quotation must be accepted; a package order must be confirmed). Completed is included only so a balance left
@@ -102,7 +110,11 @@ QUOTABLE_STATUSES = {
     "Awaiting COD Confirmation",
     "Awaiting Down Payment",
 }
+# Methods the administrator can record for money received directly ("Cash on Delivery" only for older COD orders).
 PAYMENT_METHODS = ("GCash", "Maya", "Bank transfer", "Cash", "Cash on Delivery", "Other")
+COD_UNAVAILABLE = "Cash on Delivery is not available. Every order requires a 50% down payment."
+ADMIN = "admin"
+CUSTOMER = "customer"
 # While an order is in these statuses its total is only an offer (a quotation the customer has not accepted,
 # or a package order the shop has not confirmed), so nothing is owed yet and reports do not count it.
 PRICE_PENDING_STATUSES = {"Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined"}
@@ -223,7 +235,7 @@ def _event_fields(details: Any) -> list[dict[str, str]]:
 
 
 def payment_option(order: Mapping[str, Any]) -> str:
-    """"down_payment", "cod", or "" while a customized order has not accepted its quotation yet."""
+    """"down_payment" (every new order), "cod" (older orders only), or "" (an older unaccepted quotation)."""
     option = order.get("payment_option", "down_payment")
     if option == "":
         return ""
@@ -250,10 +262,13 @@ def quotation(order: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def cod_allowed(order: Mapping[str, Any]) -> bool:
-    """Package customers may always choose COD; a customized order only when the administrator permits it."""
-    if is_fixed_price(order):
-        return True
-    return quotation(order).get("cod_allowed") is True
+    """Cash on Delivery is no longer offered: every order requires the 50% down payment."""
+    return False
+
+
+def quotation_history(order: Mapping[str, Any]) -> list[dict[str, Any]]:
+    value = order.get("quotation_history")
+    return [dict(item) for item in value] if isinstance(value, list) else []
 
 
 def fulfillment(order: Mapping[str, Any]) -> dict[str, Any]:
@@ -313,21 +328,22 @@ def payment_breakdown(order: Mapping[str, Any]) -> dict[str, Any]:
     total = order.get("total_amount")
     estimate = (order.get("pricing") or {}).get("estimated_total")
     estimate = float(estimate) if isinstance(estimate, (int, float)) and not isinstance(estimate, bool) else None
-    basis = float(total) if total is not None else estimate
     paid = paid_amount(order)
     pending = pending_submission_amount(order)
     cod = option == "cod"
-    required = 0.0 if cod else (round(basis * DOWN_PAYMENT_RATE, 2) if basis is not None else None)
+    # Calculated on the server from the confirmed total only: a customized order has no down payment until
+    # its quotation exists, and an estimate is never turned into an amount the customer must pay.
+    required = 0.0 if cod else (round(float(total) * DOWN_PAYMENT_RATE, 2) if total is not None else None)
     if cod:
         status = "Not required (COD)"
-    elif not option:
-        status = "After quotation acceptance"
     elif total is None:
         status = "Due after quotation"
+    elif not price_agreed(order):
+        status = "After quotation acceptance" if not is_fixed_price(order) else "After order approval"
     elif paid >= round(float(total) * DOWN_PAYMENT_RATE, 2) - 0.005:
         status = "Paid"
     elif pending > 0:
-        status = "Awaiting verification"
+        status = "Pending Verification"
     elif paid > 0:
         status = "Partially paid"
     else:
@@ -348,8 +364,10 @@ def payment_breakdown(order: Mapping[str, Any]) -> dict[str, Any]:
         "amount_paid": paid,
         "pending_verification": pending,
         "balance": balance,
-        # What is still to be paid after the down payment (or everything, for COD), before the confirmed total.
-        "remaining_after_down_payment": round(basis - (required or 0.0), 2) if basis is not None else None,
+        # The other 50%: what is still to be paid after the down payment (everything, for older COD orders).
+        "remaining_after_down_payment": round(float(total) - (required or 0.0), 2) if total is not None else None,
+        # What the customer pays next and why; set by the server so the amount cannot be changed by the customer.
+        "next_payment": next_customer_payment(order),
     }
 
 
@@ -394,7 +412,25 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
         "responded_at": stored_quote.get("responded_at"),
         "decline_reason": stored_quote.get("decline_reason", ""),
         "cod_confirmed_at": stored_quote.get("cod_confirmed_at"),
+        "previous_amount": stored_quote.get("previous_amount"),
+        "down_payment": round(float(stored_quote["amount"]) * DOWN_PAYMENT_RATE, 2) if stored_quote.get("amount") is not None else None,
     } if stored_quote else None
+    result["quotation_history"] = [
+        {
+            "revision": item.get("revision"),
+            "amount": item.get("amount"),
+            "previous_amount": item.get("previous_amount"),
+            "note": item.get("note", ""),
+            "sent_at": item.get("sent_at"),
+            "status": item.get("status", ""),
+            "responded_at": item.get("responded_at"),
+            "decline_reason": item.get("decline_reason", ""),
+            "superseded_at": item.get("superseded_at"),
+            # Who sent it is for the shop's records only.
+            **({"sent_by": item.get("sent_by", "")} if admin else {}),
+        }
+        for item in quotation_history(order)
+    ]
     result["event_fields"] = _event_fields(order.get("event_details"))
     product = dict(order["product"])
     product["image"] = optimized_image(product.get("image", ""))
@@ -425,8 +461,11 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
             "amount": item["amount"],
             "method": item.get("method", ""),
             "reference": item.get("reference", ""),
+            "stage": item.get("stage", ""),
             "submitted_at": item.get("submitted_at"),
             "status": item.get("status", "pending"),
+            "status_label": SUBMISSION_LABELS.get(item.get("status", "pending"), str(item.get("status", ""))),
+            "verified_amount": item.get("verified_amount"),
             "reviewed_at": item.get("reviewed_at"),
             "review_note": item.get("review_note", ""),
             "proof": {
@@ -448,6 +487,28 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
             "url": url(draft["id"]),
         }
     return result
+
+
+SUBMISSION_LABELS = {"pending": "Pending Verification", "verified": "Verified", "rejected": "Rejected"}
+
+
+def next_customer_payment(order: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The payment the customer can submit now, calculated by the server, or None when nothing can be paid.
+
+    While the down payment is incomplete the amount is what remains of the 50% down payment; after that,
+    the remaining balance. Customers never choose the amount: it always comes from the agreed total.
+    """
+    total = order.get("total_amount")
+    if total is None or is_cod(order) or not payment_option(order) or order["status"] not in CUSTOMER_PAYABLE_STATUSES:
+        return None
+    paid = paid_amount(order)
+    balance = round(float(total) - paid, 2)
+    if balance <= 0.005:
+        return None
+    remaining_down = round(down_payment_due(order) - paid, 2)
+    if remaining_down > 0.005:
+        return {"stage": "down_payment", "label": "50% down payment", "amount": remaining_down}
+    return {"stage": "balance", "label": "Remaining balance", "amount": balance}
 
 
 def order_after_update(order: OrderRecord | None, admin: bool = False) -> dict[str, Any]:
@@ -550,11 +611,14 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     }
     if payload.get("acknowledged") is not True:
         raise HTTPException(status_code=422, detail="Acknowledge the order instructions before submitting.")
+    # Every order (package or customized) requires the 50% down payment; the customer does not choose.
     chosen_payment = payload.get("payment_option")
     if chosen_payment in (None, ""):
-        chosen_payment = "down_payment"
-    if chosen_payment not in PAYMENT_OPTIONS:
-        raise HTTPException(status_code=422, detail="Choose 50% down payment or Cash on Delivery (COD) as the payment option.")
+        chosen_payment = NEW_ORDER_PAYMENT_OPTION
+    if chosen_payment == "cod":
+        raise HTTPException(status_code=422, detail=COD_UNAVAILABLE)
+    if chosen_payment != NEW_ORDER_PAYMENT_OPTION:
+        raise HTTPException(status_code=422, detail="Invalid payment option. Every order requires a 50% down payment.")
     fulfillment_choice = clean_fulfillment(payload.get("fulfillment"))
 
     # The product, its form fields, its packages, and its prices come from the database, never from the client.
@@ -625,11 +689,18 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
             "size": package["size"],
             "material": package["material"],
             "inclusions": package["inclusions"],
+            "inclusion_details": package["inclusion_details"],
             "add_on_label": package["add_on_label"],
             "add_on_price": package["add_on_price"],
             "included_quantity": package["included_quantity"],
+            "minimum_quantity": package["included_quantity"],
             "image": package["image"],
             "images": package["images"],
+            # The computation used for this order, kept even if the package is edited later.
+            "quantity": quantity,
+            "additional_quantity": pricing.get("additional_quantity", 0),
+            "additional_cost": pricing.get("additional_cost", 0.0),
+            "computed_total": pricing.get("estimated_total"),
         }
     if mockup:
         customization["mockup"] = mockup
@@ -641,22 +712,20 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     fixed_price = bool(package) and isinstance(estimate, (int, float)) and estimate > 0 and not pricing.get("requires_quote")
     if fixed_price:
         customization["fixed_price"] = True
-    else:
-        chosen_payment = ""
     if fixed_price:
         history_text = (
-            f"Customer submitted a {package['name']} package order. Package total PHP {estimate:,.2f}; "
-            f"awaiting administrator confirmation. Payment option: {PAYMENT_OPTIONS[chosen_payment]}."
+            f"Customer submitted a {package['name']} package order. Package total PHP {estimate:,.2f} "
+            f"(50% down payment PHP {round(estimate * DOWN_PAYMENT_RATE, 2):,.2f}); awaiting administrator approval."
         )
     elif estimate is not None:
         history_text = (
-            f"Customer submitted an order request. Catalog estimate PHP {estimate:,.2f}; awaiting administrator "
-            "quotation. The payment option is chosen after the quotation is accepted."
+            f"Customer submitted an order request. Catalog estimate PHP {estimate:,.2f} (reference only); awaiting "
+            "the administrator's quotation. A 50% down payment is due after the quotation is accepted."
         )
     else:
         history_text = (
-            "Customer submitted an order request. Awaiting administrator quotation. "
-            "The payment option is chosen after the quotation is accepted."
+            "Customer submitted an order request. Awaiting the administrator's quotation. "
+            "A 50% down payment is due after the quotation is accepted."
         )
     history_text += f" Fulfillment: {FULFILLMENT_METHODS[fulfillment_choice['method']]}."
     history_entry: OrderHistoryEntry = {"at": now, "text": history_text}
@@ -698,9 +767,24 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         "fulfillment": fulfillment_choice,
         "quotation": {},
         "payment_submissions": [],
+        "quotation_history": [],
+    }
+    audit = {
+        "action": "order.created",
+        "actor_type": CUSTOMER,
+        "actor_id": customer_id,
+        "details": {
+            "order_kind": customization["order_kind"],
+            "fixed_price": fixed_price,
+            "total": order["total_amount"],
+            "down_payment": round(float(estimate) * DOWN_PAYMENT_RATE, 2) if fixed_price else None,
+            "package": {
+                "id": package["id"], "name": package["name"], "price": package["price"], "inclusions": package["inclusions"],
+            } if package else None,
+        },
     }
     try:
-        order_repository.create_order(order, idempotency_key)
+        order_repository.create_order(order, idempotency_key, audit=audit)
     except sqlite3.IntegrityError as error:
         for attachment in files:
             (UPLOAD_DIR / attachment["filename"]).unlink(missing_ok=True)
@@ -741,56 +825,114 @@ def get_customer_order_file(reference: str, file_id: str, email: str) -> FileRes
     return attachment_response(owned_order(reference, email), file_id)
 
 
+def _audit(action: str, actor_type: str, actor_id: Any = "", **details: Any) -> dict[str, Any]:
+    return {"action": action, "actor_type": actor_type, "actor_id": str(actor_id or ""), "details": details}
+
+
 def _save(
     order: OrderRecord,
     updates: OrderUpdates,
     event: str,
     expected_version: Any = None,
     admin: bool = False,
+    *,
+    audit: dict[str, Any] | None = None,
+    notifications: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Save an order change only if nobody changed the order since it was read.
 
     ``expected_version`` is the version the administrator's screen showed. When it is missing,
     the version read by this request is used, so concurrent duplicate actions are still refused.
+    The audit entry and customer notifications are saved in the same transaction as the change.
     """
     version = order_repository.order_version(order)
     if expected_version is not None:
         if isinstance(expected_version, bool) or not isinstance(expected_version, int):
             raise HTTPException(status_code=422, detail="Invalid order version.")
         version = expected_version
+    notifications = notifications or []
     try:
-        updated = order_repository.update_order(order["reference"], updates, event, expected_version=version)
+        updated = order_repository.update_order(
+            order["reference"], updates, event, expected_version=version, audit=audit, notifications=notifications
+        )
     except order_repository.StaleOrderError as error:
         raise HTTPException(
             status_code=409,
             detail="This order was changed by another action. Reload the order and try again.",
         ) from error
+    if updated is not None:
+        notification_services.deliver(order["reference"], notifications)
     return order_after_update(updated, admin=admin)
 
 
-def approve_customer_draft(reference: str, email: Any) -> dict[str, Any]:
-    order = owned_order(reference, _text(email, "Email", 254, True))
+# ------------------------------------------------------------------ customer actions
+
+
+def customer_owned_order(reference: str, email: Any, customer_id: str | None) -> OrderRecord:
+    """The order, for a customer action. Changing an order needs the signed-in account that owns it.
+
+    The email address alone (enough to look an order up) never authorizes accepting a quotation, submitting
+    a payment, approving a draft, or cancelling. Orders placed before accounts existed have no owner, so the
+    signed-in account's email must match the order's email.
+    """
+    if not customer_id:
+        raise HTTPException(status_code=401, detail="Sign in to your customer account to make changes to this order.")
+    order = order_repository.get_order(reference)
+    not_found = HTTPException(status_code=404, detail="Order not found for that email address.")
+    if order is None:
+        raise not_found
+    order_email = order["customer"]["email"].strip().lower()
+    if email not in (None, ""):
+        if not secrets.compare_digest(order_email, _text(email, "Email", 254).lower()):
+            raise not_found
+    owner = order.get("customer_id")
+    if owner:
+        if not secrets.compare_digest(str(owner), str(customer_id)):
+            raise not_found
+    else:
+        account = auth_services.get_customer(customer_id)
+        if account is None or not secrets.compare_digest(account["email"].lower(), order_email):
+            raise not_found
+    return order
+
+
+def approve_customer_draft(reference: str, email: Any, customer_id: str | None = None) -> dict[str, Any]:
+    order = customer_owned_order(reference, email, customer_id)
     if order["status"] != "Awaiting Customer Approval" or not order["draft_attachment"]:
         raise HTTPException(status_code=409, detail="There is no draft waiting for approval.")
-    return _save(order, {"status": "Approved for Printing"}, "Customer approved the draft. The order may now move to production.")
+    return _save(
+        order,
+        {"status": "Approved for Printing"},
+        "Customer approved the draft. The order may now move to production.",
+        audit=_audit("draft.approved", CUSTOMER, customer_id, draft=order["draft_attachment"]["name"]),
+    )
 
 
-def request_draft_changes(reference: str, email: Any, requested_changes: Any) -> dict[str, Any]:
-    email = _text(email, "Email", 254, True)
+def request_draft_changes(reference: str, email: Any, requested_changes: Any, customer_id: str | None = None) -> dict[str, Any]:
     note = _text(requested_changes, "Requested changes", 1000, True)
-    order = owned_order(reference, email)
+    order = customer_owned_order(reference, email, customer_id)
     if order["status"] != "Awaiting Customer Approval":
         raise HTTPException(status_code=409, detail="There is no draft waiting for review.")
-    return _save(order, {"status": "Draft Preparation", "admin_notes": note}, f"Customer requested draft changes: {note}")
+    return _save(
+        order,
+        {"status": "Draft Preparation", "admin_notes": note},
+        f"Customer requested draft changes: {note}",
+        audit=_audit("draft.changes_requested", CUSTOMER, customer_id, note=note),
+    )
 
 
-def cancel_customer_order(reference: str, email: Any) -> dict[str, Any]:
-    order = owned_order(reference, _text(email, "Email", 254, True))
+def cancel_customer_order(reference: str, email: Any, customer_id: str | None = None) -> dict[str, Any]:
+    order = customer_owned_order(reference, email, customer_id)
     if order["status"] not in PENDING_STATUSES:
         raise HTTPException(status_code=409, detail="This order can no longer be cancelled from the customer portal.")
     if order["payments"] or pending_submissions(order):
         raise HTTPException(status_code=409, detail="Contact the shop administrator to review an order with recorded payments.")
-    return _save(order, {"status": "Cancelled"}, "Customer cancelled the order request before any payment was recorded.")
+    return _save(
+        order,
+        {"status": "Cancelled"},
+        "Customer cancelled the order request before any payment was recorded.",
+        audit=_audit("order.cancelled", CUSTOMER, customer_id),
+    )
 
 
 def _quotation_revision(value: Any, order: Mapping[str, Any]) -> None:
@@ -810,46 +952,73 @@ def _require_open_quotation(order: Mapping[str, Any]) -> dict[str, Any]:
     return quote
 
 
-def accept_quotation(reference: str, email: Any, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """The customer accepts the administrator's quotation and chooses how to pay.
+def _history_with_response(order: Mapping[str, Any], revision: int, changes: dict[str, Any]) -> list[dict[str, Any]]:
+    """The quotation history with ``changes`` applied to the entry of ``revision``."""
+    history = quotation_history(order)
+    for entry in history:
+        if entry.get("revision") == revision:
+            entry.update(changes)
+    return history
 
-    The 50% down payment is always available. Cash on Delivery is available only when the administrator
-    allowed it for this order. Nothing is paid here: a down payment is reported and verified separately,
-    and a COD arrangement still needs the administrator's confirmation.
+
+def accept_quotation(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
+    """The customer accepts the latest quotation. The order then waits for the 50% down payment.
+
+    Nothing is paid here: the down payment is submitted with a GCash receipt and verified by the administrator.
+    An outdated revision is refused, so a customer never accepts a price they have not seen.
     """
-    order = owned_order(reference, _text(email, "Email", 254, True))
+    order = customer_owned_order(reference, email, customer_id)
     quote = _require_open_quotation(order)
     _quotation_revision(payload.get("quotation_revision"), order)
     option = payload.get("payment_option")
-    if option not in PAYMENT_OPTIONS:
-        raise HTTPException(status_code=422, detail="Choose 50% Down Payment or Cash on Delivery (COD).")
-    if option == "cod" and not cod_allowed(order):
-        raise HTTPException(status_code=422, detail="Cash on Delivery is not available for this order. Choose the 50% down payment.")
-    total = float(order["total_amount"])
-    quote.update({"status": "accepted", "responded_at": now_iso()})
     if option == "cod":
-        next_status = "Awaiting COD Confirmation"
-        terms = f"Cash on Delivery: PHP {total:,.2f} is due on delivery or pickup. Awaiting administrator confirmation of the COD arrangement."
-    else:
-        next_status = "Awaiting Down Payment"
-        terms = f"50% down payment of PHP {down_payment_due(order):,.2f} is due before the draft is prepared."
+        raise HTTPException(status_code=422, detail=COD_UNAVAILABLE)
+    if option not in (None, "", NEW_ORDER_PAYMENT_OPTION):
+        raise HTTPException(status_code=422, detail="Invalid payment option. Every order requires a 50% down payment.")
+    total = float(order["total_amount"])
+    if quote.get("amount") is not None and abs(float(quote["amount"]) - total) > 0.005:
+        raise HTTPException(status_code=409, detail="The shop updated this quotation. Review the latest quotation before responding.")
+    now = now_iso()
+    quote.update({"status": "accepted", "responded_at": now})
+    down = down_payment_due(order)
     return _save(
         order,
-        {"quotation": quote, "payment_option": option, "status": next_status},
-        f"Customer accepted the quotation of PHP {total:,.2f} and chose {PAYMENT_OPTIONS[option]}. {terms}",
+        {
+            "quotation": quote,
+            "quotation_history": _history_with_response(order, quote["revision"], {"status": "accepted", "responded_at": now}),
+            "payment_option": NEW_ORDER_PAYMENT_OPTION,
+            "status": "Awaiting Down Payment",
+        },
+        f"Customer accepted the quotation of PHP {total:,.2f} (revision {quote['revision']}). "
+        f"50% down payment of PHP {down:,.2f} is due; the order is confirmed once the shop verifies it. "
+        f"Remaining balance after the down payment: PHP {total - down:,.2f}.",
+        audit=_audit("quotation.accepted", CUSTOMER, customer_id, revision=quote["revision"], amount=total, down_payment=down),
     )
 
 
-def decline_quotation(reference: str, email: Any, payload: Mapping[str, Any]) -> dict[str, Any]:
-    order = owned_order(reference, _text(email, "Email", 254, True))
+def decline_quotation(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
+    """The customer declines the quotation. A declined quotation can never be paid; the shop may revise it."""
+    order = customer_owned_order(reference, email, customer_id)
     quote = _require_open_quotation(order)
     _quotation_revision(payload.get("quotation_revision"), order)
     reason = _text(payload.get("reason", "") or "", "Reason", 500)
-    quote.update({"status": "declined", "responded_at": now_iso(), "decline_reason": reason})
-    event = f"Customer declined the quotation of PHP {float(order['total_amount']):,.2f}."
+    now = now_iso()
+    quote.update({"status": "declined", "responded_at": now, "decline_reason": reason})
+    event = f"Customer declined the quotation of PHP {float(order['total_amount']):,.2f} (revision {quote['revision']})."
     if reason:
         event += f" Reason: {reason}"
-    return _save(order, {"quotation": quote, "status": "Quotation Declined"}, event)
+    return _save(
+        order,
+        {
+            "quotation": quote,
+            "quotation_history": _history_with_response(
+                order, quote["revision"], {"status": "declined", "responded_at": now, "decline_reason": reason}
+            ),
+            "status": "Quotation Declined",
+        },
+        event,
+        audit=_audit("quotation.declined", CUSTOMER, customer_id, revision=quote["revision"], amount=order["total_amount"], reason=reason),
+    )
 
 
 def _payment_reference_key(value: str) -> str:
@@ -879,62 +1048,80 @@ def _payment_method(value: Any) -> str:
     return method
 
 
-def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """The customer reports a payment they sent (reference number and, optionally, a screenshot or receipt).
+def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
+    """The customer submits a GCash payment: its reference number and the screenshot or receipt.
 
-    The submission is only a claim: it does not count as paid until the administrator verifies it.
-    Only one submission can wait for verification at a time, which also stops double submissions.
+    The amount is calculated by the server (the remaining 50% down payment, then the remaining balance); the
+    customer cannot choose or change it. The submission is saved as Pending Verification and never counts as
+    paid, and never confirms the order, until the administrator verifies it. Only one submission can wait for
+    verification at a time, which also stops double submissions.
     """
-    order = owned_order(reference, _text(email, "Email", 254, True))
-    if not payment_option(order) or order["total_amount"] is None:
-        raise HTTPException(status_code=409, detail="Payment opens after the quotation is accepted and a payment option is chosen.")
+    order = customer_owned_order(reference, email, customer_id)
     if is_cod(order):
         raise HTTPException(status_code=409, detail="This order is Cash on Delivery: pay the shop when the order is delivered or picked up.")
+    if order["status"] == "Quotation Declined":
+        raise HTTPException(status_code=409, detail="This quotation was declined, so it cannot be paid. Wait for a revised quotation from the shop.")
+    if order["status"] == "Quotation Sent":
+        raise HTTPException(status_code=409, detail="Accept the quotation before paying the down payment.")
+    if not payment_option(order) or order["total_amount"] is None or not price_agreed(order):
+        raise HTTPException(status_code=409, detail="Payment opens after the quotation is accepted or the shop approves your package order.")
     if order["status"] not in CUSTOMER_PAYABLE_STATUSES:
         raise HTTPException(status_code=409, detail="Payment cannot be submitted at this order stage.")
     if pending_submissions(order):
         raise HTTPException(status_code=409, detail="A payment is already waiting for the shop to verify it.")
-    balance = round(float(order["total_amount"]) - paid_amount(order), 2)
-    if balance <= 0.005:
+    due = next_customer_payment(order)
+    if due is None:
         raise HTTPException(status_code=409, detail="This order is already fully paid.")
     amount = payload.get("amount")
-    if not _valid_amount(amount):
-        raise HTTPException(status_code=422, detail="Enter the amount you paid.")
-    amount = round(float(amount), 2)
-    if amount > balance + 0.005:
-        raise HTTPException(status_code=422, detail=f"The amount cannot exceed the remaining balance of PHP {balance:,.2f}.")
-    method = _payment_method(payload.get("method"))
-    reference_text = _text(payload.get("reference"), "Payment reference number", 120, True)
+    if amount not in (None, ""):
+        # The amount is fixed by the shop's agreed price. A different amount (an edited page, a stale screen) is refused.
+        if not _valid_amount(amount) or abs(round(float(amount), 2) - due["amount"]) > 0.005:
+            raise HTTPException(
+                status_code=422,
+                detail=f"The amount due is PHP {due['amount']:,.2f} ({due['label'].lower()}). It is calculated by the shop and cannot be changed.",
+            )
+    method = payload.get("method")
+    if method in (None, ""):
+        method = CUSTOMER_PAYMENT_METHOD
+    if method != CUSTOMER_PAYMENT_METHOD:
+        raise HTTPException(status_code=422, detail="Pay through GCash and upload the GCash screenshot or receipt.")
+    reference_text = _text(payload.get("reference"), "GCash reference number", 120, True)
+    if payload.get("proof") in (None, ""):
+        raise HTTPException(status_code=422, detail="Upload the GCash payment screenshot or receipt.")
     _ensure_reference_unused(reference_text)
-    proof: OrderAttachment | None = None
-    if payload.get("proof") not in (None, ""):
-        proof, contents = _decode_upload(payload.get("proof"))
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            (UPLOAD_DIR / proof["filename"]).write_bytes(contents)
-        except OSError as error:
-            raise HTTPException(status_code=500, detail="The proof of payment could not be saved.") from error
+    proof, contents = _decode_upload(payload.get("proof"))
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        (UPLOAD_DIR / proof["filename"]).write_bytes(contents)
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="The proof of payment could not be saved.") from error
     submission = {
         "id": secrets.token_hex(8),
-        "amount": amount,
+        "amount": due["amount"],
+        "stage": due["stage"],
         "method": method,
         "reference": reference_text,
         "proof": proof,
         "submitted_at": now_iso(),
         "status": "pending",
     }
-    with_proof = " with proof of payment" if proof else ""
     try:
         return _save(
             order,
             {"payment_submissions": submissions(order) + [submission]},
-            f"Customer submitted a payment of PHP {amount:,.2f} via {method} (reference {reference_text}){with_proof}. "
-            "Awaiting administrator verification.",
+            f"Customer submitted a payment of PHP {due['amount']:,.2f} ({due['label'].lower()}) via {method} "
+            f"(reference {reference_text}) with a screenshot/receipt. Pending verification by the administrator.",
+            audit=_audit(
+                "payment.submitted", CUSTOMER, customer_id,
+                submission_id=submission["id"], amount=due["amount"], stage=due["stage"], method=method, reference=reference_text,
+            ),
         )
     except HTTPException:
-        if proof:
-            (UPLOAD_DIR / proof["filename"]).unlink(missing_ok=True)
+        (UPLOAD_DIR / proof["filename"]).unlink(missing_ok=True)
         raise
+
+
+# ------------------------------------------------------------------ administrator views
 
 
 def admin_dashboard() -> dict[str, Any]:
@@ -957,6 +1144,14 @@ def admin_order(reference: str) -> dict[str, Any]:
     if not order:
         raise HTTPException(status_code=404, detail="Order not found.")
     return report_services.admin_order_view(order)
+
+
+def admin_order_audit(reference: str) -> dict[str, Any]:
+    _admin_order(reference)
+    return {
+        "audit": audit_repository.list_for_order(reference),
+        "notifications": notification_repository.list_for_order(reference),
+    }
 
 
 def get_admin_order_file(reference: str, file_id: str) -> FileResponse:
@@ -996,47 +1191,98 @@ def quotable(order: Mapping[str, Any]) -> bool:
     )
 
 
-def set_quotation(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
+# ------------------------------------------------------------------ quotation and package approval
+
+
+def set_quotation(reference: str, payload: dict[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Send (or revise) the administrator's quotation for a customized order.
 
-    The amount is always entered by the administrator; it is never calculated. The customer must accept it
-    and choose a payment option before any payment can be recorded. Revising a quotation sends it again,
-    and any earlier acceptance or payment choice is cleared so the customer accepts the new terms.
+    The amount is always entered by the administrator; it is never calculated or taken from a package.
+    Every quotation is kept in the quotation history (amount, previous amount, note, timestamps, the
+    customer's response). Revising a quotation sends it again: an earlier unanswered or accepted revision
+    is marked superseded, so only the latest revision can be accepted. The customer is notified each time.
     """
     order = _admin_order(reference)
     if is_fixed_price(order):
-        raise HTTPException(status_code=409, detail="Package orders use the published package price. Confirm the order instead of quoting it.")
+        raise HTTPException(status_code=409, detail="Package orders use the published package price. Approve the order instead of quoting it.")
     if order["status"] not in QUOTABLE_STATUSES:
         raise HTTPException(status_code=409, detail="A quotation can only be set while the request is under review or waiting for payment.")
     if order["payments"] or pending_submissions(order):
         raise HTTPException(status_code=409, detail="The quotation cannot change after a payment was submitted or recorded.")
     amount = payload.get("total_amount")
-    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not 0 < amount <= 100000000:
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or not 0 < amount <= 100000000:
         raise HTTPException(status_code=422, detail="Enter a valid total quotation amount.")
-    allow_cod = payload.get("cod_allowed")
-    if allow_cod is None:
-        allow_cod = False
-    if not isinstance(allow_cod, bool):
-        raise HTTPException(status_code=422, detail="Choose whether Cash on Delivery is allowed.")
+    if payload.get("cod_allowed") is True:
+        raise HTTPException(status_code=422, detail=COD_UNAVAILABLE)
     instructions = _text(payload.get("payment_instructions", "") or "", "Payment instructions", 1000)
     note = _text(payload.get("note", "") or "", "Message to the customer", 1000)
     total = round(float(amount), 2)
+    down = round(total * DOWN_PAYMENT_RATE, 2)
     previous = quotation(order)
+    previous_amount = previous.get("amount")
     revision = int(previous.get("revision", 0)) + 1
+    now = now_iso()
+    history = quotation_history(order)
+    if previous and not history:
+        # An order quoted before the history existed: keep its earlier quotation as the first entry.
+        history.append({
+            "revision": previous.get("revision", 1),
+            "amount": previous_amount,
+            "previous_amount": None,
+            "note": previous.get("note", ""),
+            "sent_at": previous.get("sent_at"),
+            "sent_by": "",
+            "status": previous.get("status", "sent"),
+            "responded_at": previous.get("responded_at"),
+            "decline_reason": previous.get("decline_reason", ""),
+        })
+    for entry in history:
+        if entry.get("status") in {"sent", "accepted"}:
+            entry.update({"status": "superseded", "superseded_at": now})
+    history.append({
+        "revision": revision,
+        "amount": total,
+        "previous_amount": previous_amount,
+        "note": note,
+        "sent_at": now,
+        "sent_by": actor,
+        "status": "sent",
+        "responded_at": None,
+        "decline_reason": "",
+    })
     quote = {
         "amount": total,
-        "cod_allowed": allow_cod,
+        "previous_amount": previous_amount,
+        "cod_allowed": False,
         "revision": revision,
-        "sent_at": now_iso(),
+        "sent_at": now,
         "status": "sent",
         "note": note,
     }
-    verb = "sent a revised quotation" if previous else "provided a quotation"
-    event = (
-        f"Administrator {verb} of PHP {total:,.2f} (50% down payment PHP {total * DOWN_PAYMENT_RATE:,.2f}). "
-        f"Cash on Delivery {'allowed' if allow_cod else 'not allowed'}. "
+    revised = bool(previous)
+    if revised:
+        event = f"Administrator sent a revised quotation of PHP {total:,.2f} (revision {revision}; previously PHP {float(previous_amount or 0):,.2f})."
+    else:
+        event = f"Administrator provided a quotation of PHP {total:,.2f} (revision {revision})."
+    event += (
+        f" 50% down payment PHP {down:,.2f}; remaining balance PHP {total - down:,.2f}. "
         f"Payment instructions were {'provided' if instructions else 'not included'}. Awaiting customer acceptance."
     )
+    product = (order.get("product") or {}).get("name", "your order")
+    if revised:
+        title = "Revised quotation"
+        message = (
+            f"The shop revised the quotation for {product} from PHP {float(previous_amount or 0):,.2f} to PHP {total:,.2f}. "
+            f"50% down payment: PHP {down:,.2f}. Review the latest quotation and accept or decline it in your customer portal."
+        )
+    else:
+        title = "Quotation ready"
+        message = (
+            f"The shop sent a quotation of PHP {total:,.2f} for {product}. 50% down payment: PHP {down:,.2f}. "
+            "Review it and accept or decline it in your customer portal."
+        )
+    if note:
+        message += f" Message from the shop: {note}"
     return _save(
         order,
         {
@@ -1044,61 +1290,56 @@ def set_quotation(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
             "payment_instructions": instructions,
             "status": "Quotation Sent",
             "quotation": quote,
-            # The customer picks the payment option again when accepting these terms.
-            "payment_option": "",
+            "quotation_history": history,
+            "payment_option": NEW_ORDER_PAYMENT_OPTION,
         },
         event,
         payload.get("expected_version"),
         admin=True,
+        audit=_audit(
+            "quotation.revised" if revised else "quotation.sent", ADMIN, actor,
+            revision=revision, amount=total, previous_amount=previous_amount, down_payment=down, note=note,
+        ),
+        notifications=[notification_services.build(
+            order, "quotation_revised" if revised else "quotation_sent", f"quotation:{revision}", title, message,
+        )],
     )
 
 
-def confirm_package_order(reference: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Confirm a fixed-price package order at its published total and share the payment instructions.
+def confirm_package_order(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Approve a fixed-price package order at its published total and request the 50% down payment.
 
-    A down-payment order then waits for its verified 50%; a COD order's arrangement is confirmed by this
-    step, so its draft can be prepared right away.
+    This is not the order confirmation: the order is confirmed only when the administrator verifies the down
+    payment. Orders placed with Cash on Delivery while it was offered also switch to the down payment here.
     """
     order = _admin_order(reference)
     if not is_fixed_price(order):
-        raise HTTPException(status_code=409, detail="Only fixed-price package orders are confirmed this way. Send a quotation instead.")
+        raise HTTPException(status_code=409, detail="Only fixed-price package orders are approved this way. Send a quotation instead.")
     if order["status"] not in {"Pending Confirmation", "Under Review"}:
-        raise HTTPException(status_code=409, detail="This package order has already been confirmed or closed.")
+        raise HTTPException(status_code=409, detail="This package order has already been approved or closed.")
     instructions = _text(payload.get("payment_instructions", "") or "", "Payment instructions", 1000)
     total = float(order["total_amount"] or 0)
-    if is_cod(order):
-        next_status = "Draft Preparation"
-        terms = f"Cash on Delivery confirmed: PHP {total:,.2f} is due on delivery or pickup."
-    else:
-        next_status = "Awaiting Down Payment"
-        terms = f"50% down payment of PHP {down_payment_due(order):,.2f} is required before the draft is prepared."
+    down = down_payment_due(order)
+    switched = " The order was placed with Cash on Delivery, which is no longer offered, so it now uses the 50% down payment." if is_cod(order) else ""
     shared = "provided" if instructions else "not included"
+    package = (order.get("customization") or {}).get("package") or {}
     return _save(
         order,
-        {"status": next_status, "payment_instructions": instructions},
-        f"Administrator confirmed the package order at PHP {total:,.2f}. {terms} Payment instructions were {shared}.",
+        {"status": "Awaiting Down Payment", "payment_instructions": instructions, "payment_option": NEW_ORDER_PAYMENT_OPTION},
+        f"Administrator approved the package order at PHP {total:,.2f}. A 50% down payment of PHP {down:,.2f} is required "
+        f"to confirm the order.{switched} Payment instructions were {shared}.",
         payload.get("expected_version"),
         admin=True,
+        audit=_audit("order.approved", ADMIN, actor, total=total, down_payment=down, package=package.get("name", "")),
+        notifications=[notification_services.build(
+            order, "down_payment_requested", "down-payment-requested", "Package order approved",
+            f"The shop approved your {package.get('name') or 'package'} order (PHP {total:,.2f}). Pay the 50% down payment of "
+            f"PHP {down:,.2f} through GCash and upload the screenshot or receipt in your customer portal to confirm your order.",
+        )],
     )
 
 
-def confirm_cod(reference: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """The administrator confirms the Cash on Delivery arrangement the customer chose; drafting can start."""
-    order = _admin_order(reference)
-    if order["status"] != "Awaiting COD Confirmation" or not is_cod(order):
-        raise HTTPException(status_code=409, detail="There is no Cash on Delivery arrangement waiting for confirmation.")
-    if not cod_allowed(order):
-        raise HTTPException(status_code=409, detail="Cash on Delivery is not allowed for this order. Revise the quotation instead.")
-    quote = quotation(order)
-    quote["cod_confirmed_at"] = now_iso()
-    total = float(order["total_amount"] or 0)
-    return _save(
-        order,
-        {"status": "Draft Preparation", "quotation": quote},
-        f"Administrator confirmed the Cash on Delivery arrangement. PHP {total:,.2f} will be collected on delivery or pickup.",
-        payload.get("expected_version"),
-        admin=True,
-    )
+# ------------------------------------------------------------------ payments
 
 
 def _payment_kind(order: Mapping[str, Any], already_paid: float) -> str:
@@ -1107,30 +1348,57 @@ def _payment_kind(order: Mapping[str, Any], already_paid: float) -> str:
     return "Down payment" if already_paid < down_payment_due(order) - 0.005 else "Balance payment"
 
 
-def _payment_updates(order: OrderRecord, payment: dict[str, Any]) -> OrderUpdates:
+def _payment_updates(order: OrderRecord, payment: dict[str, Any]) -> tuple[OrderUpdates, bool]:
+    """The payment list with ``payment`` added, and whether it completes the down payment (confirming the order).
+
+    Only verified money is passed here (a verified customer submission or money the administrator received),
+    so an uploaded screenshot can never confirm an order by itself.
+    """
     payments = order["payments"] + [payment]
     updates: OrderUpdates = {"payments": payments}
-    if order["status"] == "Awaiting Down Payment" and sum(item["amount"] for item in payments) >= down_payment_due(order) - 0.005:
-        updates["status"] = "Draft Preparation"
-    return updates
+    confirmed = (
+        order["status"] == "Awaiting Down Payment"
+        and round(sum(float(item["amount"]) for item in payments), 2) >= down_payment_due(order) - 0.005
+    )
+    if confirmed:
+        updates["status"] = "Confirmed"
+    return updates, confirmed
+
+
+def _payment_notification(order: OrderRecord, payment: dict[str, Any], confirmed: bool) -> dict[str, Any]:
+    paid = round(paid_amount(order) + float(payment["amount"]), 2)
+    balance = round(max(0.0, float(order["total_amount"] or 0) - paid), 2)
+    if confirmed:
+        return notification_services.build(
+            order, "order_confirmed", "order-confirmed", "Down payment verified — order confirmed",
+            f"We verified your 50% down payment of PHP {paid:,.2f}. Your order {order['reference']} is confirmed and is now "
+            f"an active order. Remaining balance: PHP {balance:,.2f}.",
+        )
+    return notification_services.build(
+        order, "payment_verified", f"payment-verified:{payment['id']}", "Payment verified",
+        f"We verified your payment of PHP {float(payment['amount']):,.2f}. Remaining balance: PHP {balance:,.2f}.",
+    )
 
 
 def _check_payable(order: OrderRecord) -> float:
-    """Common rules for recording money: the price is final, the payment option is chosen, and money is due."""
+    """Common rules for recording money: the price is final and agreed, and money is due."""
     if order["status"] not in PAYABLE_STATUSES:
         raise HTTPException(status_code=409, detail="Payment cannot be recorded at this order stage.")
     if order["total_amount"] is None:
         raise HTTPException(status_code=409, detail="Set the confirmed quotation before recording payment.")
     if not payment_option(order):
-        raise HTTPException(status_code=409, detail="The customer must accept the quotation and choose a payment option first.")
+        raise HTTPException(status_code=409, detail="The customer must accept the quotation first.")
     balance = round(float(order["total_amount"]) - paid_amount(order), 2)
     if balance <= 0:
         raise HTTPException(status_code=409, detail="This order is already fully paid.")
     return balance
 
 
-def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Record money the shop received directly (cash at pickup, COD collection, a transfer seen in the account)."""
+CONFIRMED_SUFFIX = " The 50% down payment is verified: the order is now Confirmed."
+
+
+def record_payment(reference: str, payload: dict[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Record money the shop received directly (cash at the shop, a transfer seen in the account)."""
     order = _admin_order(reference)
     balance = _check_payable(order)
     if pending_submissions(order):
@@ -1157,13 +1425,21 @@ def record_payment(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
         "received_at": now_iso(),
         "kind": _payment_kind(order, paid_amount(order)),
         "source": "admin",
+        "recorded_by": actor,
     }
+    updates, confirmed = _payment_updates(order, payment)
     return _save(
         order,
-        _payment_updates(order, payment),
-        f"Administrator recorded PHP {payment['amount']:,.2f} received via {payment['method']} ({payment['kind'].lower()}).",
+        updates,
+        f"Administrator recorded PHP {payment['amount']:,.2f} received via {payment['method']} ({payment['kind'].lower()})."
+        + (CONFIRMED_SUFFIX if confirmed else ""),
         payload.get("expected_version"),
         admin=True,
+        audit=_audit(
+            "payment.recorded", ADMIN, actor,
+            payment_id=payment["id"], amount=amount, method=method, reference=reference_text, kind=payment["kind"], confirmed=confirmed,
+        ),
+        notifications=[_payment_notification(order, payment, confirmed)],
     )
 
 
@@ -1177,8 +1453,12 @@ def _find_submission(order: OrderRecord, submission_id: str) -> tuple[list[dict[
     return items, found
 
 
-def verify_payment_submission(reference: str, submission_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Verify a payment the customer reported. It becomes exactly one payment record; it can never be verified twice."""
+def verify_payment_submission(reference: str, submission_id: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Verify a payment the customer submitted. It becomes exactly one payment record and can never be verified twice.
+
+    When it completes the 50% down payment, the order moves to Confirmed automatically and the customer is
+    notified once that the down payment is verified and the order is confirmed.
+    """
     order = _admin_order(reference)
     items, submission = _find_submission(order, submission_id)
     balance = _check_payable(order)
@@ -1205,9 +1485,12 @@ def verify_payment_submission(reference: str, submission_id: str, payload: Mappi
         "kind": _payment_kind(order, paid_amount(order)),
         "source": "customer submission",
         "submission_id": submission_id,
+        "recorded_by": actor,
     }
-    submission.update({"status": "verified", "reviewed_at": now, "payment_id": payment["id"], "verified_amount": amount})
-    updates = _payment_updates(order, payment)
+    submission.update({
+        "status": "verified", "reviewed_at": now, "reviewed_by": actor, "payment_id": payment["id"], "verified_amount": amount,
+    })
+    updates, confirmed = _payment_updates(order, payment)
     updates["payment_submissions"] = items
     reported = float(submission["amount"])
     adjusted = f" (customer reported PHP {reported:,.2f})" if abs(amount - reported) > 0.005 else ""
@@ -1215,35 +1498,52 @@ def verify_payment_submission(reference: str, submission_id: str, payload: Mappi
         order,
         updates,
         f"Administrator verified the customer's payment of PHP {amount:,.2f}{adjusted} via {payment['method']} "
-        f"(reference {payment['reference']}) and recorded it as {payment['kind'].lower()}.",
+        f"(reference {payment['reference']}) and recorded it as {payment['kind'].lower()}."
+        + (CONFIRMED_SUFFIX if confirmed else ""),
         payload.get("expected_version"),
         admin=True,
+        audit=_audit(
+            "payment.verified", ADMIN, actor,
+            submission_id=submission_id, payment_id=payment["id"], amount=amount, reported_amount=reported,
+            reference=payment["reference"], kind=payment["kind"], confirmed=confirmed,
+        ),
+        notifications=[_payment_notification(order, payment, confirmed)],
     )
 
 
-def reject_payment_submission(reference: str, submission_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def reject_payment_submission(reference: str, submission_id: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     order = _admin_order(reference)
     items, submission = _find_submission(order, submission_id)
     note = _text(payload.get("note", "") or "", "Reason", 500, True)
-    submission.update({"status": "rejected", "reviewed_at": now_iso(), "review_note": note})
+    submission.update({"status": "rejected", "reviewed_at": now_iso(), "reviewed_by": actor, "review_note": note})
+    amount = float(submission["amount"])
     return _save(
         order,
         {"payment_submissions": items},
-        f"Administrator could not verify the customer's payment of PHP {float(submission['amount']):,.2f} "
+        f"Administrator could not verify the customer's payment of PHP {amount:,.2f} "
         f"(reference {submission.get('reference', '')}). Reason: {note}",
         payload.get("expected_version"),
         admin=True,
+        audit=_audit("payment.rejected", ADMIN, actor, submission_id=submission_id, amount=amount, reference=submission.get("reference", ""), reason=note),
+        notifications=[notification_services.build(
+            order, "payment_rejected", f"payment-rejected:{submission_id}", "Payment could not be verified",
+            f"We could not verify your payment of PHP {amount:,.2f} (reference {submission.get('reference', '')}). Reason: {note} "
+            "You can submit the payment again in your customer portal.",
+        )],
     )
 
 
-def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
+# ------------------------------------------------------------------ drafts, payment option, status
+
+
+def upload_draft(reference: str, payload: dict[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     order = _admin_order(reference)
-    if order["status"] not in {"Draft Preparation", "Awaiting Customer Approval"}:
-        raise HTTPException(status_code=409, detail="A draft can only be sent after preparation begins.")
+    if order["status"] not in DRAFTABLE_STATUSES:
+        raise HTTPException(status_code=409, detail="A draft can only be sent after the order is confirmed.")
     if order["total_amount"] is None:
         raise HTTPException(status_code=409, detail="Set the confirmed quotation before sending a draft.")
     if not down_payment_met(order):
-        raise HTTPException(status_code=409, detail="Record the required 50% down payment before sending a draft.")
+        raise HTTPException(status_code=409, detail="Verify the required 50% down payment before sending a draft.")
     metadata, contents = _decode_upload(payload.get("file"))
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     try:
@@ -1258,6 +1558,11 @@ def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
             f"Administrator attached {kind} '{metadata['name']}' for customer review. Printing is not approved.",
             payload.get("expected_version"),
             admin=True,
+            audit=_audit("draft.sent", ADMIN, actor, draft=metadata["name"], revised=kind == "revised draft"),
+            notifications=[notification_services.build(
+                order, "draft_ready", f"draft:{metadata['id']}", "Draft ready for your approval",
+                f"The shop sent a {kind} for your order. Review it in your customer portal and approve it or request changes.",
+            )],
         )
     except HTTPException:
         (UPLOAD_DIR / metadata["filename"]).unlink(missing_ok=True)
@@ -1265,52 +1570,46 @@ def upload_draft(reference: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def payment_option_changeable(order: Mapping[str, Any]) -> bool:
-    """The payment option can change until money is reported or received, or a draft is sent."""
-    if order["payments"] or pending_submissions(order) or not payment_option(order):
+    """An order placed with Cash on Delivery (no longer offered) can be switched to the 50% down payment
+    until money is reported or received, or a draft is sent."""
+    if not is_cod(order) or order["payments"] or pending_submissions(order):
         return False
-    if order["status"] in {"Pending Confirmation", "Under Review", "Awaiting COD Confirmation", "Awaiting Down Payment"}:
+    if order["status"] in {"Pending Confirmation", "Under Review", "Awaiting COD Confirmation"}:
         return True
     return order["status"] == "Draft Preparation" and not order["draft_attachment"]
 
 
-def update_payment_option(reference: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Switch an order between the 50% down payment and Cash on Delivery (for example at the customer's request).
-
-    Switching to COD is the administrator's approval of COD for the order, so it also confirms the arrangement.
-    """
+def update_payment_option(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Switch an older Cash on Delivery order to the 50% down payment. Switching to COD is no longer possible."""
     order = _admin_order(reference)
     option = payload.get("payment_option")
-    if option not in PAYMENT_OPTIONS:
-        raise HTTPException(status_code=422, detail="Choose 50% down payment or Cash on Delivery (COD).")
+    if option == "cod":
+        raise HTTPException(status_code=422, detail=COD_UNAVAILABLE)
+    if option != NEW_ORDER_PAYMENT_OPTION:
+        raise HTTPException(status_code=422, detail="Choose the 50% down payment.")
     if option == payment_option(order):
         raise HTTPException(status_code=409, detail=f"This order already uses {PAYMENT_OPTIONS[option]}.")
     if not payment_option_changeable(order):
         raise HTTPException(
             status_code=409,
-            detail="The payment option can only be changed after the customer chose one, and before any payment is "
-            "submitted or recorded and before a draft is sent.",
+            detail="The payment option can only be changed before any payment is submitted or recorded and before a draft is sent.",
         )
     note = _text(payload.get("note", "") or "", "Reason", 500)
     updates: OrderUpdates = {"payment_option": option}
     event = f"Administrator changed the payment option to {PAYMENT_OPTIONS[option]}."
-    quote = quotation(order)
-    if option == "cod" and quote:
-        quote["cod_allowed"] = True
-        quote["cod_confirmed_at"] = now_iso()
-        updates["quotation"] = quote
-    if option == "cod" and order["status"] == "Awaiting Down Payment":
-        updates["status"] = "Draft Preparation"
-        event += " No down payment is required and the COD arrangement is confirmed, so the order moved to Draft Preparation."
-    elif option == "down_payment" and order["status"] in {"Draft Preparation", "Awaiting COD Confirmation"}:
+    if order["status"] in {"Draft Preparation", "Awaiting COD Confirmation"}:
         updates["status"] = "Awaiting Down Payment"
         event += " The 50% down payment is now required, so the order moved to Awaiting Down Payment."
     if note:
         event += f" Reason: {note}"
-    return _save(order, updates, event, payload.get("expected_version"), admin=True)
+    return _save(
+        order, updates, event, payload.get("expected_version"), admin=True,
+        audit=_audit("payment.option_changed", ADMIN, actor, option_from=payment_option(order), option_to=option, note=note),
+    )
 
 
 # Status changes the administrator may make directly. Other moves happen through their own actions
-# (quotation, customer acceptance, package/COD confirmation, payment, draft, customer approval).
+# (quotation, customer acceptance, package approval, verified payment, draft, customer approval).
 ADMIN_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "Pending Confirmation": {"Under Review", "Rejected", "Cancelled"},
     "Under Review": {"Awaiting Quotation", "Rejected", "Cancelled"},
@@ -1319,10 +1618,19 @@ ADMIN_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "Quotation Declined": {"Rejected", "Cancelled"},
     "Awaiting COD Confirmation": {"Rejected", "Cancelled"},
     "Awaiting Down Payment": {"Rejected", "Cancelled"},
+    "Confirmed": {"Draft Preparation"},
     "Approved for Printing": {"In Production"},
     "In Production": {"Ready for Pickup", "Out for Delivery"},
     "Ready for Pickup": {"Completed"},
     "Out for Delivery": {"Completed"},
+}
+# Status changes the customer is told about.
+STATUS_NOTIFICATIONS = {
+    "Ready for Pickup": ("Ready for pickup", "Your order is ready for pickup at the shop."),
+    "Out for Delivery": ("Out for delivery", "Your order is out for delivery."),
+    "Completed": ("Order completed", "Your order is completed. Thank you for ordering with ImPRESSion PrintShop!"),
+    "Rejected": ("Order request rejected", "The shop could not accept your order request."),
+    "Cancelled": ("Order cancelled", "The shop cancelled your order."),
 }
 
 
@@ -1336,12 +1644,16 @@ def allowed_transitions(order: Mapping[str, Any]) -> list[str]:
     return [status for status in ORDER_STATUSES if status in allowed]
 
 
-def update_order_status(reference: str, next_status: Any, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def update_order_status(
+    reference: str, next_status: Any, payload: Mapping[str, Any] | None = None, actor: str = ADMIN
+) -> dict[str, Any]:
     payload = payload or {}
     order = _admin_order(reference)
     next_status = _text(next_status, "Order status", 60, True)
     if next_status not in ORDER_STATUSES:
         raise HTTPException(status_code=422, detail="Select a valid order status.")
+    if next_status == "Confirmed":
+        raise HTTPException(status_code=409, detail="An order is confirmed only by verifying its 50% down payment.")
     if next_status not in allowed_transitions(order):
         if order["status"] == "In Production" and next_status in RELEASE_STATUSES:
             method = FULFILLMENT_METHODS[fulfillment_method(order)]
@@ -1367,4 +1679,14 @@ def update_order_status(reference: str, next_status: Any, payload: Mapping[str, 
         event = f"{event} Reason: {note}"
         if next_status in CANCELLED_STATUSES:
             updates["admin_notes"] = note
-    return _save(order, updates, event, payload.get("expected_version"), admin=True)
+    notifications = []
+    if next_status in STATUS_NOTIFICATIONS:
+        title, message = STATUS_NOTIFICATIONS[next_status]
+        if note and next_status in CANCELLED_STATUSES:
+            message += f" Reason: {note}"
+        notifications.append(notification_services.build(order, "status_changed", f"status:{next_status}", title, message))
+    return _save(
+        order, updates, event, payload.get("expected_version"), admin=True,
+        audit=_audit("order.status_changed", ADMIN, actor, note=note),
+        notifications=notifications,
+    )

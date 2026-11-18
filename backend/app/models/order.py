@@ -37,13 +37,19 @@ class OrderUpdates(TypedDict):
     payment_option: NotRequired[str]
     quotation: NotRequired[dict[str, Any]]
     payment_submissions: NotRequired[list[dict[str, Any]]]
+    quotation_history: NotRequired[list[dict[str, Any]]]
 
 
-# How a customer pays for an order. An empty payment option means "not chosen yet": customized
-# orders choose it only after accepting the administrator's quotation.
+# How a customer pays for an order. Every new order requires the 50% down payment (package and customized
+# orders alike). "cod" exists only so orders placed while Cash on Delivery was offered still display and
+# finish correctly; it can no longer be chosen. An empty value is an older customized order that had not
+# accepted its quotation yet.
 PAYMENT_OPTIONS = {"down_payment": "50% Down Payment", "cod": "Cash on Delivery (COD)"}
-PAYMENT_OPTION_PENDING_LABEL = "Chosen after the quotation is accepted"
+NEW_ORDER_PAYMENT_OPTION = "down_payment"
+PAYMENT_OPTION_PENDING_LABEL = "50% Down Payment (after the quotation is accepted)"
 DOWN_PAYMENT_RATE = 0.5
+# Customers pay through GCash and upload the screenshot or receipt; the administrator verifies it.
+CUSTOMER_PAYMENT_METHOD = "GCash"
 
 # How the finished order reaches the customer. Older orders have no fulfillment and were picked up.
 FULFILLMENT_METHODS = {"pickup": "Store Pickup", "delivery": "Delivery"}
@@ -96,3 +102,7 @@ class OrderRecord(TypedDict):
     # {"id", "amount", "method", "reference", "proof", "submitted_at", "status": "pending" | "verified" | "rejected",
     #  "reviewed_at", "review_note"}. A verified submission becomes exactly one entry in payments.
     payment_submissions: NotRequired[list[dict[str, Any]]]
+    # Every quotation sent for a customized order, oldest first:
+    # {"revision", "amount", "previous_amount", "note", "sent_at", "sent_by",
+    #  "status": "sent" | "accepted" | "declined" | "superseded", "responded_at", "decline_reason", "superseded_at"}.
+    quotation_history: NotRequired[list[dict[str, Any]]]

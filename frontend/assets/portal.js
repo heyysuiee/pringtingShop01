@@ -14,12 +14,16 @@
     const lookupPanel = document.querySelector("#order-lookup");
     const quotationPanel = document.querySelector("#customer-quotation");
     const paymentPanel = document.querySelector("#customer-payment");
-    const PAYMENT_METHODS = ["GCash", "Maya", "Bank transfer", "Other"];
     const MAX_PROOF_BYTES = 5 * 1024 * 1024;
     let activeEmail = "";
     let accessReference = "";
     let currentOrder = null;
     let detailSource = "lookup";
+    // Changing an order (accepting a quotation, paying, approving a draft) needs the signed-in account.
+    let signedIn = false;
+    fetch("/api/customer/session", { credentials: "same-origin" })
+        .then((response) => { signedIn = response.ok; })
+        .catch(() => { signedIn = false; });
 
     const make = (tag, className, value) => {
         const element = document.createElement(tag);
@@ -36,16 +40,14 @@
     }
 
     function paymentSummary(order) {
-        const chosen = order.payment?.payment_option;
-        if (!chosen) {
-            if (order.status === "Quotation Sent") return "Quotation ready · accept it to choose how to pay";
-            return "Payment option chosen after the quotation";
-        }
-        const option = chosen === "cod" ? "COD" : "50% down payment";
-        if (order.total_amount === null) return `${option} · not due yet, waiting for quotation`;
-        const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
-        const state = received >= order.total_amount ? "Paid in full" : received > 0 ? `Partial · ${money(received)} received` : "Not received";
-        const pending = order.payment?.pending_verification ? ` · ${money(order.payment.pending_verification)} being verified` : "";
+        const payment = order.payment || {};
+        if (order.status === "Quotation Sent") return "Quotation ready · review and accept or decline it";
+        if (order.status === "Quotation Declined") return "Quotation declined · no payment due";
+        const option = payment.payment_option === "cod" ? "COD" : "50% down payment";
+        if (order.total_amount === null) return `${option} · due after the quotation is accepted`;
+        const received = payment.amount_paid || 0;
+        const state = received >= order.total_amount - 0.005 ? "Paid in full" : received > 0 ? `${money(received)} verified` : "Not paid yet";
+        const pending = payment.pending_verification ? ` · ${money(payment.pending_verification)} pending verification` : "";
         return `${option} · ${state}${pending}`;
     }
 
@@ -74,6 +76,13 @@
             renderDetail(order);
         } catch (issue) {
             const message = issue instanceof Error ? issue.message : failure;
+            if (issue.status === 401) {
+                // The order can be viewed with its email and reference, but changing it needs the owner's account.
+                detailError.textContent = "Sign in to your customer account to respond to this order.";
+                button.disabled = false;
+                detailError.scrollIntoView({ block: "center", behavior: "instant" });
+                return;
+            }
             if (issue.status === 409) {
                 // The order changed meanwhile (for example in another tab): show its current state, then the reason.
                 // renderDetail sets which actions are still available.
@@ -169,13 +178,10 @@
         ].filter(([, value]) => value);
     }
 
-    /** The steps this order goes through: its pricing (package or quotation), payment option, and fulfillment. */
+    /** The steps this order goes through: its pricing (package or quotation), the down payment, and fulfillment. */
     function orderPath(order) {
-        const option = order.payment?.payment_option;
-        // Before the quotation is accepted the payment step is not known yet (down payment or, if allowed, COD).
-        const payment = option === "cod"
-            ? (order.fixed_price ? [] : ["Awaiting COD Confirmation"])
-            : option ? ["Awaiting Down Payment"] : ["Payment Arrangement"];
+        const cod = order.payment?.payment_option === "cod";  // only orders placed while COD was offered
+        const payment = cod ? (order.fixed_price ? [] : ["Awaiting COD Confirmation"]) : ["Awaiting Down Payment", "Confirmed"];
         return [
             "Pending Confirmation",
             "Under Review",
@@ -243,186 +249,204 @@
         });
     }
 
-    /** Quotation waiting for the customer: accept it (choosing how to pay) or decline it. */
+    const QUOTE_STATES = { sent: "Waiting for your response", accepted: "Accepted", declined: "Declined", superseded: "Replaced by a newer quotation" };
+
+    /** Every quotation the shop sent, newest first: price, previous price, message, and your response. */
+    function quotationHistory(order) {
+        const items = order.quotation_history || [];
+        if (items.length < 2) return null;
+        const wrapper = make("details", "quotation-history");
+        wrapper.append(make("summary", "", `Quotation history (${items.length})`));
+        const listElement = make("ol", "payment-submissions");
+        items.slice().reverse().forEach((item) => {
+            const entry = make("li", `quote-${item.status}`);
+            const change = typeof item.previous_amount === "number" ? ` (was ${money(item.previous_amount)})` : "";
+            entry.append(make("strong", "", `Revision ${item.revision}: ${money(item.amount)}${change}`));
+            entry.append(make("span", "field-hint", `${QUOTE_STATES[item.status] || item.status} · sent ${formatDate(item.sent_at)}${item.responded_at ? ` · answered ${formatDate(item.responded_at)}` : ""}`));
+            if (item.note) entry.append(make("span", "field-hint", `Shop note: ${item.note}`));
+            if (item.decline_reason) entry.append(make("span", "field-hint", `Your reason: ${item.decline_reason}`));
+            listElement.append(entry);
+        });
+        wrapper.append(listElement);
+        return wrapper;
+    }
+
+    /** The latest quotation: review it, then accept (proceed to the 50% down payment) or decline it. */
     function renderQuotationPanel(order) {
         quotationPanel.replaceChildren();
         const quote = order.quotation;
         const open = order.status === "Quotation Sent" && quote?.status === "sent";
         const declined = order.status === "Quotation Declined";
-        quotationPanel.hidden = !open && !declined;
+        const history = quotationHistory(order);
+        quotationPanel.hidden = !open && !declined && !history;
         if (declined) {
             quotationPanel.append(
                 make("h3", "", "You declined the quotation"),
-                make("p", "field-hint", `${quote?.decline_reason ? `Your reason: “${quote.decline_reason}”. ` : ""}The shop may send a revised quotation; it will appear here.`),
+                make("p", "field-hint", `${quote?.decline_reason ? `Your reason: “${quote.decline_reason}”. ` : ""}No payment is due. The shop may send a revised quotation; you will be notified and it will appear here.`),
             );
+            if (history) quotationPanel.append(history);
             return;
         }
-        if (!open) return;
+        if (!open) {
+            if (history) quotationPanel.append(make("h3", "", "Quotation"), history);
+            return;
+        }
         const total = order.total_amount;
-        const down = Math.round(total * 50) / 100;
+        const payment = order.payment || {};
+        const revised = quote.revision > 1;
         quotationPanel.append(
-            make("h3", "", "Your quotation is ready"),
-            make("p", "field-hint", "Review the price from the shop. Accept it and choose how to pay, or decline it. Nothing is charged when you accept."),
+            make("h3", "", revised ? `Revised quotation (revision ${quote.revision})` : "Your quotation is ready"),
+            make("p", "field-hint", "Review the latest quotation from the shop. If you accept it, the next step is the 50% down payment through GCash. If you decline it, nothing is paid and the shop may send a revised quotation."),
             definitionList([
                 ["Quoted total", money(total)],
-                ["50% down payment", `${money(down)} (if you choose the down payment)`],
-                ["Balance after down payment", money(total - down)],
-                ["Cash on Delivery", quote.cod_allowed ? "Allowed for this order" : "Not available for this order"],
+                revised && typeof quote.previous_amount === "number" ? ["Previous quotation", money(quote.previous_amount)] : ["", ""],
+                ["50% down payment", money(payment.down_payment_required)],
+                ["Remaining balance", `${money(payment.remaining_after_down_payment)} (paid before release)`],
+                ["Sent", formatDate(quote.sent_at)],
                 ["Message from the shop", quote.note],
                 ["Payment instructions", order.payment_instructions],
             ]),
         );
-        const options = make("fieldset", "payment-options");
-        options.append(make("legend", "field-label", "How will you pay?"));
-        const grid = make("div", "payment-option-grid");
-        [
-            ["down_payment", "50% Down Payment", `Pay ${money(down)} now; the draft is prepared once the shop verifies it. Pay ${money(total - down)} before release.`, true],
-            ["cod", "Cash on Delivery (COD)", quote.cod_allowed ? `No down payment. Pay ${money(total)} on delivery or pickup, after the shop confirms the arrangement.` : "The shop has not allowed COD for this order.", quote.cod_allowed],
-        ].forEach(([value, title, description, enabled], index) => {
-            const card = make("label", `payment-option-card${enabled ? "" : " is-disabled"}`);
-            const input = make("input");
-            input.type = "radio";
-            input.name = "quote-payment-option";
-            input.value = value;
-            input.disabled = !enabled;
-            input.checked = index === 0;
-            const body = make("span", "payment-option-body");
-            body.append(make("strong", "", title), make("small", "", description));
-            card.append(input, body);
-            grid.append(card);
-        });
-        options.append(grid);
+        if (history) quotationPanel.append(history);
+        if (detailSource !== "account" && !signedIn) {
+            quotationPanel.append(make("p", "notice", "Sign in to your customer account to accept or decline this quotation."));
+            return;
+        }
         const reason = make("textarea", "input");
         reason.rows = 2;
         reason.maxLength = 500;
         reason.placeholder = "Optional: tell the shop why (for example, over budget)";
         reason.setAttribute("aria-label", "Reason for declining (optional)");
-        const accept = make("button", "btn btn-dark", "Accept quotation");
+        const accept = make("button", "btn btn-dark", "Accept Quotation");
         accept.type = "button";
-        const decline = make("button", "btn btn-ghost-dark", "Decline quotation");
+        const decline = make("button", "btn btn-ghost-dark", "Decline Quotation");
         decline.type = "button";
-        accept.addEventListener("click", () => {
-            const option = quotationPanel.querySelector('input[name="quote-payment-option"]:checked')?.value || "down_payment";
-            const label = option === "cod" ? "Cash on Delivery" : "the 50% down payment";
-            if (!window.confirm(`Accept the quotation of ${money(total)} and pay with ${label}?`)) return;
-            void orderAction("quotation/accept", { payment_option: option, quotation_revision: quote.revision }, "The quotation could not be accepted.", accept);
+        accept.addEventListener("click", async () => {
+            if (!(await window.PrintConfirm(`Accept the quotation of ${money(total)}? You will then pay the 50% down payment of ${money(payment.down_payment_required)} through GCash.`, { title: "Accept quotation?", confirmLabel: "Accept quotation" }))) return;
+            // The revision you reviewed is sent along: if the shop revised the quotation meanwhile, acceptance is refused.
+            void orderAction("quotation/accept", { quotation_revision: quote.revision }, "The quotation could not be accepted.", accept);
         });
-        decline.addEventListener("click", () => {
-            if (!window.confirm("Decline this quotation? The shop may send a revised one.")) return;
+        decline.addEventListener("click", async () => {
+            if (!(await window.PrintConfirm("Decline this quotation? Nothing will be charged; the shop may send a revised one.", { title: "Decline quotation?", confirmLabel: "Decline quotation", tone: "danger" }))) return;
             void orderAction("quotation/decline", { reason: reason.value.trim(), quotation_revision: quote.revision }, "The quotation could not be declined.", decline);
         });
         const actions = make("div", "draft-actions");
         actions.append(accept, decline);
-        quotationPanel.append(options, reason, actions);
+        quotationPanel.append(reason, actions);
     }
 
-    /** Payment status, instructions, and (for down-payment orders) the form to report a payment with proof. */
+    const SUBMISSION_LABELS = { pending: "Pending Verification", verified: "Verified", rejected: "Not verified" };
+
+    /** Payment status, instructions, and the GCash payment form (amount set by the shop). */
     function renderPaymentPanel(order) {
         paymentPanel.replaceChildren();
         const payment = order.payment || {};
-        const closed = ["Rejected", "Cancelled"].includes(order.status);
+        const closed = ["Rejected", "Cancelled", "Quotation Declined"].includes(order.status);
         const submissionsList = order.payment_submissions || [];
-        const show = !closed && order.total_amount !== null && payment.payment_option_chosen;
+        const agreed = order.total_amount !== null && !["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined"].includes(order.status);
+        const show = !closed && order.total_amount !== null && (agreed || order.fixed_price);
         paymentPanel.hidden = !show && !submissionsList.length;
         if (paymentPanel.hidden) return;
         const cod = payment.payment_option === "cod";
         paymentPanel.append(make("h3", "", "Payment"));
         paymentPanel.append(definitionList([
             [order.fixed_price ? "Package total" : "Accepted quotation", money(order.total_amount)],
-            ["Payment option", payment.payment_option_label],
-            cod ? ["Down payment", "Not required (Cash on Delivery)"] : ["50% down payment", `${money(payment.down_payment_required)} · ${payment.down_payment_status}`],
+            cod ? ["Down payment", "Not required (Cash on Delivery, arranged before the 50% down payment rule)"] : ["50% down payment", `${money(payment.down_payment_required)} · ${payment.down_payment_status}`],
             ["Verified payments", money(payment.amount_paid)],
-            payment.pending_verification ? ["Waiting for verification", money(payment.pending_verification)] : ["", ""],
+            payment.pending_verification ? ["Pending verification", money(payment.pending_verification)] : ["", ""],
             [cod ? "Due on delivery / pickup" : "Remaining balance", money(payment.balance)],
         ]));
+        if (order.status === "Confirmed") {
+            paymentPanel.append(make("p", "notice notice-success", "Your down payment is verified and your order is confirmed. The shop is preparing your draft."));
+        }
         if (order.payment_instructions) {
             const instructions = make("div", "payment-instructions");
             instructions.append(make("strong", "", "Payment instructions from the shop"), make("p", "", order.payment_instructions));
             paymentPanel.append(instructions);
         }
-        const awaitingConfirmation = ["Pending Confirmation", "Under Review"].includes(order.status);
         const pending = submissionsList.find((item) => item.status === "pending");
-        const payable = ["Awaiting Down Payment", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup", "Out for Delivery"].includes(order.status);
+        const due = payment.next_payment;
         if (closed) {
             // Only the submission history below.
         } else if (cod) {
-            paymentPanel.append(make("p", "notice", order.status === "Awaiting COD Confirmation"
-                ? "You chose Cash on Delivery. The shop will confirm the arrangement before preparing your draft."
-                : `Cash on Delivery: pay ${money(payment.balance)} when your order is ${order.fulfillment?.method === "delivery" ? "delivered" : "picked up"}. No down-payment receipt is needed.`));
-        } else if (awaitingConfirmation) {
-            paymentPanel.append(make("p", "notice", "Payment opens after the shop confirms your order and shares the payment instructions."));
+            paymentPanel.append(make("p", "notice", `Cash on Delivery: pay ${money(payment.balance)} when your order is ${order.fulfillment?.method === "delivery" ? "delivered" : "picked up"}.`));
+        } else if (!agreed) {
+            paymentPanel.append(make("p", "notice", "Payment opens after the shop approves your order and shares the payment instructions."));
         } else if (pending) {
-            paymentPanel.append(make("p", "notice", `Your payment of ${money(pending.amount)} (reference ${pending.reference}) is waiting for the shop to verify it.`));
-        } else if (payable && payment.balance > 0.005) {
-            paymentPanel.append(paymentForm(order));
+            paymentPanel.append(make("p", "notice", `Your GCash payment of ${money(pending.amount)} (reference ${pending.reference}) is pending verification. Your order is confirmed only after the shop verifies it.`));
+        } else if (due) {
+            if (detailSource !== "account" && !signedIn) {
+                paymentPanel.append(make("p", "notice", "Sign in to your customer account to submit your GCash payment."));
+            } else {
+                paymentPanel.append(paymentForm(order, due));
+            }
         }
         if (submissionsList.length) {
-            const list = make("ul", "payment-submissions");
+            const listElement = make("ul", "payment-submissions");
             submissionsList.slice().reverse().forEach((item) => {
                 const entry = make("li", `submission-${item.status}`);
-                const label = { pending: "Waiting for verification", verified: "Verified", rejected: "Not verified" }[item.status] || item.status;
-                entry.append(make("strong", "", `${money(item.amount)} · ${item.method} · ${item.reference}`), make("span", "field-hint", `${label} · submitted ${formatDate(item.submitted_at)}`));
+                const label = item.status_label || SUBMISSION_LABELS[item.status] || item.status;
+                const amount = typeof item.verified_amount === "number" && Math.abs(item.verified_amount - item.amount) > 0.005
+                    ? `${money(item.amount)} (verified ${money(item.verified_amount)})` : money(item.amount);
+                entry.append(make("strong", "", `${amount} · ${item.method} · ${item.reference}`), make("span", "field-hint", `${label} · submitted ${formatDate(item.submitted_at)}`));
                 if (item.review_note) entry.append(make("span", "field-hint", `Shop note: ${item.review_note}`));
                 if (item.proof) {
-                    const link = make("a", "", `Proof: ${item.proof.name}`);
+                    const link = make("a", "", `Receipt: ${item.proof.name}`);
                     link.href = item.proof.url;
                     link.target = "_blank";
                     link.rel = "noopener";
                     entry.append(link);
                 }
-                list.append(entry);
+                listElement.append(entry);
             });
-            paymentPanel.append(make("h4", "", "Payments you submitted"), list);
+            paymentPanel.append(make("h4", "", "Payments you submitted"), listElement);
         }
     }
 
-    function paymentForm(order) {
-        const payment = order.payment;
-        const suggested = payment.down_payment_remaining > 0.005 ? payment.down_payment_remaining : payment.balance;
+    /** GCash payment form. The amount comes from the server and cannot be edited; a receipt is required. */
+    function paymentForm(order, due) {
         const formElement = make("form", "payment-submit-form");
-        formElement.noValidate = false;
         const field = (labelText, control) => {
             const label = make("label", "", labelText);
             label.append(control);
             return label;
         };
         const amount = make("input", "input");
-        Object.assign(amount, { type: "number", min: "0.01", step: "0.01", max: String(payment.balance), required: true, value: suggested.toFixed(2) });
-        const method = make("select", "input");
-        PAYMENT_METHODS.forEach((value) => method.append(new Option(value, value)));
+        Object.assign(amount, { type: "text", readOnly: true, value: money(due.amount) });
+        amount.setAttribute("aria-readonly", "true");
         const reference = make("input", "input");
-        Object.assign(reference, { maxLength: 120, required: true, placeholder: "e.g. GCash reference number" });
+        Object.assign(reference, { maxLength: 120, required: true, placeholder: "GCash reference number", autocomplete: "off" });
         const proof = make("input", "input");
-        Object.assign(proof, { type: "file", accept: ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" });
+        Object.assign(proof, { type: "file", required: true, accept: ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" });
         const submit = make("button", "btn btn-dark", "Submit payment for verification");
         submit.type = "submit";
+        const down = due.stage === "down_payment";
         formElement.append(
-            make("h4", "", payment.down_payment_remaining > 0.005 ? "Report your down payment" : "Report a balance payment"),
-            make("p", "field-hint", `Send the payment using the shop's instructions, then enter its details. The shop verifies it before it counts as paid. Suggested amount: ${money(suggested)}.`),
-            field("Amount paid (PHP)", amount),
-            field("Payment method", method),
-            field("Payment reference number", reference),
-            field("Proof of payment (optional: screenshot or receipt, JPG/PNG/WebP/PDF, max 5 MB)", proof),
+            make("h4", "", down ? "Pay your 50% down payment" : "Pay the remaining balance"),
+            make("p", "field-hint", `Send ${money(due.amount)} through GCash using the shop's instructions, then upload the screenshot or receipt. The amount is set by the shop. Your payment stays Pending Verification until the shop checks it${down ? "; your order is confirmed once it is verified" : ""}.`),
+            field(`Amount to pay (${due.label})`, amount),
+            field("GCash reference number", reference),
+            field("GCash screenshot or receipt (JPG, PNG, WebP, or PDF · max 5 MB)", proof),
             submit,
         );
         formElement.addEventListener("submit", async (event) => {
             event.preventDefault();
             if (!formElement.reportValidity()) return;
             const file = proof.files?.[0];
-            if (file && (file.size > MAX_PROOF_BYTES || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name))) {
-                detailError.textContent = "The proof must be a JPG, PNG, WebP, or PDF file no larger than 5 MB.";
+            if (!file || file.size > MAX_PROOF_BYTES || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name)) {
+                detailError.textContent = "Upload the GCash screenshot or receipt as a JPG, PNG, WebP, or PDF file no larger than 5 MB.";
                 return;
             }
-            const value = Number(amount.value);
-            if (!window.confirm(`Submit a payment of ${money(value)} (reference ${reference.value.trim()}) for verification?`)) return;
-            let proofPayload = null;
+            if (!(await window.PrintConfirm(`Submit your GCash payment of ${money(due.amount)} (reference ${reference.value.trim()}) for verification?`, { title: "Submit payment?", confirmLabel: "Submit payment" }))) return;
+            let proofPayload;
             try {
-                if (file) proofPayload = { name: file.name, dataUrl: await fileAsDataUrl(file) };
+                proofPayload = { name: file.name, dataUrl: await fileAsDataUrl(file) };
             } catch (issue) {
-                detailError.textContent = issue instanceof Error ? issue.message : "The proof file could not be read.";
+                detailError.textContent = issue instanceof Error ? issue.message : "The receipt could not be read.";
                 return;
             }
-            await orderAction("payments", { amount: value, method: method.value, reference: reference.value.trim(), proof: proofPayload }, "The payment could not be submitted.", submit);
+            // The amount is sent only so a stale page is refused; the server decides the amount due.
+            await orderAction("payments", { amount: due.amount, method: "GCash", reference: reference.value.trim(), proof: proofPayload }, "The payment could not be submitted.", submit);
         });
         return formElement;
     }
@@ -444,6 +468,20 @@
         const summary = document.querySelector("#detail-summary");
         summary.replaceChildren();
         if (order.order_kind) appendSummaryRow(summary, "Order type", order.order_kind === "package" ? `Package${order.package?.name ? `: ${order.package.name}` : ""}` : "Customized order");
+        // The package price and inclusions saved when the order was placed (later package edits do not change them).
+        if (order.package) {
+            const pkg = order.package;
+            const minimum = pkg.minimum_quantity ?? pkg.included_quantity;
+            appendSummaryRow(summary, "Package price", `${money(pkg.price)} for ${minimum} pcs (minimum order)`);
+            if (pkg.add_on_price !== null && pkg.add_on_price !== undefined) {
+                appendSummaryRow(summary, "Additional piece", `${money(pkg.add_on_price)} each`);
+                if (pkg.additional_quantity) {
+                    appendSummaryRow(summary, "Additional pieces", `${pkg.additional_quantity} × ${money(pkg.add_on_price)} = ${money(pkg.additional_cost)}`);
+                }
+            }
+            const details = pkg.inclusion_details?.length ? pkg.inclusion_details : (pkg.inclusions || []).map((name) => ({ name, description: "" }));
+            if (details.length) appendSummaryRow(summary, "Package inclusions", details.map((item) => (item.description ? `${item.name} (${item.description})` : item.name)).join("; "));
+        }
         appendSummaryRow(summary, "Quantity", `${order.customization.quantity} pcs`);
         if (typeof order.pricing?.unit_price === "number") appendSummaryRow(summary, "Price per piece", `${money(order.pricing.unit_price)} (estimate)`);
         specificationRows(order).forEach(([label, value]) => appendSummaryRow(summary, label, value));
@@ -464,15 +502,13 @@
             : `${money(order.total_amount)}${quoteWaiting ? " (quotation, not yet accepted)" : ""}`);
         const payment = order.payment || {};
         const cod = payment.payment_option === "cod";
-        appendSummaryRow(summary, "Payment option", payment.payment_option_label || "50% Down Payment");
-        if (payment.payment_option_chosen) {
-            if (cod) {
-                appendSummaryRow(summary, "Down payment", "Not required (Cash on Delivery)");
-            } else if (payment.down_payment_required !== null && payment.down_payment_required !== undefined) {
-                appendSummaryRow(summary, "50% down payment", `${money(payment.down_payment_required)} · ${payment.down_payment_status}`);
-            }
+        appendSummaryRow(summary, "Payment", payment.payment_option_label || "50% Down Payment");
+        if (cod) {
+            appendSummaryRow(summary, "Down payment", "Not required (Cash on Delivery)");
+        } else if (payment.down_payment_required !== null && payment.down_payment_required !== undefined) {
+            appendSummaryRow(summary, "50% down payment", `${money(payment.down_payment_required)} · ${payment.down_payment_status}`);
         }
-        if (order.total_amount !== null && payment.payment_option_chosen) {
+        if (order.total_amount !== null && payment.payment_option_chosen && !quoteWaiting) {
             appendSummaryRow(summary, "Payment received (verified)", money(payment.amount_paid));
             if (payment.pending_verification) appendSummaryRow(summary, "Waiting for verification", money(payment.pending_verification));
             appendSummaryRow(summary, cod ? "Due on delivery / pickup" : "Remaining balance", money(payment.balance));
@@ -509,6 +545,7 @@
         renderQuotationPanel(order);
         renderPaymentPanel(order);
         const pendingStatuses = ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"];
+        // Confirmed orders have a verified payment, so they are never cancellable here.
         const hasPendingPayment = (order.payment_submissions || []).some((item) => item.status === "pending");
         const canCancel = pendingStatuses.includes(order.status) && order.payments.length === 0 && !hasPendingPayment;
         const cancelButton = document.querySelector("#cancel-order");
@@ -592,19 +629,22 @@
         }
     });
 
-    document.querySelector("#approve-draft").addEventListener("click", (event) => {
-        if (!currentOrder || !window.confirm("Approve this draft? The administrator may then move the order to printing.")) return;
-        void orderAction("approve", {}, "The draft approval could not be recorded.", event.currentTarget);
+    document.querySelector("#approve-draft").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        if (!currentOrder || !(await window.PrintConfirm("Approve this draft? The administrator may then move the order to printing.", { title: "Approve draft?", confirmLabel: "Approve draft" }))) return;
+        void orderAction("approve", {}, "The draft approval could not be recorded.", button);
     });
 
-    document.querySelector("#request-draft-changes").addEventListener("click", (event) => {
-        if (!currentOrder || !window.confirm("Ask the shop to revise this draft?")) return;
-        void orderAction("request-changes", { note: "Customer requested changes to the draft layout." }, "The change request could not be recorded.", event.currentTarget);
+    document.querySelector("#request-draft-changes").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        if (!currentOrder || !(await window.PrintConfirm("Ask the shop to revise this draft?", { title: "Request changes?", confirmLabel: "Request changes" }))) return;
+        void orderAction("request-changes", { note: "Customer requested changes to the draft layout." }, "The change request could not be recorded.", button);
     });
 
-    document.querySelector("#cancel-order").addEventListener("click", (event) => {
-        if (!currentOrder || !window.confirm("Cancel this request? This cannot be undone.")) return;
-        void orderAction("cancel", {}, "The request could not be cancelled.", event.currentTarget);
+    document.querySelector("#cancel-order").addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        if (!currentOrder || !(await window.PrintConfirm("Cancel this request? This cannot be undone.", { title: "Cancel request?", confirmLabel: "Cancel request", tone: "danger" }))) return;
+        void orderAction("cancel", {}, "The request could not be cancelled.", button);
     });
 
     const parameters = new URLSearchParams(window.location.search);

@@ -132,6 +132,7 @@
     background: var(--status-neutral) !important;
 }
 
+.status-badge.confirmed::before,
 .status-badge.completed::before,
 .status-badge.fully-paid::before,
 .status-badge.verified::before,

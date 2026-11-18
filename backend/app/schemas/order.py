@@ -17,7 +17,7 @@ class OrderSubmission(BaseModel):
     files: Any = None
     # Files attached to product-specific upload fields, keyed by field key: {"photo_upload": [{name, dataUrl}]}.
     field_files: Any = None
-    # Package orders: "down_payment" (50%) or "cod" (cash on delivery). Customized orders choose after the quotation.
+    # Optional; every order requires the 50% down payment ("down_payment"). "cod" is refused.
     payment_option: Any = None
     # {"method": "pickup"} or {"method": "delivery", "recipient_name", "contact_number", "street", "barangay",
     #  "city", "province", "landmark"}.
@@ -45,16 +45,27 @@ class CustomerOrderChanges(CustomerOrderAction):
 class CustomerQuotationResponse(CustomerOrderAction):
     # The quotation revision the customer saw, so a revised quotation is never accepted unseen.
     quotation_revision: Any = None
+    # Optional; only "down_payment" is accepted (Cash on Delivery is no longer offered).
     payment_option: Any = None
     reason: Any = ""
 
 
 class CustomerPaymentSubmission(CustomerOrderAction):
+    # Optional: the amount is calculated by the server. A value that differs from the amount due is refused.
     amount: Any = None
+    # Optional: customers pay through GCash.
     method: Any = None
+    # The GCash reference number.
     reference: Any = ""
-    # Optional screenshot or receipt: {"name": "...", "dataUrl": "data:image/png;base64,..."}.
+    # Required GCash screenshot or receipt: {"name": "...", "dataUrl": "data:image/png;base64,..."}.
     proof: Any = None
+
+
+class NotificationsRead(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    # Notification ids to mark as read; omit to mark all of them.
+    ids: Any = None
 
 
 class AdminQuotation(BaseModel):
@@ -62,7 +73,7 @@ class AdminQuotation(BaseModel):
 
     total_amount: Any = None
     payment_instructions: Any = ""
-    # Whether the customer may choose Cash on Delivery when accepting this quotation.
+    # Cash on Delivery is no longer offered: true is refused.
     cod_allowed: Any = None
     # Optional message shown to the customer with the quotation.
     note: Any = ""

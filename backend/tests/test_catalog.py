@@ -691,9 +691,10 @@ class PaymentOptionTests(CatalogTestCase):
         created = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS, payment_option="down_payment")
         self.assertEqual(created.status_code, 201, created.text)
         body = created.json()
-        # Customized orders choose how to pay only after accepting the quotation.
-        self.assertEqual(body["payment"]["payment_option"], "")
-        self.assertEqual(body["payment"]["payment_option_label"], "Chosen after the quotation is accepted")
+        # Every order uses the 50% down payment; a customized order's amount waits for the quotation.
+        self.assertEqual(body["payment"]["payment_option"], "down_payment")
+        self.assertIsNone(body["payment"]["down_payment_required"])
+        self.assertEqual(body["payment"]["down_payment_status"], "Due after quotation")
         admin = self.admin()
         self.quote(admin, body["reference"], 500)
         quoted = self.accept(shopper, account["email"], admin.get(f"/api/admin/orders/{body['reference']}").json(), "down_payment")
@@ -705,52 +706,55 @@ class PaymentOptionTests(CatalogTestCase):
         self.assertEqual(draft.status_code, 409, "A draft needs the down payment first.")
         paid = admin.post(f"/api/admin/orders/{body['reference']}/payments", json={"amount": 250, "method": "GCash", "received": True, "expected_version": quoted["version"]})
         self.assertEqual(paid.status_code, 200, paid.text)
-        self.assertEqual(paid.json()["status"], "Draft Preparation")
+        self.assertEqual(paid.json()["status"], "Confirmed")
         self.assertEqual(paid.json()["payment"]["down_payment_status"], "Paid")
         self.assertEqual(paid.json()["payment"]["balance"], 250.0)
+        draft = admin.post(f"/api/admin/orders/{body['reference']}/draft", json={"file": {"name": "draft.png", "dataUrl": PNG}, "expected_version": paid.json()["version"]})
+        self.assertEqual(draft.status_code, 200, draft.text)
+        self.assertEqual(draft.json()["status"], "Awaiting Customer Approval")
 
-    def test_cash_on_delivery_needs_no_down_payment(self) -> None:
+    def test_cash_on_delivery_is_not_offered(self) -> None:
         shopper, account = self.customer()
-        created = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS, payment_option="cod")
-        self.assertEqual(created.status_code, 201, created.text)
+        refused = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS, payment_option="cod")
+        self.assertEqual(refused.status_code, 422, refused.text)
+        created = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS)
         reference = created.json()["reference"]
         admin = self.admin()
-        quoted = self.accept(shopper, account["email"], self.quote(admin, reference, 400, cod_allowed=True), "cod")
-        self.assertEqual(quoted["status"], "Awaiting COD Confirmation")
-        self.assertEqual(quoted["payment"]["down_payment_required"], 0.0)
-        confirmed = admin.post(f"/api/admin/orders/{reference}/confirm-cod", json={"expected_version": quoted["version"]})
-        self.assertEqual(confirmed.status_code, 200, confirmed.text)
-        quoted = confirmed.json()
-        self.assertEqual(quoted["status"], "Draft Preparation", "A confirmed COD order skips the down payment stage.")
-        self.assertEqual(quoted["payment"]["down_payment_status"], "Not required (COD)")
-        detail = admin.get(f"/api/admin/orders/{reference}").json()
-        self.assertTrue(detail["actions"]["send_draft"])
-        self.assertEqual(detail["summary"]["payment_option"], "cod")
-        draft = admin.post(f"/api/admin/orders/{reference}/draft", json={"file": {"name": "draft.png", "dataUrl": PNG}, "expected_version": quoted["version"]})
-        self.assertEqual(draft.status_code, 200, draft.text)
-        listing = admin.get("/api/admin/orders", params={"payment_option": "cod", "page_size": 100}).json()["items"]
-        self.assertIn(reference, [row["reference"] for row in listing])
-        self.assertTrue(all(row["payment_option"] == "cod" for row in listing))
+        version = admin.get(f"/api/admin/orders/{reference}").json()["version"]
+        review = admin.post(f"/api/admin/orders/{reference}/status", json={"status": "Under Review", "expected_version": version}).json()
+        cod_quote = admin.post(f"/api/admin/orders/{reference}/quotation", json={"total_amount": 400, "cod_allowed": True, "expected_version": review["version"]})
+        self.assertEqual(cod_quote.status_code, 422, cod_quote.text)
+        quoted = self.quote_only(admin, reference, 400, review["version"])
+        refused = shopper.post(
+            f"/api/orders/{reference}/quotation/accept",
+            json={"email": account["email"], "payment_option": "cod", "quotation_revision": quoted["quotation"]["revision"]},
+        )
+        self.assertEqual(refused.status_code, 422, refused.text)
+        self.assertEqual(self.accept(shopper, account["email"], quoted, "down_payment")["payment"]["down_payment_required"], 200.0)
+        self.assertEqual(admin.post(f"/api/admin/orders/{reference}/confirm-cod", json={}).status_code, 404)
+
+    def quote_only(self, admin: TestClient, reference: str, amount: float, version: int) -> dict:
+        quoted = admin.post(f"/api/admin/orders/{reference}/quotation", json={"total_amount": amount, "expected_version": version})
+        self.assertEqual(quoted.status_code, 200, quoted.text)
+        return quoted.json()
 
     def test_invalid_payment_option_is_rejected(self) -> None:
         shopper, account = self.customer()
         response = self.order(shopper, account["email"], "white-mug", 1, MUG_OPTIONS, payment_option="credit")
         self.assertEqual(response.status_code, 422)
 
-    def test_admin_can_switch_the_payment_option_before_payment(self) -> None:
+    def test_admin_cannot_switch_an_order_to_cash_on_delivery(self) -> None:
         shopper, account = self.customer()
         created = self.order(shopper, account["email"], "white-mug", 1, MUG_OPTIONS)
         reference = created.json()["reference"]
         admin = self.admin()
         quoted = self.accept(shopper, account["email"], self.quote(admin, reference, 300), "down_payment")
         self.assertEqual(quoted["status"], "Awaiting Down Payment")
+        self.assertFalse(admin.get(f"/api/admin/orders/{reference}").json()["actions"]["change_payment_option"])
         switched = admin.post(f"/api/admin/orders/{reference}/payment-option", json={"payment_option": "cod", "expected_version": quoted["version"]})
-        self.assertEqual(switched.status_code, 200, switched.text)
-        self.assertEqual((switched.json()["payment_option"], switched.json()["status"]), ("cod", "Draft Preparation"))
-        paid = admin.post(f"/api/admin/orders/{reference}/payments", json={"amount": 100, "method": "Cash", "received": True, "expected_version": switched.json()["version"]})
-        self.assertEqual(paid.status_code, 200, paid.text)
-        blocked = admin.post(f"/api/admin/orders/{reference}/payment-option", json={"payment_option": "down_payment", "expected_version": paid.json()["version"]})
-        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(switched.status_code, 422, switched.text)
+        same = admin.post(f"/api/admin/orders/{reference}/payment-option", json={"payment_option": "down_payment", "expected_version": quoted["version"]})
+        self.assertEqual(same.status_code, 409, same.text)
 
 
 class MockupTests(CatalogTestCase):

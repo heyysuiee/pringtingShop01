@@ -109,10 +109,15 @@ class InvitationPackage(TypedDict):
     price: float
     size: str
     material: str
+    # Inclusion names; inclusion_details has [{"name", "description"}] in the same order.
     inclusions: list[str]
+    inclusion_details: list[dict[str, str]]
     add_on_label: str
+    # Price of each piece above the minimum; None means the package is ordered at exactly the minimum.
     add_on_price: float | None
+    # The minimum order (pieces covered by the base price). minimum_quantity is the same value.
     included_quantity: int
+    minimum_quantity: int
     image: str
     images: list[str]
     sort_order: int

@@ -38,6 +38,7 @@ from backend.app.models.catalog import (
     InvitationPackage,
 )
 from backend.app.repositories import catalog_repository, package_repository
+from backend.app.models.order import DOWN_PAYMENT_RATE
 
 
 CURRENCY = "PHP"
@@ -322,12 +323,22 @@ def orderable_package(product: CatalogProduct, package_id: Any) -> InvitationPac
     return package
 
 
+def package_quantity_range(product: CatalogProduct, package: InvitationPackage) -> tuple[int, int]:
+    """(minimum, maximum) pieces for a package order.
+
+    The package's own minimum order (its included quantity) applies, not the product's customization
+    minimum: each package has its own settings. Without an add-on price the package has a fixed quantity.
+    """
+    low = package["included_quantity"]
+    if package["add_on_price"] is None:
+        return low, low
+    return low, max(low, min(product["max_quantity"], MAX_QUANTITY))
+
+
 def package_quantity(product: CatalogProduct, package: InvitationPackage, requested: int) -> int:
     """The nearest quantity a package can be ordered at (used for live estimates only)."""
-    if package["add_on_price"] is None:
-        return package["included_quantity"]
-    low = max(product["min_quantity"], package["included_quantity"])
-    return max(low, min(requested, min(product["max_quantity"], MAX_QUANTITY)))
+    low, high = package_quantity_range(product, package)
+    return max(low, min(requested, high))
 
 
 def package_fields(product: CatalogProduct) -> CatalogProduct:
@@ -492,8 +503,11 @@ def _package_specifications(package: InvitationPackage) -> list[dict[str, str]]:
         rows.append({"key": "package_size", "label": "Size", "value": package["size"], "type": "text"})
     if package["material"]:
         rows.append({"key": "package_material", "label": "Material", "value": package["material"], "type": "text"})
-    if package["inclusions"]:
-        rows.append({"key": "package_inclusions", "label": "Inclusions", "value": "; ".join(package["inclusions"]), "type": "text"})
+    details = package.get("inclusion_details") or [{"name": name, "description": ""} for name in package["inclusions"]]
+    if details:
+        value = "; ".join(f"{item['name']} ({item['description']})" if item.get("description") else item["name"] for item in details)
+        rows.append({"key": "package_inclusions", "label": "Inclusions", "value": value, "type": "text"})
+    rows.append({"key": "package_minimum", "label": "Minimum order", "value": f"{package['included_quantity']:,} pcs", "type": "text"})
     if package["add_on_price"] is not None:
         label = package["add_on_label"] or "Additional pieces"
         rows.append({
@@ -513,23 +527,34 @@ def _package_pricing(
 ) -> dict[str, Any]:
     """Price a package order from the package's published price, its add-on charge, and the price
     adjustments of the options the customer chose in the "options" section (paper finish, envelope).
+
+        additional cost = (quantity - minimum quantity) x additional price per piece
+        total           = base package price + additional cost (+ option adjustments)
+
+    A quantity below the package's minimum order is refused; so is any other quantity for a package
+    without an additional price per piece.
     """
     included = package["included_quantity"]
     price = round(package["price"], 2)
     add_on = package["add_on_price"]
-    lines = [{"label": package["name"], "detail": f"{included:,} pcs included", "amount": price}]
+    lines = [{"label": package["name"], "detail": f"Base package price · {included:,} pcs (minimum order)", "amount": price}]
+    extra = 0
+    additional_cost = 0.0
     if add_on is None:
         if quantity != included:
             raise _bad(f"{package['name']} is ordered at exactly {included:,} pieces. Change the quantity to {included:,}.")
         total = price
     else:
-        extra = max(0, quantity - included)
-        total = round(price + extra * float(add_on), 2)
+        if quantity < included:
+            raise _bad(f"The minimum order for {package['name']} is {included:,} pieces.")
+        extra = quantity - included
+        additional_cost = round(extra * float(add_on), 2)
+        total = round(price + additional_cost, 2)
         if extra:
             lines.append({
                 "label": package["add_on_label"] or "Additional pieces",
-                "detail": f"{extra:,} additional pcs × {money(float(add_on))}",
-                "amount": round(extra * float(add_on), 2),
+                "detail": f"({quantity:,} − {included:,}) = {extra:,} additional pcs × {money(float(add_on))}",
+                "amount": additional_cost,
             })
     reasons: list[str] = []
     if scoped is not None and selections:
@@ -577,7 +602,13 @@ def _package_pricing(
         "package_name": package["name"],
         "package_price": price,
         "included_quantity": included,
+        "minimum_quantity": included,
         "add_on_price": add_on,
+        "additional_quantity": extra,
+        "additional_cost": additional_cost,
+        # Every order requires a 50% down payment; the split is calculated here, never by the browser.
+        "down_payment": round(estimated * DOWN_PAYMENT_RATE, 2) if estimated is not None else None,
+        "balance_after_down_payment": round(estimated - round(estimated * DOWN_PAYMENT_RATE, 2), 2) if estimated is not None else None,
     }
 
 
@@ -600,9 +631,18 @@ def evaluate_order(
     """
     if isinstance(quantity, bool) or not isinstance(quantity, int):
         raise _bad("Quantity must be a whole number.")
-    low, high = product["min_quantity"], min(product["max_quantity"], MAX_QUANTITY)
-    if quantity < low or quantity > high:
-        raise _bad(f"Quantity for {product['name']} must be between {low:,} and {high:,} pieces (minimum order {low:,}).")
+    if package is not None:
+        low, high = package_quantity_range(product, package)
+        if low == high and quantity != low:
+            raise _bad(f"{package['name']} is ordered at exactly {low:,} pieces. Change the quantity to {low:,}.")
+        if quantity < low:
+            raise _bad(f"The minimum order for {package['name']} is {low:,} pieces.")
+        if quantity > high:
+            raise _bad(f"Quantity for {package['name']} must be {high:,} pieces or fewer.")
+    else:
+        low, high = product["min_quantity"], min(product["max_quantity"], MAX_QUANTITY)
+        if quantity < low or quantity > high:
+            raise _bad(f"Quantity for {product['name']} must be between {low:,} and {high:,} pieces (minimum order {low:,}).")
     if not isinstance(raw_selections, dict):
         raw_selections = {}
     scoped = package_fields(product) if package is not None else _section_scoped(product, sections)

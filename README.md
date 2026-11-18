@@ -60,19 +60,34 @@ Forgot-password codes, the customer portal, and the order reference format are d
 
 ## Order, quotation, and payment workflow
 
-**Fixed-price package orders.** The order total is the package's published price plus its add-on rate, calculated by the server. The customer picks **50% Down Payment** or **Cash on Delivery (COD)** at checkout. The administrator confirms the order and shares the payment instructions (`POST /api/admin/orders/{ref}/confirm`). A down-payment order then waits for its verified 50%; a COD order goes straight to Draft Preparation.
+**Every order requires a 50% down payment** (package and customized orders alike). The down payment and the remaining 50% balance are calculated by the server from the agreed total and returned as `payment.down_payment_required`, `payment.remaining_after_down_payment`, and `payment.next_payment` (the amount the customer pays next). Cash on Delivery is no longer offered; orders placed while it was are still shown and finished, and the administrator can switch them to the down payment.
+
+**Fixed-price package orders.** Package prices and inclusions are edited in Admin → Package Management and appear on the order page immediately. The order total is the package's published price plus its add-on rate, calculated by the server, and the package's name, price, and inclusions are saved with the order (`customization.package`), so later package edits never change existing orders. The administrator approves the order and shares the GCash instructions (`POST /api/admin/orders/{ref}/confirm`); the customer is notified and the order waits for the down payment.
+
+**Packages for every service.** Any product (invitations, souvenirs, stickers, Sintra boards, party needs, tarpaulins and large format) can have packages, managed in Admin → Package Management or from the product's editor. Each package has its own base price, minimum order quantity (`included_quantity`, also returned as `minimum_quantity`), optional additional price per piece (`add_on_price`; blank means a fixed quantity), and inclusions (`inclusion_details`: name + optional description; `inclusions` lists the names). The server calculates `total = base price + (quantity − minimum) × additional price` for the live estimate and again when the order is saved, refusing quantities below the package minimum. No packages are created for these services automatically; the shop adds its own.
 
 **Customized orders** (and packages whose options need a quote):
 
-1. The customer submits specifications and reference images. No payment option is chosen yet.
-2. The administrator reviews the request and enters the quotation by hand (`/quotation`, with `cod_allowed`). Prices are never calculated for customized orders; the catalog estimate is shown only as a reference.
-3. The customer accepts or declines it in the customer portal (`/api/orders/{ref}/quotation/accept|decline`). Accepting means choosing the 50% down payment, or COD only when the administrator allowed it. A declined quotation can be revised and sent again; a revision clears any earlier acceptance.
-4. For a down payment, the customer reports the payment with its reference number and an optional proof image (`/api/orders/{ref}/payments`). The administrator verifies or rejects it (`/payment-submissions/{id}/verify|reject`). For COD, the administrator confirms the arrangement (`/confirm-cod`) or declines COD by re-sending the quotation without it.
-5. Draft → customer approval or revision requests → **In Production** (needs an approved draft and the verified down payment) → **Ready for Pickup** or **Out for Delivery** (from the order's fulfillment choice) → **Completed** (only when fully paid).
+1. The customer submits specifications and reference images. No price is assigned; the catalog estimate is shown to the administrator only as a reference.
+2. The administrator enters the customization price by hand (`/quotation`) and can revise it until money is reported. Every quotation is kept in `quotation_history` (revision, amount, previous amount, note, sent time, sender, the customer's response, and when it was superseded). The customer is notified of each new or revised quotation.
+3. The customer reviews the latest quotation and clicks **Accept Quotation** or **Decline Quotation** (`/api/orders/{ref}/quotation/accept|decline`, with the `quotation_revision` they saw). An outdated revision is refused. Accepting moves the order to Awaiting Down Payment; a declined quotation can never be paid, and the administrator may send a revised one.
 
-**Delivery or pickup** is chosen at checkout, independent of the payment option. Delivery requires the recipient name, contact number, house number/street, barangay, city/municipality, and province (landmark optional). Orders placed before this existed count as store pickup.
+**Payment and confirmation (both order types).**
 
-**Payment safeguards.** A reported payment never counts as paid until it is verified, and only one can wait for verification at a time. While one is pending, the administrator cannot record a separate payment for the same order. A submission can be verified once and becomes exactly one payment record. A payment reference number can be used only once across all orders. Payments cannot exceed the balance. Nothing can be paid before a package order is confirmed or a customized quotation is accepted, and orders with reported or recorded payments cannot be cancelled from the portal. Outstanding balances and customer transaction totals count only agreed prices: an unaccepted quotation or an unconfirmed package order is not money owed.
+1. The customer pays through GCash and submits the GCash reference number with the screenshot or receipt (`/api/orders/{ref}/payments`). The amount is set by the server; a different amount is refused. The submission is saved as **Pending Verification** and never counts as paid.
+2. The administrator verifies or rejects it (`/payment-submissions/{id}/verify|reject`). When verified payments cover the 50% down payment, the order moves automatically to **Confirmed** (an active order) and the customer is notified once that the down payment is verified and the order is confirmed. Nothing else, including an uploaded screenshot or a manual status change, can confirm an order.
+3. Confirmed → Draft Preparation → customer approval or revision requests → **In Production** (needs an approved draft and the verified down payment) → **Ready for Pickup** or **Out for Delivery** (from the order's fulfillment choice) → **Completed** (only when fully paid; the balance is paid the same way or recorded by the administrator).
+
+**Delivery or pickup** is chosen at checkout, independent of payment. Delivery requires the recipient name, contact number, house number/street, barangay, city/municipality, and province (landmark optional). Orders placed before this existed count as store pickup.
+
+**Order security.**
+
+- Only the signed-in account that owns an order can accept or decline a quotation, submit a payment, approve a draft, or cancel. An email address and reference number are enough to view an order, never to change it.
+- Prices and payment amounts come from the server; values sent by the customer are ignored or refused. Only an administrator session can verify, reject, or record payments.
+- A submission can be verified once and becomes exactly one payment record; each action carries the order version, so a repeated or out-of-date action is refused with HTTP 409. Only one payment can wait for verification at a time, a GCash reference number can be used once across all orders, and payments cannot exceed the balance.
+- Customer notifications (`customer_notifications` table, `GET /api/account/notifications`, `POST /api/account/notifications/read`) have a unique key per event, so the same event never notifies twice. When SMTP is configured, each new notification is also emailed once.
+- Every important order, quotation, and payment change is written to the append-only `order_audit_log` table in the same transaction as the change (action, admin or customer, time, and details such as status and price before/after). Administrators see it under **Audit history** in the order details (`GET /api/admin/orders/{ref}/audit`).
+- Outstanding balances and customer transaction totals count only agreed prices: an unaccepted quotation or an unapproved package order is not money owed. Orders with reported or recorded payments cannot be cancelled.
 
 ## Admin side
 

@@ -61,7 +61,6 @@
 
     const MAX_REFERENCE_FILES = 3;
     const MAX_ORDER_FILES = 15;
-    const DOWN_PAYMENT_RATE = 0.5;
     const money = DynamicForm.money;
     const parameters = new URLSearchParams(window.location.search);
 
@@ -527,16 +526,19 @@
         const pkg = state.mode === "package" ? state.package : null;
 
         if (pkg) {
+            // Each package has its own minimum order (the pieces its base price covers).
+            const minimum = packageMinimum(pkg);
             if (pkg.add_on_price === null) {
-                min = pkg.included_quantity;
-                max = pkg.included_quantity;
+                min = minimum;
+                max = minimum;
                 preferred = min;
                 input.disabled = true;
-                hint.textContent = `This package is ordered at exactly ${min.toLocaleString()} pieces.`;
+                hint.textContent = `This package is ordered at exactly ${min.toLocaleString()} pieces for ${money(pkg.price)}.`;
             } else {
-                min = Math.max(product.min_quantity, pkg.included_quantity);
+                min = minimum;
+                max = Math.max(minimum, product.max_quantity);
                 preferred = min;
-                hint.textContent = `Includes ${pkg.included_quantity.toLocaleString()} pcs. Each additional piece is ${money(pkg.add_on_price)}${pkg.add_on_label ? ` (${pkg.add_on_label.toLowerCase()})` : ""}.`;
+                hint.textContent = `Minimum order: ${min.toLocaleString()} pcs for ${money(pkg.price)}. Each additional piece adds ${money(pkg.add_on_price)}${pkg.add_on_label ? ` (${pkg.add_on_label.toLowerCase()})` : ""}.`;
             }
         } else if (state.mode === "package") {
             hint.textContent = "Select a package to see its included quantity.";
@@ -567,6 +569,52 @@
     function onQuantityChange() {
         scheduleQuote();
         if (state.activeStep === REVIEW_STEP) renderSummary();
+    }
+
+    /** A typed quantity outside the allowed range snaps back to it (never below the minimum order). */
+    function clampQuantity(event) {
+        const input = event.currentTarget;
+        const min = Number(input.min) || 1;
+        const max = Number(input.max) || 50000;
+        const value = Math.round(Number(input.value));
+        const clamped = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
+        if (String(clamped) !== input.value) {
+            input.value = String(clamped);
+            onQuantityChange();
+        }
+    }
+
+    function packageMinimum(pkg) {
+        return pkg.minimum_quantity ?? pkg.included_quantity;
+    }
+
+    /** Inclusions with their descriptions (older packages have names only). */
+    function inclusionList(pkg) {
+        const details = Array.isArray(pkg.inclusion_details) && pkg.inclusion_details.length
+            ? pkg.inclusion_details
+            : (pkg.inclusions || []).map((name) => ({ name, description: "" }));
+        if (!details.length) return null;
+        const list = el("ul", "package-inclusions");
+        details.forEach((item) => {
+            const entry = el("li", "", item.name);
+            if (item.description) entry.append(el("span", "package-inclusion-description", ` — ${item.description}`));
+            list.append(entry);
+        });
+        return list;
+    }
+
+    /** Minimum order, base package price, and additional piece price, as published by the shop. */
+    function packageTerms(pkg) {
+        const terms = el("dl", "package-terms");
+        const add = (label, value) => {
+            const row = el("div", "package-term");
+            row.append(el("dt", "", label), el("dd", "", value));
+            terms.append(row);
+        };
+        add("Minimum order", `${packageMinimum(pkg).toLocaleString()} pcs`);
+        add("Package price", money(pkg.price));
+        add(pkg.add_on_label || "Additional piece", pkg.add_on_price === null ? "Not available (fixed quantity)" : `${money(pkg.add_on_price)} each`);
+        return terms;
     }
 
     // ---------------------------------------------------------------- ordering option (package or customize)
@@ -633,11 +681,9 @@
         const meta = [money(pkg.price), unit !== null ? `≈ ${money(unit)} per piece` : "", pkg.size, pkg.material].filter(Boolean).join(" · ");
         fragment.append(head, el("p", "selected-package-meta", meta));
         if (pkg.description) fragment.append(el("p", "field-hint", pkg.description));
-        if (pkg.inclusions?.length) {
-            const list = el("ul", "package-inclusions");
-            pkg.inclusions.forEach((item) => list.append(el("li", "", item)));
-            fragment.append(list);
-        }
+        fragment.append(packageTerms(pkg));
+        const inclusions = inclusionList(pkg);
+        if (inclusions) fragment.append(inclusions);
         const change = el("button", "btn btn-ghost-dark btn-small package-change", "Change package");
         change.type = "button";
         change.addEventListener("click", () => {
@@ -675,19 +721,16 @@
             if (unit !== null) price.append(el("span", "package-unit-price", ` ≈ ${money(unit)} per piece`));
             body.append(price);
             if (pkg.description) body.append(el("p", "package-description", pkg.description));
+            body.append(packageTerms(pkg));
             const meta = [];
             if (pkg.size) meta.push(pkg.size);
             if (pkg.material) meta.push(pkg.material);
-            if (pkg.included_quantity) meta.push(`${pkg.included_quantity.toLocaleString()} pcs included`);
             if (meta.length) body.append(el("p", "package-meta", meta.join(" · ")));
-            if (pkg.inclusions?.length) {
-                const list = el("ul", "package-inclusions");
-                pkg.inclusions.forEach((item) => list.append(el("li", "", item)));
-                body.append(list);
-            }
+            const inclusions = inclusionList(pkg);
+            if (inclusions) body.append(inclusions);
             body.append(el("p", "package-addon", pkg.add_on_price === null
-                ? `Ordered at exactly ${pkg.included_quantity.toLocaleString()} pieces.`
-                : `${pkg.add_on_label || "Additional pieces"}: ${money(pkg.add_on_price)} per additional piece.`));
+                ? `Ordered at exactly ${packageMinimum(pkg).toLocaleString()} pieces.`
+                : `You can order ${packageMinimum(pkg).toLocaleString()} pieces or more; each piece above ${packageMinimum(pkg).toLocaleString()} adds ${money(pkg.add_on_price)}.`));
             const select = el("button", "btn btn-dark package-select", selected ? "Selected ✓" : "Select Package");
             select.type = "button";
             select.setAttribute("aria-pressed", String(selected));
@@ -792,6 +835,16 @@
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
+    /** "₱300 + (25 − 20) × ₱15 = ₱375", from the server's calculation. */
+    function packageFormula(quote) {
+        const total = money(quote.estimated_total);
+        if (quote.add_on_price === null || !quote.additional_quantity) {
+            return `${quote.quantity.toLocaleString()} pcs · base package price ${money(quote.package_price)}${quote.estimated_total !== quote.package_price ? ` · total ${total}` : ""}`;
+        }
+        const formula = `${money(quote.package_price)} + (${quote.quantity.toLocaleString()} − ${quote.minimum_quantity.toLocaleString()}) × ${money(quote.add_on_price)} = ${money(quote.package_price + quote.additional_cost)}`;
+        return quote.estimated_total !== Math.round((quote.package_price + quote.additional_cost) * 100) / 100 ? `${formula} · with options ${total}` : formula;
+    }
+
     function estimateText(quote) {
         if (!quote) return "—";
         if (quote.estimated_total !== null) return money(quote.estimated_total);
@@ -809,7 +862,7 @@
         else if (quote.incomplete.length) status = quote.incomplete.join(" ");
         else if (quote.unit_price !== null) {
             status = quote.pricing_mode === "package"
-                ? `≈ ${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · package price, confirmed by the shop`
+                ? packageFormula(quote)
                 : `${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · estimate, confirmed by the shop`;
         } else status = "";
         reference.status.textContent = status;
@@ -842,37 +895,30 @@
         return quote.estimated_total !== null && quote.estimated_total > 0 && !quote.requires_quote;
     }
 
-    function paymentOption() {
-        return form.querySelector('input[name="payment-option"]:checked')?.value || "down_payment";
-    }
-
     function syncPaymentSection() {
         const fixed = isFixedPrice();
         $("#payment-options").hidden = !fixed;
         $("#payment-after-quote").hidden = fixed;
     }
 
+    /** The 50% down payment and remaining balance, as calculated by the server's price quote. */
     function paymentRows() {
         if (!isFixedPrice()) {
             return [
-                ["Payment option", "Chosen after you accept the shop's quotation"],
-                ["Down payment (50%)", "Half of the accepted quotation, if you choose the down payment"],
-                ["Cash on Delivery", "Available only when the shop allows it for your order"],
+                ["Payment", "50% Down Payment"],
+                ["Total", "Set by the shop's quotation (you accept or decline it first)"],
+                ["Down payment (50%)", "Half of the accepted quotation, verified by the shop"],
             ];
         }
-        const cod = paymentOption() === "cod";
-        const total = state.quote?.estimated_total ?? null;
-        const rows = [["Payment option", cod ? "Cash on Delivery (COD)" : "50% Down Payment"]];
-        if (total === null) {
-            rows.push(["Total", "Confirmed by the shop's quotation"]);
-            rows.push(cod ? ["Down payment", "Not required"] : ["Down payment (50%)", "Half of the confirmed total"]);
-            rows.push([cod ? "Due on delivery / pickup" : "Balance before release", cod ? "The full confirmed total" : "The other half"]);
+        const quote = state.quote || {};
+        const rows = [["Payment", "50% Down Payment"]];
+        if (typeof quote.down_payment !== "number" || typeof quote.estimated_total !== "number") {
+            rows.push(["Package total", "Calculating…"]);
             return rows;
         }
-        const down = cod ? 0 : Math.round(total * DOWN_PAYMENT_RATE * 100) / 100;
-        rows.push(["Package total", money(total)]);
-        rows.push(cod ? ["Down payment", "Not required (COD)"] : ["Down payment (50%)", money(down)]);
-        rows.push([cod ? "Due on delivery / pickup" : "Balance before release", money(Math.round((total - down) * 100) / 100)]);
+        rows.push(["Package total", money(quote.estimated_total)]);
+        rows.push(["Down payment (50%)", money(quote.down_payment)]);
+        rows.push(["Remaining balance (50%)", money(quote.balance_after_down_payment)]);
         return rows;
     }
 
@@ -887,14 +933,10 @@
             paymentBreakdown.append(row);
         });
         if (state.quote?.estimated_total !== null && state.quote?.estimated_total !== undefined) {
-            paymentBreakdown.append(el("p", "field-hint", "From the package's published price and add-on rate. The shop confirms the order before payment."));
+            paymentBreakdown.append(el("p", "field-hint", "From the package's published price and add-on rate. Pay the down payment after the shop approves your order; it is confirmed once the shop verifies your GCash payment."));
         }
     }
 
-    form.querySelectorAll('input[name="payment-option"]').forEach((input) => input.addEventListener("change", () => {
-        renderPaymentBreakdown();
-        if (state.activeStep === REVIEW_STEP) renderSummary();
-    }));
 
     // ---------------------------------------------------------------- delivery or store pickup
 
@@ -1154,11 +1196,12 @@
                 ["Package price", `${money(pkg.price)}${unit !== null ? ` (≈ ${money(unit)} per piece)` : ""}`],
                 ["Size", pkg.size],
                 ["Material", pkg.material],
-                ["Inclusions", pkg.inclusions.join("; ")],
-                ["Included quantity", `${pkg.included_quantity.toLocaleString()} pcs`],
-                ["Add-on", pkg.add_on_price === null
+                ["Inclusions", (pkg.inclusion_details?.length ? pkg.inclusion_details : pkg.inclusions.map((name) => ({ name, description: "" })))
+                    .map((item) => (item.description ? `${item.name} (${item.description})` : item.name)).join("; ")],
+                ["Minimum order", `${packageMinimum(pkg).toLocaleString()} pcs`],
+                ["Additional piece", pkg.add_on_price === null
                     ? "Not available — this package has a fixed quantity"
-                    : `${pkg.add_on_label || "Additional pieces"}: ${money(pkg.add_on_price)} each`],
+                    : `${pkg.add_on_label || "Additional piece"}: ${money(pkg.add_on_price)} each`],
             ]);
         }
 
@@ -1412,7 +1455,7 @@
                 product: { id: state.product.id },
                 customization,
                 // Customized orders choose the payment option after accepting the quotation.
-                payment_option: isFixedPrice() ? paymentOption() : null,
+                payment_option: "down_payment",
                 fulfillment: fulfillmentPayload(),
                 has_event: state.invitation ? true : !eventFields.hidden,
                 event: state.invitation || eventFields.hidden ? {} : eventData(),
@@ -1450,16 +1493,15 @@
         if (order.fixed_price) {
             lines.push(
                 el("p", "", `Package total: ${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece)` : ""}.`),
-                el("p", "", `Payment option: ${payment.payment_option_label}${payment.payment_option === "cod"
-                    ? " · no down payment; pay the full amount on delivery or pickup"
-                    : ` · 50% down payment ${money(payment.down_payment_required)}, balance ${money(payment.remaining_after_down_payment)}`}. Pay after the shop confirms your order.`),
+                el("p", "", `50% down payment: ${money(payment.down_payment_required)} · remaining balance ${money(payment.remaining_after_down_payment)}. `
+                    + "Pay the down payment through GCash after the shop approves your order; your order is confirmed once the shop verifies it."),
             );
         } else {
             lines.push(
                 el("p", "", estimate !== null && estimate !== undefined
                     ? `Estimated total: ${money(estimate)} — the shop will send a quotation for you to accept or decline.`
                     : "The shop will send a quotation for you to accept or decline."),
-                el("p", "", "After you accept the quotation, choose the 50% down payment or, when the shop allows it, Cash on Delivery."),
+                el("p", "", "You will be notified in the customer portal when the quotation is ready. After you accept it, pay the 50% down payment through GCash; your order is confirmed once the shop verifies it."),
             );
         }
         lines.push(el("p", "", `Fulfillment: ${fulfillment.label || "Store Pickup"}${fulfillment.method === "delivery"
@@ -1478,7 +1520,10 @@
         state.product = null;
         populateProducts("");
     });
-    [generalQuantity, invitationQuantity].forEach((input) => input.addEventListener("input", onQuantityChange));
+    [generalQuantity, invitationQuantity].forEach((input) => {
+        input.addEventListener("input", onQuantityChange);
+        input.addEventListener("change", clampQuantity);
+    });
     form.querySelectorAll("[data-quantity-step]").forEach((button) => {
         button.addEventListener("click", () => {
             const input = button.closest(".quantity-control")?.querySelector("input");
@@ -1503,8 +1548,8 @@
     });
     $("#btn-back").addEventListener("click", () => moveStep(-1));
     $("#edit-order").addEventListener("click", () => showStep(state.invitation ? 3 : 8));
-    $("#btn-cancel").addEventListener("click", () => {
-        if (window.confirm("Cancel this order request and return to the product catalog?")) window.location.assign("/services");
+    $("#btn-cancel").addEventListener("click", async () => {
+        if (await window.PrintConfirm("Cancel this order request and return to the product catalog?", { title: "Cancel this order?", confirmLabel: "Cancel order", cancelLabel: "Keep ordering", tone: "danger" })) window.location.assign("/services");
     });
     form.addEventListener("input", () => {
         if (state.activeStep === REVIEW_STEP) renderSummary();

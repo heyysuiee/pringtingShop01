@@ -79,18 +79,32 @@ def orderable_package(product: CatalogProduct, package_id: Any) -> InvitationPac
     return catalog_services.orderable_package(product, package_id)
 
 
-def _inclusions(value: Any) -> list[str]:
+def _inclusions(value: Any) -> list[dict[str, str]]:
+    """Inclusions as [{"name", "description"}]. Plain text items (older admin screens) are names without a description."""
     if not isinstance(value, list) or len(value) > 50:
         raise _bad("Inclusions must be a list with at most 50 items.")
     cleaned = []
     for item in value:
-        if not isinstance(item, str):
-            raise _bad("Each inclusion must be text.")
-        item = item.strip()
-        if len(item) > 200:
-            raise _bad("Each inclusion must be 200 characters or fewer.")
-        if item:
-            cleaned.append(item)
+        if isinstance(item, str):
+            item = {"name": item, "description": ""}
+        if not isinstance(item, dict):
+            raise _bad("Each inclusion needs a name.")
+        name = item.get("name")
+        description = item.get("description", "")
+        if description is None:
+            description = ""
+        if not isinstance(name, str) or not isinstance(description, str):
+            raise _bad("Inclusion names and descriptions must be text.")
+        name, description = name.strip(), description.strip()
+        if not name:
+            if description:
+                raise _bad("Each inclusion needs a name.")
+            continue
+        if len(name) > 200:
+            raise _bad("Each inclusion name must be 200 characters or fewer.")
+        if len(description) > 500:
+            raise _bad("Each inclusion description must be 500 characters or fewer.")
+        cleaned.append({"name": name, "description": description})
     if not cleaned:
         raise _bad("Add at least one inclusion for this package.")
     return cleaned
@@ -98,6 +112,9 @@ def _inclusions(value: Any) -> list[str]:
 
 def _package_values(payload: dict[str, Any], current: InvitationPackage | None) -> dict[str, Any]:
     creating = current is None
+    if "minimum_quantity" in payload and "included_quantity" not in payload:
+        # The minimum order is stored as the package's included quantity (the pieces the base price covers).
+        payload = {**payload, "included_quantity": payload["minimum_quantity"]}
 
     def wants(key: str) -> bool:
         return creating or key in payload
@@ -123,7 +140,7 @@ def _package_values(payload: dict[str, Any], current: InvitationPackage | None) 
     if wants("add_on_price"):
         values["add_on_price"] = _price(payload.get("add_on_price"), "Add-on price", allow_none=True)
     if wants("included_quantity"):
-        values["included_quantity"] = _int(payload, "included_quantity", "Included quantity", 1, MAX_QUANTITY, 20)
+        values["included_quantity"] = _int(payload, "included_quantity", "Minimum quantity", 1, MAX_QUANTITY, 20)
     images = catalog_services.resolve_images(payload, current["images"] if current else [], creating=creating, label="Package")
     if images is not None:
         values["images"] = images

@@ -471,8 +471,8 @@
         const actions = h("div", { className: "dialog-actions" });
         if (category) {
             const remove = h("button", { className: "button button-danger", type: "button", text: "Delete category" });
-            remove.addEventListener("click", () => {
-                if (!window.confirm(`Delete the category “${category.label}”? Only empty categories can be deleted.`)) return;
+            remove.addEventListener("click", async () => {
+                if (!(await UI().confirm({ title: "Delete category?", message: `Delete the category “${category.label}”? Only empty categories can be deleted.`, confirmLabel: "Delete category", tone: "danger" }))) return;
                 void guarded(remove, async () => {
                     state.catalog = { ...state.catalog, ...(await api("DELETE", `/api/admin/catalog/categories/${encodeURIComponent(category.id)}`)) };
                     closeDialog();
@@ -555,8 +555,8 @@
         if (product) {
             actions.append(h("a", { className: "button", href: orderPreviewUrl(product), target: "_blank", rel: "noopener", text: "Preview order form ↗" }));
             const remove = h("button", { className: "button button-danger", type: "button", text: "Delete product" });
-            remove.addEventListener("click", () => {
-                if (!window.confirm(`Delete “${product.name}” and its order-form fields? Existing orders keep their saved details. To keep it for later, mark it Unavailable instead.`)) return;
+            remove.addEventListener("click", async () => {
+                if (!(await UI().confirm({ title: "Delete product?", message: `Delete “${product.name}” and its order-form fields? Existing orders keep their saved details. To keep it for later, mark it Unavailable instead.`, confirmLabel: "Delete product", tone: "danger" }))) return;
                 void guarded(remove, async () => {
                     await api("DELETE", `/api/admin/catalog/products/${encodeURIComponent(product.id)}`);
                     removeProduct(product.id);
@@ -648,8 +648,8 @@
             up.addEventListener("click", () => move(-1));
             down.addEventListener("click", () => move(1));
             edit.addEventListener("click", () => openFieldEditor(product.id, field.id));
-            remove.addEventListener("click", () => {
-                if (!window.confirm(`Delete the “${field.label}” question from ${product.name}?`)) return;
+            remove.addEventListener("click", async () => {
+                if (!(await UI().confirm({ title: "Delete question?", message: `Delete the “${field.label}” question from ${product.name}?`, confirmLabel: "Delete", tone: "danger" }))) return;
                 void guarded(remove, async () => {
                     const result = await api("DELETE", `/api/admin/catalog/fields/${encodeURIComponent(field.id)}`);
                     storeProduct(result.product);
@@ -697,7 +697,7 @@
                     return;
                 }
                 listHost.replaceChildren(h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
-                    h("thead", {}, h("tr", {}, ...["", "Package", "Price", "Included", "Add-on", "Availability", ""].map((text) => h("th", { scope: "col", text })))),
+                    h("thead", {}, h("tr", {}, ...["", "Package", "Base price", "Minimum order", "Additional piece", "Availability", ""].map((text) => h("th", { scope: "col", text })))),
                     h("tbody", {}, ...packages.map((pkg) => packageRow(product, pkg, reload))),
                 )));
             } catch (error) {
@@ -718,8 +718,8 @@
             });
         });
         const remove = h("button", { className: "button button-small button-danger", type: "button", text: "Delete" });
-        remove.addEventListener("click", () => {
-            if (!window.confirm(`Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, deactivate it instead.`)) return;
+        remove.addEventListener("click", async () => {
+            if (!(await UI().confirm({ title: "Delete package?", message: `Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, deactivate it instead.`, confirmLabel: "Delete package", tone: "danger" }))) return;
             void guarded(remove, async () => {
                 await api("DELETE", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`);
                 toast("Package deleted.");
@@ -734,17 +734,65 @@
         const edit = h("button", { className: "button button-small", type: "button", text: "Edit" });
         edit.addEventListener("click", () => openPackageEditor(product, pkg, { back: () => openProductEditor(product.id) }));
         const addOn = pkg.add_on_price === null || pkg.add_on_price === undefined
-            ? "—"
-            : `${pkg.add_on_label || "Add-on"} ${money(pkg.add_on_price)}`;
+            ? "Fixed quantity"
+            : `${money(pkg.add_on_price)} each${pkg.add_on_label ? ` (${pkg.add_on_label})` : ""}`;
         return h("tr", {},
             h("td", {}, thumb(pkg)),
             h("td", {}, h("span", { className: "table-primary", text: pkg.name }), h("span", { className: "table-secondary", text: `${pkg.inclusions.length} inclusion${pkg.inclusions.length === 1 ? "" : "s"} · ${imagesOf(pkg).length} photo${imagesOf(pkg).length === 1 ? "" : "s"}${pkg.size ? ` · ${pkg.size}` : ""}` })),
             h("td", {}, h("span", { className: "table-primary", text: money(pkg.price) }), h("span", { className: "table-secondary", text: perPieceText(pkg) })),
-            h("td", { text: `${pkg.included_quantity} pcs` }),
+            h("td", { text: `Min. ${pkg.included_quantity} pcs` }),
             h("td", { text: addOn }),
             h("td", {}, statusBadge(pkg.active, "Active", "Inactive")),
             h("td", {}, h("div", { className: "catalog-row-actions" }, toggle, edit, remove)),
         );
+    }
+
+    /** Inclusions of a package as [{name, description}] (older packages only have names). */
+    function inclusionDetails(pkg) {
+        if (Array.isArray(pkg?.inclusion_details) && pkg.inclusion_details.length) return pkg.inclusion_details;
+        return (pkg?.inclusions || []).map((name) => ({ name, description: "" }));
+    }
+
+    /** Editable list of inclusions: add, rename, describe, reorder, and delete. */
+    function inclusionEditor(initial) {
+        const list = h("ol", { className: "inclusion-editor-list" });
+        const empty = h("p", { className: "field-note", text: "No inclusions yet. Add what the package includes." });
+        const refresh = () => {
+            empty.hidden = list.childElementCount > 0;
+            [...list.children].forEach((row, index) => {
+                row.querySelector("[data-move='up']").disabled = index === 0;
+                row.querySelector("[data-move='down']").disabled = index === list.childElementCount - 1;
+                row.querySelector("[data-role='index']").textContent = String(index + 1);
+            });
+        };
+        const addRow = (item = { name: "", description: "" }, focus = false) => {
+            const name = h("input", { maxlength: 200, value: item.name || "", placeholder: "Inclusion name (e.g. 20 pcs printed invitations)", "aria-label": "Inclusion name" });
+            const description = h("input", { maxlength: 500, value: item.description || "", placeholder: "Description (optional)", "aria-label": "Inclusion description" });
+            const up = h("button", { className: "button button-small", type: "button", text: "↑", title: "Move up", "aria-label": "Move inclusion up", dataset: { move: "up" } });
+            const down = h("button", { className: "button button-small", type: "button", text: "↓", title: "Move down", "aria-label": "Move inclusion down", dataset: { move: "down" } });
+            const remove = h("button", { className: "button button-small button-danger", type: "button", text: "Delete", "aria-label": "Delete inclusion" });
+            const row = h("li", { className: "inclusion-editor-row" },
+                h("span", { className: "inclusion-index", dataset: { role: "index" } }),
+                h("div", { className: "inclusion-editor-fields" }, name, description),
+                h("div", { className: "catalog-row-actions" }, up, down, remove));
+            up.addEventListener("click", () => { if (row.previousElementSibling) list.insertBefore(row, row.previousElementSibling); refresh(); });
+            down.addEventListener("click", () => { if (row.nextElementSibling) list.insertBefore(row.nextElementSibling, row); refresh(); });
+            remove.addEventListener("click", () => { row.remove(); refresh(); });
+            list.append(row);
+            refresh();
+            if (focus) name.focus();
+        };
+        initial.forEach((item) => addRow(item));
+        const add = h("button", { className: "button button-small", type: "button", text: "＋ Add inclusion" });
+        add.addEventListener("click", () => addRow(undefined, true));
+        refresh();
+        return {
+            element: h("div", { className: "inclusion-editor" }, list, empty, add),
+            value: () => [...list.children].map((row) => {
+                const [name, description] = row.querySelectorAll("input");
+                return { name: name.value.trim(), description: description.value.trim() };
+            }).filter((item) => item.name || item.description),
+        };
     }
 
     /**
@@ -759,10 +807,10 @@
         const size = h("input", { name: "size", maxlength: 80, value: pkg?.size || "", placeholder: 'e.g. 5" × 7"' });
         const material = h("input", { name: "material", maxlength: 120, value: pkg?.material || "", placeholder: "e.g. Canvas, premium photo paper" });
         const included = h("input", { name: "included_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: pkg?.included_quantity ?? Math.max(1, product.min_quantity || 1) });
+        const example = h("p", { className: "field-note package-price-example", "aria-live": "polite" });
         const addOnLabel = h("input", { name: "add_on_label", maxlength: 120, value: pkg?.add_on_label || "", placeholder: "e.g. Additional piece" });
         const addOnPrice = h("input", { name: "add_on_price", type: "number", min: 0, step: "0.01", value: pkg?.add_on_price ?? "", placeholder: "Leave blank for a fixed quantity" });
-        const inclusions = h("textarea", { name: "inclusions", required: true, maxlength: 10000, rows: 6, placeholder: "One inclusion per line" });
-        inclusions.value = (pkg?.inclusions || []).join("\n");
+        const inclusions = inclusionEditor(inclusionDetails(pkg));
         const active = selectOf("active", [["true", "Active — customers can select it"], ["false", "Inactive — hidden from customers"]], pkg ? String(pkg.active) : "true");
         const sortOrder = h("input", { name: "sort_order", type: "number", min: 0, max: 10000, step: 1, value: pkg?.sort_order ?? "", placeholder: "Automatic" });
         const photos = imageManager(pkg ? imagesOf(pkg) : [], { name: pkg?.name || "New package" });
@@ -770,24 +818,38 @@
         const refreshPerPiece = () => {
             const value = Number(price.value);
             const quantity = Number(included.value);
-            perPiece.textContent = value > 0 && quantity > 0 ? `≈ ${money(value / quantity)} per piece for the included ${quantity.toLocaleString()} pcs.` : "";
+            perPiece.textContent = value > 0 && quantity > 0 ? `≈ ${money(value / quantity)} per piece for the minimum ${quantity.toLocaleString()} pcs.` : "";
+            // Preview of what customers will see: base price, then each extra piece adds the additional price.
+            const extraPrice = addOnPrice.value.trim() === "" ? null : Number(addOnPrice.value);
+            if (!(value > 0) || !(quantity > 0)) {
+                example.textContent = "";
+            } else if (extraPrice === null || !Number.isFinite(extraPrice)) {
+                example.textContent = `Customers order exactly ${quantity.toLocaleString()} pcs for ${money(value)}.`;
+            } else {
+                example.textContent = `Customer preview: ${quantity} pcs = ${money(value)} · ${quantity + 1} pcs = ${money(value + extraPrice)} · ${quantity + 5} pcs = ${money(value + 5 * extraPrice)}.`;
+            }
         };
         price.addEventListener("input", refreshPerPiece);
         included.addEventListener("input", refreshPerPiece);
+        addOnPrice.addEventListener("input", refreshPerPiece);
         refreshPerPiece();
 
         form.append(h("div", { className: "form-grid" },
             formField("Package name", name),
             formField("Availability", active),
             formField("Description", description, { full: true }),
-            formField("Package price (PHP)", price),
-            h("div", { className: "form-field" }, h("label", { for: included.id = `pkg-qty-${Math.random().toString(36).slice(2, 7)}`, text: "Included quantity (pcs)" }), included, perPiece),
+            formField("Base package price (PHP)", price, { note: "The price of the minimum order." }),
+            h("div", { className: "form-field" }, h("label", { for: included.id = `pkg-qty-${Math.random().toString(36).slice(2, 7)}`, text: "Minimum order quantity (pcs)" }), included, perPiece),
+            formField("Additional price per piece (PHP)", addOnPrice, { note: "Added for every piece above the minimum. Leave blank to sell the package at exactly the minimum quantity." }),
+            formField("Additional piece label", addOnLabel, { note: "Optional name shown with the additional price, e.g. “Additional piece”." }),
+            h("div", { className: "form-field full" }, example),
             formField("Size", size),
             formField("Material", material),
-            formField("Add-on label", addOnLabel, { note: "Shown when customers order more than the included quantity." }),
-            formField("Add-on price per extra piece (PHP)", addOnPrice, { note: "Leave blank to lock the order at exactly the included quantity." }),
             formField("Sort order", sortOrder, { note: "Lower numbers appear first. Leave blank to add the package at the end." }),
-            formField("Inclusions", inclusions, { full: true, note: "One inclusion per line. Customers see exactly these lines on the package card." }),
+            h("div", { className: "form-field full" },
+                h("span", { className: "form-label-strong", text: "Inclusions" }),
+                h("span", { className: "field-note", text: "Customers see each inclusion's name and description on the package card, in this order." }),
+                inclusions.element),
         ), h("div", { className: "form-field full" },
             h("span", { className: "form-label-strong", text: "Package photos" }),
             h("span", { className: "field-note", text: "Upload several photos of the package. The first one is shown on the package card; customers can browse all of them." }),
@@ -804,8 +866,8 @@
         }
         if (pkg) {
             const remove = h("button", { className: "button button-danger", type: "button", text: "Delete package" });
-            remove.addEventListener("click", () => {
-                if (!window.confirm(`Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, make it inactive instead.`)) return;
+            remove.addEventListener("click", async () => {
+                if (!(await UI().confirm({ title: "Delete package?", message: `Delete the package “${pkg.name}”? Existing orders keep their saved package details. To keep it for later, make it inactive instead.`, confirmLabel: "Delete package", tone: "danger" }))) return;
                 void guarded(remove, async () => {
                     await api("DELETE", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`);
                     toast("Package deleted.");
@@ -822,9 +884,13 @@
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
-            const lines = inclusions.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+            const lines = inclusions.value();
             if (!lines.length) {
                 toast("Add at least one inclusion for this package.");
+                return;
+            }
+            if (lines.some((item) => !item.name)) {
+                toast("Every inclusion must have a name.");
                 return;
             }
             const priceValue = Number(price.value);
@@ -975,9 +1041,9 @@
                         h("span", { className: "table-secondary", text: pkg.description || pkg.inclusions.slice(0, 2).join(" · ") }),
                     )) },
                     { label: "Product / service", sortKey: "product_name", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: pkg.product_name }), h("span", { className: "table-secondary", text: pkg.category_label })) },
-                    { label: "Price", sortKey: "price", align: "right", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: money(pkg.price) }), h("span", { className: "table-secondary", text: perPieceText(pkg) })) },
-                    { label: "Included", sortKey: "included_quantity", align: "right", render: (pkg) => `${pkg.included_quantity.toLocaleString()} pcs` },
-                    { label: "Add-on", render: (pkg) => (pkg.add_on_price === null ? "Fixed quantity" : `${money(pkg.add_on_price)} / extra pc`) },
+                    { label: "Base price", sortKey: "price", align: "right", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: money(pkg.price) }), h("span", { className: "table-secondary", text: perPieceText(pkg) })) },
+                    { label: "Minimum order", sortKey: "included_quantity", align: "right", render: (pkg) => `${pkg.included_quantity.toLocaleString()} pcs` },
+                    { label: "Additional piece", render: (pkg) => (pkg.add_on_price === null ? "Fixed quantity" : `${money(pkg.add_on_price)} each`) },
                     { label: "Photos", value: (pkg) => imagesOf(pkg).length, sortKey: "photos", align: "right", render: (pkg) => String(imagesOf(pkg).length) },
                     { label: "Status", sortKey: "active", value: (pkg) => (pkg.active ? 0 : 1), render: (pkg) => statusBadge(pkg.active, "Active", "Inactive") },
                     { label: "", render: (pkg) => {

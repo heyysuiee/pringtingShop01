@@ -308,17 +308,21 @@ def admin_order_view(order: OrderRecord, services: ServiceIndex | None = None) -
     payable = status in order_services.PAYABLE_STATUSES and total is not None and chosen and paid < total - 0.005
     view["actions"] = {
         "quote": order_services.quotable(order),
+        # Approving a package order requests the down payment; only a verified down payment confirms the order.
         "confirm_package": order_services.is_fixed_price(order) and status in {"Pending Confirmation", "Under Review"},
-        "confirm_cod": status == "Awaiting COD Confirmation" and order_services.is_cod(order),
+        "confirm_cod": False,
         "verify_payments": payable and bool(pending),
         "record_payment": payable and not pending,
-        "send_draft": status in {"Draft Preparation", "Awaiting Customer Approval"} and order_services.down_payment_met(order),
+        "send_draft": status in order_services.DRAFTABLE_STATUSES and order_services.down_payment_met(order),
         "start_production_blocked": status == "Approved for Printing" and not order_services.down_payment_met(order),
         "complete_requires_payment": status in order_services.RELEASE_STATUSES and not is_fully_paid(order),
         "cancel_blocked_by_payments": bool(order["payments"]) or bool(pending),
         "change_payment_option": order_services.payment_option_changeable(order) and status not in CANCELLED_STATUSES,
     }
-    view["payment_methods"] = list(order_services.PAYMENT_METHODS)
+    view["payment_methods"] = [
+        method for method in order_services.PAYMENT_METHODS
+        if method != "Cash on Delivery" or order_services.is_cod(order)
+    ]
     return view
 
 
@@ -1129,11 +1133,13 @@ def action_counts() -> dict[str, Any]:
         + counts["Quotation Declined"] + counts["Awaiting COD Confirmation"]
     )
     awaiting_down_payment = counts["Awaiting Down Payment"]
+    confirmed = counts["Confirmed"]
     new_customers = sum(1 for customer in customers if (local_date(customer["created_at"]) or date.min) >= week_ago)
     return {
         "new_requests": new_requests,
         "to_review": to_review,
         "awaiting_down_payment": awaiting_down_payment,
+        "confirmed": confirmed,
         "draft_preparation": counts["Draft Preparation"],
         "awaiting_customer_approval": counts["Awaiting Customer Approval"],
         "in_production": counts["Approved for Printing"] + counts["In Production"],
@@ -1207,11 +1213,14 @@ def _classify(text: str) -> tuple[str, str]:
         (lambda value: value.startswith("Customer cancelled"), "Order cancelled by customer", "customer"),
         (lambda value: value.startswith("Customer accepted the quotation"), "Quotation accepted", "customer"),
         (lambda value: value.startswith("Customer declined the quotation"), "Quotation declined", "customer"),
+        (lambda value: "the order is now Confirmed" in value, "Down payment verified · order confirmed", "admin"),
         (lambda value: "verified the customer's payment" in value, "Payment verified", "admin"),
         (lambda value: "could not verify the customer's payment" in value, "Payment submission rejected", "admin"),
         (lambda value: "confirmed the Cash on Delivery" in value, "COD arrangement confirmed", "admin"),
         (lambda value: "confirmed the package order" in value, "Package order confirmed", "admin"),
+        (lambda value: "approved the package order" in value, "Package order approved · down payment requested", "admin"),
         (lambda value: "recorded PHP" in value, "Payment recorded", "admin"),
+        (lambda value: "revised quotation of PHP" in value, "Quotation revised", "admin"),
         (lambda value: "quotation of PHP" in value, "Quotation sent", "admin"),
         (lambda value: "attached draft" in value, "Draft sent for approval", "admin"),
         (lambda value: "status to Completed" in value, "Order completed", "admin"),

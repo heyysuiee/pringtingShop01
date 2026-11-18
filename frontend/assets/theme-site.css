@@ -582,10 +582,6 @@
     letter-spacing: -0.04em;
 }
 
-.page-hero-lead {
-    color: var(--text-secondary);
-}
-
 /* ---------- Glass cards (shop, order, portal) ---------- */
 
 .card,
@@ -786,8 +782,7 @@ textarea:disabled {
 .field-label,
 .field label,
 .portal-auth-card label,
-#customer-profile-form label,
-.account-auth-grid label {
+#customer-profile-form label {
     color: var(--text-secondary);
     font-weight: 600;
 }
@@ -888,8 +883,7 @@ textarea:disabled {
 .choice-chip input:checked + .choice-chip-body,
 .order-mode-card.selected,
 .package-card:has(input:checked),
-.package-card.selected,
-.package-card.is-selected {
+.package-card.selected {
     border-color: rgba(255, 62, 157, 0.7);
     background: linear-gradient(145deg, rgba(255, 62, 157, 0.14), rgba(147, 51, 234, 0.1));
     box-shadow: 0 0 0 1px rgba(255, 62, 157, 0.35), 0 10px 30px rgba(255, 62, 157, 0.14);
@@ -915,14 +909,16 @@ textarea:disabled {
     color: var(--text-muted);
 }
 
-/* Price breakdown */
+/* Price breakdown. It is sticky, so its surface must hide the fields scrolling beneath it. */
 .estimate-panel {
     border: 1px solid rgba(255, 62, 157, 0.28);
     border-radius: var(--radius-lg);
     background:
         radial-gradient(320px 160px at 100% 0%, rgba(255, 62, 157, 0.14), transparent 70%),
-        rgba(255, 255, 255, 0.035);
-    box-shadow: var(--shadow-sm);
+        rgba(24, 25, 34, 0.96);
+    box-shadow: var(--shadow-md);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
     color: var(--text-primary);
 }
 
@@ -943,9 +939,7 @@ textarea:disabled {
 }
 
 .upload-zone:hover,
-.upload-zone:focus-within,
-.upload-zone.dragover,
-.upload-zone.is-dragover {
+.upload-zone:focus-within {
     border-color: rgba(255, 62, 157, 0.6);
     background: rgba(255, 62, 157, 0.06);
 }
@@ -1168,7 +1162,7 @@ textarea:disabled {
     border-color: var(--line);
     background:
         radial-gradient(circle at 50% 30%, rgba(147, 51, 234, 0.12), transparent 70%),
-        rgba(0, 0, 0, 0.25);
+        rgba(16, 17, 22, 0.96);
 }
 
 /* ---------- Sign in, create account, forgot password (auth.css) ---------- */
@@ -1272,19 +1266,6 @@ textarea:disabled {
     box-shadow: 0 14px 34px rgba(255, 62, 157, 0.38);
     transform: translateY(-1px);
 }
-
-.auth-page .auth-button-secondary {
-    border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.05);
-    box-shadow: none;
-}
-
-.auth-page .auth-button-secondary:hover:not(:disabled) {
-    border-color: rgba(255, 62, 157, 0.5);
-    background: var(--accent-soft);
-    box-shadow: none;
-}
-
 .auth-alert-error {
     border-color: rgba(248, 113, 113, 0.4);
     background: var(--danger-soft);

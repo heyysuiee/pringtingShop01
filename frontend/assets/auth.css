@@ -175,8 +175,7 @@
     gap: 16px;
 }
 
-.auth-field > label,
-.auth-label {
+.auth-field > label {
     color: var(--auth-ink);
     font-size: 14px;
     font-weight: 600;
@@ -352,16 +351,6 @@
     opacity: 0.6;
     cursor: not-allowed;
 }
-
-.auth-page .auth-button-secondary {
-    background: var(--glass-1);
-    color: var(--auth-ink);
-}
-
-.auth-page .auth-button-secondary:hover:not(:disabled) {
-    background: var(--auth-subtle);
-}
-
 .auth-page .auth-button[aria-busy="true"]::before {
     width: 16px;
     height: 16px;

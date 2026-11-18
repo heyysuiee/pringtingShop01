@@ -85,11 +85,26 @@ def _images(row: sqlite3.Row) -> list[str]:
     return [optimized_image(path) for path in images]
 
 
+def inclusion_details(values: Any) -> list[dict[str, str]]:
+    """Inclusions as [{"name", "description"}]. Older packages stored plain text lines (names only)."""
+    if not isinstance(values, list):
+        return []
+    details = []
+    for item in values:
+        if isinstance(item, str) and item.strip():
+            details.append({"name": item.strip(), "description": ""})
+        elif isinstance(item, dict) and isinstance(item.get("name"), str) and item["name"].strip():
+            description = item.get("description")
+            details.append({"name": item["name"].strip(), "description": description.strip() if isinstance(description, str) else ""})
+    return details
+
+
 def _package_from_row(row: sqlite3.Row) -> InvitationPackage:
     try:
-        inclusions = json.loads(row["inclusions"] or "[]")
+        stored = json.loads(row["inclusions"] or "[]")
     except (TypeError, ValueError):
-        inclusions = []
+        stored = []
+    details = inclusion_details(stored)
     images = _images(row)
     return {
         "id": row["id"],
@@ -99,10 +114,14 @@ def _package_from_row(row: sqlite3.Row) -> InvitationPackage:
         "price": float(row["price"]),
         "size": row["size"],
         "material": row["material"],
-        "inclusions": [str(item) for item in inclusions if isinstance(item, str)],
+        # Names only (what most screens list); inclusion_details adds each inclusion's description.
+        "inclusions": [item["name"] for item in details],
+        "inclusion_details": details,
         "add_on_label": row["add_on_label"],
         "add_on_price": None if row["add_on_price"] is None else float(row["add_on_price"]),
+        # The package's minimum order: the pieces covered by the base price. Each piece above it costs add_on_price.
         "included_quantity": int(row["included_quantity"]),
+        "minimum_quantity": int(row["included_quantity"]),
         "image": images[0] if images else "",
         "images": images,
         "sort_order": int(row["sort_order"]),
@@ -161,7 +180,7 @@ def _insert(connection: sqlite3.Connection, data: dict[str, Any]) -> None:
             float(data.get("price", 0) or 0),
             data.get("size", ""),
             data.get("material", ""),
-            json.dumps(list(data.get("inclusions", []))),
+            json.dumps(inclusion_details(list(data.get("inclusions", [])))),
             data.get("add_on_label", ""),
             data.get("add_on_price"),
             int(data.get("included_quantity", 20) or 20),
@@ -189,7 +208,7 @@ def update_package(package_id: str, updates: dict[str, Any]) -> None:
     )
     values = dict(updates)
     if "inclusions" in values:
-        values["inclusions"] = json.dumps(list(values["inclusions"]))
+        values["inclusions"] = json.dumps(inclusion_details(list(values["inclusions"])))
     if "images" in values:
         images = [path for path in values["images"] if path]
         values["images"] = json.dumps(images)

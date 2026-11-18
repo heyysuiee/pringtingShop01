@@ -36,14 +36,14 @@
     };
     const STATUSES = [
         "Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined",
-        "Awaiting COD Confirmation", "Awaiting Down Payment",
+        "Awaiting COD Confirmation", "Awaiting Down Payment", "Confirmed",
         "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing",
         "In Production", "Ready for Pickup", "Out for Delivery", "Completed", "Rejected", "Cancelled",
     ];
     const STATUS_GROUPS = [
         ["", "All orders", STATUSES],
         ["pending", "Pending", ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"]],
-        ["processing", "In progress", ["Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup", "Out for Delivery"]],
+        ["processing", "Active (confirmed)", ["Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup", "Out for Delivery"]],
         ["completed", "Completed", ["Completed"]],
         ["cancelled", "Cancelled / rejected", ["Rejected", "Cancelled"]],
     ];
@@ -53,6 +53,7 @@
     const ACTION_LABELS = {
         "Under Review": "Approve request",
         "Awaiting Quotation": "Mark as awaiting quotation",
+        "Draft Preparation": "Start draft preparation",
         "Rejected": "Reject request",
         "Cancelled": "Cancel order",
         "In Production": "Start production",
@@ -63,6 +64,7 @@
     const ACTION_HELP = {
         "Under Review": "Accept the request and start reviewing its details.",
         "Awaiting Quotation": "Use when the price needs more time to work out.",
+        "Draft Preparation": "The down payment is verified; start preparing the design draft.",
         "Rejected": "The customer sees the request as rejected.",
         "Cancelled": "Stops the order. Orders with recorded payments cannot be cancelled here.",
         "In Production": "The customer approved the draft; printing starts.",
@@ -321,9 +323,10 @@
             ["new_requests", "New requests", () => { filters.orders = { ...filters.orders, status: "Pending Confirmation" }; navigate("orders"); }],
             ["to_review", "To review / quote", () => { filters.orders = { ...filters.orders, status: "Under Review" }; navigate("orders"); }],
             ["payments_to_verify", "Payments to verify", () => navigate("payments")],
-            ["awaiting_cod_confirmation", "COD to confirm", () => { filters.orders = { ...filters.orders, status: "Awaiting COD Confirmation" }; navigate("orders"); }],
+            ["awaiting_cod_confirmation", "Older COD orders to switch", () => { filters.orders = { ...filters.orders, status: "Awaiting COD Confirmation" }; navigate("orders"); }],
             ["quotation_declined", "Quotations declined", () => { filters.orders = { ...filters.orders, status: "Quotation Declined" }; navigate("orders"); }],
             ["awaiting_down_payment", "Awaiting down payment", () => { filters.orders = { ...filters.orders, status: "Awaiting Down Payment" }; navigate("orders"); }],
+            ["confirmed", "Newly confirmed orders", () => { filters.orders = { ...filters.orders, status: "Confirmed" }; navigate("orders"); }],
             ["draft_preparation", "Drafts to prepare", () => { filters.orders = { ...filters.orders, status: "Draft Preparation" }; navigate("orders"); }],
             ["ready_for_pickup", "Ready for pickup", () => { filters.orders = { ...filters.orders, status: "Ready for Pickup" }; navigate("orders"); }],
             ["out_for_delivery", "Out for delivery", () => { filters.orders = { ...filters.orders, status: "Out for Delivery" }; navigate("orders"); }],
@@ -667,21 +670,30 @@
         const pkg = order.package;
         if (!pkg) return null;
         const hasAddOn = pkg.add_on_price !== null && pkg.add_on_price !== undefined;
+        const minimum = pkg.minimum_quantity ?? pkg.included_quantity;
+        const details = pkg.inclusion_details?.length ? pkg.inclusion_details : (pkg.inclusions || []).map((name) => ({ name, description: "" }));
+        const quantity = pkg.quantity ?? order.customization?.quantity;
         return h("section", { className: "fact-card", dataset: { focus: "package" } },
-            h("h3", { text: "Selected package" }),
+            h("h3", { text: "Selected package (as ordered)" }),
             detailList([
                 ["Package", pkg.name],
-                ["Package price", money(pkg.price)],
+                ["Base package price", money(pkg.price)],
                 ["Size", pkg.size],
                 ["Material", pkg.material],
-                ["Included quantity", `${number(pkg.included_quantity)} pcs`],
-                ["Add-on", hasAddOn
-                    ? `${pkg.add_on_label || "Additional pieces"} — ${money(pkg.add_on_price)} per piece beyond ${number(pkg.included_quantity)} pcs`
-                    : `Fixed set of ${number(pkg.included_quantity)} pcs (no add-on)`],
+                ["Minimum order", `${number(minimum)} pcs`],
+                ["Additional piece", hasAddOn
+                    ? `${money(pkg.add_on_price)} each${pkg.add_on_label ? ` (${pkg.add_on_label})` : ""}`
+                    : `Fixed set of ${number(minimum)} pcs (no additional pieces)`],
+                ["Quantity ordered", `${number(quantity)} pcs`],
+                hasAddOn && typeof pkg.additional_cost === "number"
+                    ? ["Computation", `${money(pkg.price)} + (${number(quantity)} − ${number(minimum)}) × ${money(pkg.add_on_price)} = ${money(pkg.price + pkg.additional_cost)}`]
+                    : null,
             ]),
-            pkg.inclusions?.length
-                ? h("div", { className: "package-inclusions-detail" }, h("strong", { text: "Inclusions" }), h("ul", { className: "plain-list" }, ...pkg.inclusions.map((item) => h("li", { text: item }))))
+            details.length
+                ? h("div", { className: "package-inclusions-detail" }, h("strong", { text: "Inclusions" }), h("ul", { className: "plain-list" },
+                    ...details.map((item) => h("li", { text: item.description ? `${item.name} — ${item.description}` : item.name }))))
                 : null,
+            h("p", { className: "field-note", text: "Saved when the order was placed. Later package edits do not change this order." }),
         );
     }
 
@@ -756,9 +768,11 @@
             header,
             h("div", { className: "order-top" }, gallery(order), h("div", { className: "order-top-side" }, facts, actionsPanel(order, reload))),
             details,
+            quotationHistoryCard(order),
             payments,
             history,
-        ];
+            auditCard(order),
+        ].filter(Boolean);
     }
 
     /** Payment option, the 50% down payment (or COD), amount paid, and balance for one order. */
@@ -801,14 +815,102 @@
         const state = { sent: "Waiting for the customer", accepted: "Accepted by the customer", declined: "Declined by the customer" }[quote.status] || quote.status;
         return h("section", { className: "fact-card", dataset: { focus: "quotation" } }, h("h3", { text: `Quotation (revision ${quote.revision})` }), detailList([
             ["Amount", money(quote.amount)],
+            typeof quote.previous_amount === "number" ? ["Previous amount", money(quote.previous_amount)] : null,
+            ["50% down payment", money(quote.down_payment)],
             ["Customer response", badge(state)],
-            ["Cash on Delivery", quote.cod_allowed ? "Allowed" : "Not allowed"],
+            quote.cod_allowed ? ["Cash on Delivery", "Allowed (older quotation)"] : null,
             quote.cod_confirmed_at ? ["COD confirmed", dateTime(quote.cod_confirmed_at)] : null,
             ["Sent", dateTime(quote.sent_at)],
             quote.responded_at ? ["Responded", dateTime(quote.responded_at)] : null,
             quote.decline_reason ? ["Decline reason", quote.decline_reason] : null,
             quote.note ? ["Message to customer", quote.note] : null,
         ]));
+    }
+
+    const QUOTE_STATES = { sent: "Waiting for the customer", accepted: "Accepted by the customer", declined: "Declined by the customer", superseded: "Superseded" };
+
+    /** Every quotation sent for this order: previous and revised prices, timestamps, notes, and responses. */
+    function quotationHistoryCard(order) {
+        const items = order.quotation_history || [];
+        if (!items.length) return null;
+        return h("section", { className: "fact-card", dataset: { focus: "quotation-history" } },
+            h("h3", { text: `Quotation history (${items.length})` }),
+            h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
+                h("thead", {}, h("tr", {}, ...["Rev.", "Sent", "Previous", "Amount", "Status", "Responded", "Note / reason", "By"].map((text) => h("th", { scope: "col", text })))),
+                h("tbody", {}, ...items.slice().reverse().map((item) => h("tr", {},
+                    h("td", { text: String(item.revision) }),
+                    h("td", { text: dateTime(item.sent_at) }),
+                    h("td", { text: typeof item.previous_amount === "number" ? money(item.previous_amount) : "—" }),
+                    h("td", { text: money(item.amount) }),
+                    h("td", {}, badge(QUOTE_STATES[item.status] || item.status)),
+                    h("td", { text: item.responded_at ? dateTime(item.responded_at) : (item.superseded_at ? `Superseded ${dateTime(item.superseded_at)}` : "—") }),
+                    h("td", { className: "prewrap", text: [item.note, item.decline_reason ? `Customer: ${item.decline_reason}` : ""].filter(Boolean).join(" · ") || "—" }),
+                    h("td", { text: item.sent_by || "—" })))))));
+    }
+
+    const AUDIT_LABELS = {
+        "order.created": "Order placed",
+        "order.approved": "Package order approved (down payment requested)",
+        "order.status_changed": "Status changed",
+        "order.cancelled": "Cancelled by customer",
+        "quotation.sent": "Quotation sent",
+        "quotation.revised": "Quotation revised",
+        "quotation.accepted": "Quotation accepted",
+        "quotation.declined": "Quotation declined",
+        "payment.submitted": "Payment submitted (pending verification)",
+        "payment.verified": "Payment verified",
+        "payment.rejected": "Payment rejected",
+        "payment.recorded": "Payment recorded by admin",
+        "payment.option_changed": "Payment option changed",
+        "draft.sent": "Draft sent",
+        "draft.approved": "Draft approved by customer",
+        "draft.changes_requested": "Draft changes requested",
+    };
+
+    function auditDetails(entry) {
+        const d = entry.details || {};
+        const parts = [];
+        if (d.status_from || d.status_to) parts.push(`${d.status_from || "—"} → ${d.status_to || "—"}`);
+        if (typeof d.total_from === "number" || typeof d.total_to === "number") parts.push(`Total ${typeof d.total_from === "number" ? money(d.total_from) : "—"} → ${typeof d.total_to === "number" ? money(d.total_to) : "—"}`);
+        if (typeof d.amount === "number") parts.push(`Amount ${money(d.amount)}`);
+        if (typeof d.reported_amount === "number" && Math.abs(d.reported_amount - (d.amount || 0)) > 0.005) parts.push(`reported ${money(d.reported_amount)}`);
+        if (d.reference) parts.push(`Ref ${d.reference}`);
+        if (d.revision) parts.push(`Revision ${d.revision}`);
+        if (d.note || d.reason) parts.push(d.note || d.reason);
+        return parts.join(" · ") || "—";
+    }
+
+    /** The audit trail (who did what, when) and the notifications sent to the customer; loaded on demand. */
+    function auditCard(order) {
+        const body = h("div", {}, h("p", { className: "field-note", text: "Open to load the audit trail." }));
+        const card = h("details", { className: "fact-card audit-card", dataset: { focus: "audit" } },
+            h("summary", {}, h("h3", { text: "Audit history & customer notifications" })), body);
+        let loaded = false;
+        card.addEventListener("toggle", async () => {
+            if (!card.open || loaded) return;
+            loaded = true;
+            body.replaceChildren(loadingBlock("Loading audit history…"));
+            try {
+                const data = await api(`/api/admin/orders/${encodeURIComponent(order.reference)}/audit`);
+                body.replaceChildren(
+                    h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
+                        h("thead", {}, h("tr", {}, ...["When", "Action", "By", "Details"].map((text) => h("th", { scope: "col", text })))),
+                        h("tbody", {}, ...data.audit.slice().reverse().map((entry) => h("tr", {},
+                            h("td", { text: dateTime(entry.at) }),
+                            h("td", { text: AUDIT_LABELS[entry.action] || entry.action }),
+                            h("td", { text: entry.actor_type === "admin" ? `Admin${entry.actor_id ? ` (${entry.actor_id})` : ""}` : entry.actor_type === "customer" ? "Customer" : "System" }),
+                            h("td", { text: auditDetails(entry) })))))),
+                    h("h4", { text: `Notifications sent to the customer (${data.notifications.length})` }),
+                    data.notifications.length
+                        ? h("ul", { className: "plain-list" }, ...data.notifications.map((item) => h("li", { text: `${dateTime(item.created_at)} · ${item.title}${item.read ? " · read" : ""}` })))
+                        : h("p", { className: "field-note", text: "No notifications sent yet." }),
+                );
+            } catch (error) {
+                loaded = false;
+                body.replaceChildren(h("p", { className: "field-note", text: error.message }));
+            }
+        });
+        return card;
     }
 
     function submissionHistory(order) {
@@ -856,25 +958,20 @@
     }
 
     function paymentOptionForm(order, reload) {
-        const current = order.payment?.payment_option || "down_payment";
-        const target = current === "cod" ? "down_payment" : "cod";
-        const label = PAYMENT_OPTIONS.find(([value]) => value === target)[1];
-        const button = h("button", { className: "button", type: "button", text: `Switch to ${label}` });
+        const button = h("button", { className: "button button-primary", type: "button", text: "Switch to 50% Down Payment" });
         button.addEventListener("click", async () => {
             const answer = await UI.confirm({
-                title: `Switch to ${label}?`,
-                message: target === "cod"
-                    ? "No down payment will be required. If the order is awaiting its down payment, it moves to Draft Preparation."
-                    : "The customer must pay the 50% down payment before the draft. An order in Draft Preparation moves back to Awaiting Down Payment.",
+                title: "Switch to the 50% down payment?",
+                message: "Cash on Delivery is no longer offered. The customer must pay the 50% down payment; the order is confirmed once it is verified.",
                 confirmLabel: "Switch payment option",
-                input: { label: "Reason (recorded in the order history)", required: false, placeholder: "e.g. Customer asked to pay on delivery" },
+                input: { label: "Reason (recorded in the order history)", required: false, placeholder: "e.g. COD is no longer offered" },
             });
             if (!answer) return;
-            await submitAction(button, order, "payment-option", { payment_option: target, note: answer.value || "" }, reload, `Payment option changed to ${label}.`);
+            await submitAction(button, order, "payment-option", { payment_option: "down_payment", note: answer.value || "" }, reload, "Payment option changed to the 50% down payment.");
         });
         return h("div", { className: "action-form" },
-            h("h4", { text: "Payment option" }),
-            h("p", { className: "field-note", text: `This order uses ${order.payment?.payment_option_label || "50% Down Payment"}. It can be changed until a payment is recorded or a draft is sent.` }),
+            h("h4", { text: "Older Cash on Delivery order" }),
+            h("p", { className: "field-note", text: "This order was placed while Cash on Delivery was offered. Every order now requires a 50% down payment." }),
             h("div", { className: "dialog-actions" }, button));
     }
 
@@ -938,13 +1035,21 @@
             section.append(h("p", { className: "notice-card", text: "Waiting for the customer to approve the draft in their portal. The administrator cannot approve printing for the customer." }));
         }
         if (order.status === "Quotation Sent") {
-            section.append(h("p", { className: "notice-card", text: "Waiting for the customer to accept or decline the quotation in their portal. No payment can be recorded until they accept it and choose how to pay." }));
+            section.append(h("p", { className: "notice-card", text: "Waiting for the customer to accept or decline the quotation in their portal. No payment can be recorded until they accept it." }));
+        }
+        if (order.status === "Quotation Declined") {
+            section.append(h("p", { className: "notice-card", text: "The customer declined this quotation, so it cannot be paid. Send a revised quotation or close the request." }));
+        }
+        if (order.status === "Awaiting Down Payment" && !actions.verify_payments) {
+            section.append(h("p", { className: "notice-card", text: `Waiting for the customer's 50% down payment of ${money(order.payment?.down_payment_required)} through GCash. The order is confirmed automatically when you verify it.` }));
+        }
+        if (order.status === "Confirmed") {
+            section.append(h("p", { className: "notice-card notice-success", text: "The 50% down payment is verified and the order is confirmed. Start draft preparation or send the draft." }));
         }
         if (actions.start_production_blocked) {
             section.append(h("p", { className: "notice-card notice-warning", text: "Production cannot start until the required 50% down payment is verified." }));
         }
         if (actions.confirm_package) section.append(confirmPackageForm(order, reload));
-        if (actions.confirm_cod) section.append(confirmCodForm(order, reload));
         if (actions.verify_payments) section.append(...(order.payment_submissions || []).filter((item) => item.status === "pending").map((item) => verifySubmissionForm(order, item, reload)));
         if (actions.quote) section.append(quoteForm(order, reload));
         if (actions.record_payment) section.append(paymentForm(order, reload));
@@ -985,14 +1090,12 @@
         instructions.value = order.payment_instructions || "";
         const note = h("textarea", { id: "quote-note", name: "note", maxlength: 1000, placeholder: "Optional message shown with the quotation (what it includes, lead time, …)" });
         note.value = quote?.note || "";
-        const allowCod = h("input", { id: "quote-cod", type: "checkbox", checked: Boolean(quote?.cod_allowed) });
         const submit = h("button", { className: "button button-primary", type: "submit", text: revising ? "Send revised quotation" : "Send quotation" });
         const form = h("form", { className: "action-form", dataset: { focus: "quotation" } },
             h("h4", { text: revising ? `Revise quotation (currently revision ${quote.revision}, ${quote.status})` : "Send quotation" }),
-            h("p", { className: "field-note", text: `${estimate === null ? "No catalog estimate for this request." : `Catalog estimate for reference: ${money(estimate)}.`} Enter the final price yourself; the customer must accept it before any payment.` }),
+            h("p", { className: "field-note", text: `${estimate === null ? "No catalog estimate for this request." : `Catalog estimate for reference only: ${money(estimate)}.`} Enter the customization price yourself. The customer is notified, must accept it, and then pays the 50% down payment.${revising ? " The earlier revision is kept in the quotation history and can no longer be accepted." : ""}` }),
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: "quote-amount", text: "Quoted total (PHP)" }), amount),
-                h("label", { className: "check-field full", for: "quote-cod" }, allowCod, " Allow Cash on Delivery for this order"),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-instructions", text: "Payment instructions" }), instructions),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-note", text: "Message to the customer (optional)" }), note)),
             h("div", { className: "dialog-actions" }, submit),
@@ -1003,18 +1106,17 @@
             const total = Number(amount.value);
             const answer = await UI.confirm({
                 title: revising ? "Send the revised quotation?" : "Send this quotation?",
-                message: `The customer sees the quotation in their portal and accepts or declines it. On acceptance they choose the 50% down payment${allowCod.checked ? " or Cash on Delivery" : ""}.${revising ? " Any earlier acceptance is cleared." : ""}`,
+                message: `The customer is notified and accepts or declines the quotation in their portal. After accepting, they pay the 50% down payment.${revising ? " Any earlier acceptance is cleared." : ""}`,
                 confirmLabel: revising ? "Send revised quotation" : "Send quotation",
                 details: [
+                    revising ? ["Previous quotation", money(quote.amount)] : null,
                     ["Quoted total", money(total)],
-                    ["50% down payment", money(Math.round(total * 50) / 100)],
-                    ["Cash on Delivery", allowCod.checked ? "Allowed" : "Not allowed"],
-                ],
+                    ["50% down payment (approx.)", money(Math.round(total * 50) / 100)],
+                ].filter(Boolean),
             });
             if (!answer) return;
             await submitAction(submit, order, "quotation", {
                 total_amount: total,
-                cod_allowed: allowCod.checked,
                 payment_instructions: instructions.value.trim(),
                 note: note.value.trim(),
             }, reload, revising ? "Revised quotation sent to the customer." : "Quotation sent to the customer.");
@@ -1024,54 +1126,22 @@
 
     function confirmPackageForm(order, reload) {
         const cod = order.payment?.payment_option === "cod";
-        const instructions = h("textarea", { id: "confirm-instructions", maxlength: 1000, placeholder: "The shop's approved payment instructions (GCash number, bank details, etc.)" });
+        const instructions = h("textarea", { id: "confirm-instructions", maxlength: 1000, placeholder: "The shop's GCash number and account name" });
         instructions.value = order.payment_instructions || "";
-        const submit = h("button", { className: "button button-primary", type: "submit", text: "Confirm package order" });
+        const submit = h("button", { className: "button button-primary", type: "submit", text: "Approve & request down payment" });
         const form = h("form", { className: "action-form" },
-            h("h4", { text: "Confirm the package order" }),
-            h("p", { className: "field-note", text: `Fixed package total ${money(order.total_amount)} · ${order.payment?.payment_option_label}. ${cod
-                ? "Confirming also confirms the Cash on Delivery arrangement; the order moves to Draft Preparation."
-                : `The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)}.`}` }),
+            h("h4", { text: "Approve the package order" }),
+            h("p", { className: "field-note", text: `Fixed package total ${money(order.total_amount)}. The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)} through GCash; the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
             h("div", { className: "form-field full" }, h("label", { for: "confirm-instructions", text: "Payment instructions" }), instructions),
             h("div", { className: "dialog-actions" }, submit),
         );
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
-            const answer = await UI.confirm({ title: "Confirm this package order?", message: "The customer sees the confirmation and payment instructions in their portal.", confirmLabel: "Confirm order" });
+            const answer = await UI.confirm({ title: "Approve this package order?", message: "The customer is notified to pay the 50% down payment and sees the payment instructions in their portal.", confirmLabel: "Approve order" });
             if (!answer) return;
-            await submitAction(submit, order, "confirm", { payment_instructions: instructions.value.trim() }, reload, "Package order confirmed.");
+            await submitAction(submit, order, "confirm", { payment_instructions: instructions.value.trim() }, reload, "Package order approved. Down payment requested.");
         });
         return form;
-    }
-
-    function confirmCodForm(order, reload) {
-        const confirm = h("button", { className: "button button-primary", type: "button", text: "Confirm COD arrangement" });
-        const decline = h("button", { className: "button button-danger-strong", type: "button", text: "Decline COD" });
-        confirm.addEventListener("click", async () => {
-            const answer = await UI.confirm({ title: "Confirm Cash on Delivery?", message: `${money(order.total_amount)} will be collected on ${order.fulfillment?.method === "delivery" ? "delivery" : "pickup"}. The order moves to Draft Preparation.`, confirmLabel: "Confirm COD" });
-            if (!answer) return;
-            await submitAction(confirm, order, "confirm-cod", {}, reload, "COD arrangement confirmed.");
-        });
-        decline.addEventListener("click", async () => {
-            const answer = await UI.confirm({
-                title: "Decline Cash on Delivery?",
-                message: "The same quotation is sent again with COD not allowed. The customer accepts it again and pays the 50% down payment.",
-                confirmLabel: "Decline COD",
-                tone: "danger",
-                input: { label: "Message to the customer", required: true, placeholder: "e.g. COD is not available for this delivery area" },
-            });
-            if (!answer) return;
-            await submitAction(decline, order, "quotation", {
-                total_amount: order.total_amount,
-                cod_allowed: false,
-                payment_instructions: order.payment_instructions || "",
-                note: answer.value,
-            }, reload, "COD declined; the quotation was sent again without COD.");
-        });
-        return h("div", { className: "action-form" },
-            h("h4", { text: "Cash on Delivery arrangement" }),
-            h("p", { className: "field-note", text: "The customer accepted the quotation and chose Cash on Delivery. Confirm the arrangement before preparing the draft." }),
-            h("div", { className: "dialog-actions" }, decline, confirm));
     }
 
     function verifySubmissionForm(order, item, reload) {
@@ -1083,11 +1153,12 @@
             ? (item.proof.mime_type.startsWith("image/")
                 ? h("a", { href: item.proof.url, target: "_blank", rel: "noopener", className: "proof-preview" }, h("img", { src: item.proof.url, alt: `Proof of payment ${item.proof.name}` }))
                 : h("a", { href: item.proof.url, target: "_blank", rel: "noopener", text: `📄 ${item.proof.name}` }))
-            : h("p", { className: "field-note", text: "No proof file attached; check the reference number in the shop's account." });
+            : h("p", { className: "field-note", text: "No receipt attached (older submission); check the reference number in the shop's GCash account." });
         const form = h("form", { className: "action-form", dataset: { focus: "verify" } },
-            h("h4", { text: "Verify a customer payment" }),
+            h("h4", { text: `Verify a customer payment${item.stage === "balance" ? " (balance)" : item.stage === "down_payment" ? " (50% down payment)" : ""}` }),
+            item.stage === "down_payment" ? h("p", { className: "field-note", text: "Verifying the full down payment confirms the order automatically and notifies the customer." }) : null,
             detailList([
-                ["Reported amount", money(item.amount)],
+                ["Amount due (set by the shop)", money(item.amount)],
                 ["Method", item.method],
                 ["Reference", item.reference],
                 ["Submitted", dateTime(item.submitted_at)],

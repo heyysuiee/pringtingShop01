@@ -27,6 +27,8 @@
     --accent-orange: #F59E0B;
     --danger: #F87171;
     --accent-pink-light: #FF7AC0;
+    --accent-pink-strong: #D81B78;   /* white text on small pink chips stays readable (4.8:1) */
+    --grad-brand-strong: linear-gradient(135deg, #D81B78 0%, #7E22CE 100%);
     --accent-purple-light: #C084FC;
 
     --accent-soft: rgba(255, 62, 157, 0.14);
@@ -199,8 +201,7 @@ input:-webkit-autofill:focus {
    ========================================================================== */
 
 /* Glass surface */
-.glass,
-.glass-card {
+.glass {
     background: var(--glass-tint), var(--glass-1);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
@@ -208,24 +209,8 @@ input:-webkit-autofill:focus {
     -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
     backdrop-filter: blur(var(--blur)) saturate(140%);
 }
-
-.glass-card {
-    padding: 22px;
-}
-
-.glass-card.is-interactive {
-    transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
-}
-
-.glass-card.is-interactive:hover {
-    transform: translateY(-3px);
-    border-color: rgba(255, 62, 157, 0.35);
-    box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 62, 157, 0.12);
-}
-
 /* Brand mark */
-.brand-mark,
-.brand-badge {
+.brand-mark {
     display: inline-grid;
     place-items: center;
     flex: 0 0 auto;
@@ -241,15 +226,6 @@ input:-webkit-autofill:focus {
     letter-spacing: -0.03em;
     box-shadow: 0 8px 22px rgba(255, 62, 157, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
-
-.gradient-text {
-    background: var(--grad-text);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-}
-
 /* Buttons */
 .btn {
     display: inline-flex;
@@ -274,20 +250,6 @@ input:-webkit-autofill:focus {
     background: var(--glass-3);
     border-color: rgba(255, 255, 255, 0.26);
 }
-
-.btn-primary {
-    border-color: transparent;
-    background: var(--grad-brand);
-    color: var(--text-on-accent);
-    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-}
-
-.btn-primary:hover {
-    background: var(--grad-brand-hover);
-    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-    transform: translateY(-1px);
-}
-
 .btn:disabled,
 .btn[aria-disabled="true"] {
     opacity: 0.5;
@@ -311,14 +273,6 @@ input:-webkit-autofill:focus {
     line-height: 1.3;
     white-space: nowrap;
 }
-
-.badge-pink   { color: #FF8CC6; background: var(--accent-soft);  border-color: rgba(255, 62, 157, 0.35); }
-.badge-purple { color: #C4A5FF; background: var(--purple-soft);  border-color: rgba(147, 51, 234, 0.4); }
-.badge-cyan   { color: #67E8F9; background: var(--cyan-soft);    border-color: rgba(0, 214, 255, 0.32); }
-.badge-green  { color: #4ADE80; background: var(--success-soft); border-color: rgba(34, 197, 94, 0.35); }
-.badge-orange { color: #FBBF24; background: var(--warning-soft); border-color: rgba(245, 158, 11, 0.38); }
-.badge-red    { color: #FCA5A5; background: var(--danger-soft);  border-color: rgba(248, 113, 113, 0.38); }
-
 /* Order and payment status colours, shared by the admin tables, the customer portal and order pages.
    Scripts add the status as a slug class: "Pending Confirmation" → .pending-confirmation */
 .status-badge,
@@ -339,18 +293,21 @@ input:-webkit-autofill:focus {
     white-space: nowrap;
 }
 
+.status-badge.confirmed,
 .status-badge.completed,
 .status-badge.fully-paid,
 .status-badge.verified,
 .status-badge.accepted-by-the-customer,
 .status-badge.available,
 .status-badge.shown,
+.order-status-pill.confirmed,
 .order-status-pill.completed,
 .order-status-pill.fully-paid,
 .order-status-pill.verified,
 .order-status-pill.accepted-by-the-customer,
 .order-status-pill.available,
 .order-status-pill.shown,
+.status-banner.confirmed,
 .status-banner.completed,
 .status-banner.fully-paid,
 .status-banner.verified,
@@ -448,27 +405,6 @@ input:-webkit-autofill:focus {
     color: #FCA5A5;
 }
 
-/* Loading skeleton */
-.skeleton {
-    position: relative;
-    overflow: hidden;
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.06);
-}
-
-.skeleton::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
-    animation: skeleton-shimmer 1.4s infinite;
-}
-
-@keyframes skeleton-shimmer {
-    to { transform: translateX(100%); }
-}
-
 /* Shared motion */
 @keyframes theme-fade-up {
     from { opacity: 0; transform: translateY(10px); }
@@ -500,6 +436,57 @@ dialog::backdrop {
 
 dialog[open] {
     animation: theme-dialog-in 220ms var(--ease) both;
+}
+
+/* Confirmation dialog (confirm-dialog.js) */
+.theme-confirm {
+    width: min(440px, calc(100vw - 32px));
+    margin: auto;
+    padding: 26px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-xl);
+    background:
+        linear-gradient(160deg, rgba(255, 62, 157, 0.08), transparent 45%),
+        var(--glass-solid);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-lg), var(--glass-highlight);
+    -webkit-backdrop-filter: blur(24px);
+    backdrop-filter: blur(24px);
+}
+
+.theme-confirm h2 {
+    margin: 0 0 8px;
+    font-size: 1.25rem;
+    font-weight: 800;
+}
+
+.theme-confirm p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.theme-confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 22px;
+}
+
+.btn-danger,
+.btn.btn-danger {
+    border: 1px solid rgba(248, 113, 113, 0.5);
+    background: rgba(220, 38, 38, 0.85);
+    color: #fff;
+    box-shadow: 0 8px 22px rgba(220, 38, 38, 0.25);
+}
+
+.btn-danger:hover,
+.btn.btn-danger:hover {
+    background: #DC2626;
+    color: #fff;
+    box-shadow: 0 10px 26px rgba(220, 38, 38, 0.35);
 }
 
 @media (prefers-reduced-motion: reduce) {

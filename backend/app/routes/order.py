@@ -19,9 +19,10 @@ from backend.app.schemas.order import (
     CustomerOrderChanges,
     CustomerPaymentSubmission,
     CustomerQuotationResponse,
+    NotificationsRead,
     OrderSubmission,
 )
-from backend.app.services import order_services
+from backend.app.services import notification_services, order_services
 
 
 router = APIRouter(tags=["orders"])
@@ -75,7 +76,8 @@ def approve_customer_draft(
     request: Request,
 ) -> dict[str, Any]:
     require_same_origin(request)
-    return order_services.approve_customer_draft(reference, payload.email)
+    claims = require_session(request, "customer")
+    return order_services.approve_customer_draft(reference, payload.email, claims["sub"])
 
 
 @router.post("/api/orders/{reference}/request-changes")
@@ -85,7 +87,8 @@ def request_draft_changes(
     request: Request,
 ) -> dict[str, Any]:
     require_same_origin(request)
-    return order_services.request_draft_changes(reference, payload.email, payload.note)
+    claims = require_session(request, "customer")
+    return order_services.request_draft_changes(reference, payload.email, payload.note, claims["sub"])
 
 
 @router.post("/api/orders/{reference}/cancel")
@@ -95,7 +98,8 @@ def cancel_customer_order(
     request: Request,
 ) -> dict[str, Any]:
     require_same_origin(request)
-    return order_services.cancel_customer_order(reference, payload.email)
+    claims = require_session(request, "customer")
+    return order_services.cancel_customer_order(reference, payload.email, claims["sub"])
 
 
 @router.post("/api/orders/{reference}/quotation/accept")
@@ -104,9 +108,10 @@ def accept_quotation(
     payload: CustomerQuotationResponse,
     request: Request,
 ) -> dict[str, Any]:
-    """The customer accepts the quotation and chooses the 50% down payment or (when allowed) COD."""
+    """The signed-in customer accepts the latest quotation; the order then waits for the 50% down payment."""
     require_same_origin(request)
-    return order_services.accept_quotation(reference, payload.email, payload.model_dump())
+    claims = require_session(request, "customer")
+    return order_services.accept_quotation(reference, payload.email, payload.model_dump(), claims["sub"])
 
 
 @router.post("/api/orders/{reference}/quotation/decline")
@@ -116,7 +121,8 @@ def decline_quotation(
     request: Request,
 ) -> dict[str, Any]:
     require_same_origin(request)
-    return order_services.decline_quotation(reference, payload.email, payload.model_dump())
+    claims = require_session(request, "customer")
+    return order_services.decline_quotation(reference, payload.email, payload.model_dump(), claims["sub"])
 
 
 @router.post("/api/orders/{reference}/payments")
@@ -125,9 +131,10 @@ def submit_customer_payment(
     payload: CustomerPaymentSubmission,
     request: Request,
 ) -> dict[str, Any]:
-    """The customer reports a payment (reference and optional proof); the administrator verifies it."""
+    """The signed-in customer submits a GCash payment (reference + screenshot); the administrator verifies it."""
     require_same_origin(request)
-    return order_services.submit_customer_payment(reference, payload.email, payload.model_dump())
+    claims = require_session(request, "customer")
+    return order_services.submit_customer_payment(reference, payload.email, payload.model_dump(), claims["sub"])
 
 
 @router.get("/api/admin/orders")
@@ -149,6 +156,27 @@ def admin_dashboard(request: Request) -> dict[str, Any]:
     return order_services.admin_dashboard()
 
 
+@router.get("/api/admin/orders/{reference}/audit")
+def admin_order_audit(reference: str, request: Request) -> dict[str, Any]:
+    """The order's audit trail (who changed what, when) and the notifications sent to the customer."""
+    require_admin(request)
+    return order_services.admin_order_audit(reference)
+
+
+@router.get("/api/account/notifications")
+def account_notifications(request: Request, response: Response) -> dict[str, Any]:
+    claims = require_session(request, "customer")
+    response.headers["Cache-Control"] = "no-store"
+    return notification_services.customer_notifications(claims["sub"])
+
+
+@router.post("/api/account/notifications/read")
+def read_account_notifications(payload: NotificationsRead, request: Request) -> dict[str, Any]:
+    require_same_origin(request)
+    claims = require_session(request, "customer")
+    return notification_services.mark_read(claims["sub"], payload.ids)
+
+
 @router.get("/api/admin/orders/{reference}/files/{file_id}")
 def admin_order_file(reference: str, file_id: str, request: Request) -> FileResponse:
     require_admin(request)
@@ -161,8 +189,8 @@ def admin_quote(
     payload: AdminQuotation,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.set_quotation(reference, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.set_quotation(reference, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/confirm")
@@ -171,19 +199,12 @@ def admin_confirm_package(
     payload: AdminConfirmation,
     request: Request,
 ) -> dict[str, Any]:
-    """Confirm a fixed-price package order at its published total."""
-    require_admin(request)
-    return order_services.confirm_package_order(reference, payload.model_dump())
+    """Approve a fixed-price package order at its published total and request the 50% down payment.
 
-
-@router.post("/api/admin/orders/{reference}/confirm-cod")
-def admin_confirm_cod(
-    reference: str,
-    payload: AdminConfirmation,
-    request: Request,
-) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.confirm_cod(reference, payload.model_dump())
+    The order becomes Confirmed only when its down payment is verified.
+    """
+    admin = require_admin(request)
+    return order_services.confirm_package_order(reference, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/verify")
@@ -193,8 +214,8 @@ def admin_verify_submission(
     payload: AdminSubmissionReview,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.verify_payment_submission(reference, submission_id, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.verify_payment_submission(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/reject")
@@ -204,8 +225,8 @@ def admin_reject_submission(
     payload: AdminSubmissionReview,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.reject_payment_submission(reference, submission_id, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.reject_payment_submission(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payments")
@@ -214,8 +235,8 @@ def admin_record_payment(
     payload: AdminPayment,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.record_payment(reference, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.record_payment(reference, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payment-option")
@@ -224,8 +245,8 @@ def admin_update_payment_option(
     payload: AdminPaymentOption,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.update_payment_option(reference, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.update_payment_option(reference, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/draft")
@@ -234,8 +255,8 @@ def admin_upload_draft(
     payload: AdminDraft,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.upload_draft(reference, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.upload_draft(reference, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/status")
@@ -244,5 +265,5 @@ def admin_update_status(
     payload: AdminOrderStatus,
     request: Request,
 ) -> dict[str, Any]:
-    require_admin(request)
-    return order_services.update_order_status(reference, payload.status, payload.model_dump())
+    admin = require_admin(request)
+    return order_services.update_order_status(reference, payload.status, payload.model_dump(), actor=admin["sub"])

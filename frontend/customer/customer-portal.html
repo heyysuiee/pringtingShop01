@@ -84,6 +84,13 @@
                         <label for="profile-messenger">Messenger name<input id="profile-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
                         <button class="btn btn-dark" type="submit">Save profile</button>
                     </form>
+                    <section class="portal-notifications" id="account-notifications-section" aria-labelledby="notifications-title">
+                        <div class="orders-list-heading">
+                            <h3 class="card-title" id="notifications-title">Notifications <span class="notification-count" id="notification-count" hidden></span></h3>
+                            <button class="text-button" type="button" id="notifications-read-all" hidden>Mark all as read</button>
+                        </div>
+                        <ul class="notification-list" id="account-notifications" aria-live="polite"></ul>
+                    </section>
                     <div class="orders-list-heading"><h3 class="card-title">Orders from this account</h3></div>
                     <div id="account-orders" class="my-orders-list" aria-live="polite"></div>
                     <a class="btn btn-ghost-dark" href="/order">Place a new order</a>
@@ -134,6 +141,7 @@
     <script src="/assets/shop.js"></script>
     <script src="/assets/account.js"></script>
     <script src="/assets/mockup.js"></script>
+    <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/portal.js"></script>
 </body>
 

@@ -11,6 +11,9 @@
     const message = document.querySelector("#account-message");
     const profileForm = document.querySelector("#customer-profile-form");
     const ordersContainer = document.querySelector("#account-orders");
+    const notificationsList = document.querySelector("#account-notifications");
+    const notificationCount = document.querySelector("#notification-count");
+    const readAllButton = document.querySelector("#notifications-read-all");
     // Only the customer portal has an account panel; on other pages this script does nothing.
     if (!panel) return;
 
@@ -83,7 +86,86 @@
             if (input) input.value = value || "";
         }
         void loadOrders();
+        void loadNotifications();
     }
+
+    function formatWhen(value) {
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    }
+
+    /** Quotation, payment, and order updates from the shop. Opening one shows its order and marks it read. */
+    function renderNotifications(result) {
+        if (!notificationsList) return;
+        notificationsList.replaceChildren();
+        const unread = result.unread || 0;
+        if (notificationCount) {
+            notificationCount.hidden = unread === 0;
+            notificationCount.textContent = unread ? `${unread} new` : "";
+        }
+        if (readAllButton) readAllButton.hidden = unread === 0;
+        if (!result.notifications.length) {
+            const empty = document.createElement("li");
+            empty.className = "field-hint";
+            empty.textContent = "No notifications yet. You will be notified here when the shop sends a quotation or verifies a payment.";
+            notificationsList.append(empty);
+            return;
+        }
+        for (const item of result.notifications.slice(0, 10)) {
+            const entry = document.createElement("li");
+            entry.className = `notification-item${item.read ? "" : " is-unread"}`;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "notification-button";
+            const title = document.createElement("strong");
+            title.textContent = item.title;
+            const message = document.createElement("span");
+            message.textContent = item.message;
+            const meta = document.createElement("small");
+            meta.textContent = `${item.order_reference} · ${formatWhen(item.created_at)}`;
+            button.append(title, message, meta);
+            button.addEventListener("click", async () => {
+                if (!item.read) {
+                    try {
+                        renderNotifications(await request("/api/account/notifications/read", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ ids: [item.id] }),
+                        }));
+                    } catch (error) {
+                        handleFailure(error, "The notification could not be updated.");
+                    }
+                }
+                document.dispatchEvent(new CustomEvent("customer-order-select", { detail: { reference: item.order_reference, signedIn: true } }));
+            });
+            entry.append(button);
+            notificationsList.append(entry);
+        }
+    }
+
+    async function loadNotifications() {
+        if (!notificationsList) return;
+        try {
+            renderNotifications(await request("/api/account/notifications"));
+        } catch (error) {
+            handleFailure(error, "Notifications could not be loaded.");
+        }
+    }
+
+    readAllButton?.addEventListener("click", async () => {
+        readAllButton.disabled = true;
+        try {
+            renderNotifications(await request("/api/account/notifications/read", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+            }));
+        } catch (error) {
+            handleFailure(error, "Notifications could not be updated.");
+        } finally {
+            readAllButton.disabled = false;
+        }
+    });
 
     async function loadOrders() {
         if (!ordersContainer) return;
@@ -110,8 +192,7 @@
                 title.textContent = order.product.name;
                 const details = document.createElement("p");
                 details.className = "field-hint";
-                const option = order.payment?.payment_option;
-                const paying = option === "cod" ? "Cash on Delivery" : option ? "50% down payment" : "payment chosen after the quotation";
+                const paying = order.payment?.payment_option === "cod" ? "Cash on Delivery" : "50% down payment";
                 details.textContent = `${order.reference} · ${order.customization.quantity} item(s) · ${paying}`;
                 const status = document.createElement("span");
                 status.className = `order-status-pill ${statusSlug(order.status)}`;
@@ -138,7 +219,9 @@
 
     // Sent by portal.js: after viewing an order (it may have been approved or cancelled), and when its session ends.
     document.addEventListener("customer-orders-changed", () => {
-        if (activeCustomer) void loadOrders();
+        if (!activeCustomer) return;
+        void loadOrders();
+        void loadNotifications();
     });
     document.addEventListener("customer-session-ended", sessionEnded);
 
