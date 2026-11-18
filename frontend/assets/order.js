@@ -432,11 +432,25 @@
             el("strong", "product-price-note", priceSummary(product)),
         );
         const packages = product.packages || [];
+        const customizable = customizeAllowed(product);
+        const packageText = `${packages.length} package${packages.length === 1 ? "" : "s"} available`;
         copy.append(el("p", "field-hint", packages.length
-            ? `${packages.length} package${packages.length === 1 ? "" : "s"} available, or customize your own order.`
-            : "Customize your own order; the shop has not published packages for this item yet."));
+            ? (customizable ? `${packageText}, or customize your own order.` : `${packageText}. This item is ordered through its packages only.`)
+            : (customizable
+                ? "Customize your own order; the shop has not published packages for this item yet."
+                : "This item is not available to order right now. Please choose another product or contact the shop.")));
         if (product.min_quantity > 1) copy.append(el("span", "min-badge", `Minimum order: ${product.min_quantity.toLocaleString()} pcs`));
         selectedProduct.append(gallery(productImages(product), product.name, "selected-product-gallery"), copy);
+    }
+
+    /** Whether the shop accepts customized orders (quotation requests) for a product. Older data: yes. */
+    function customizeAllowed(product = state.product) {
+        return product?.allow_customize !== false;
+    }
+
+    /** A product can be ordered when it offers packages or accepts customized orders. */
+    function productOrderable(product = state.product) {
+        return Boolean(product) && (customizeAllowed(product) || (product.packages || []).length > 0);
     }
 
     function selectProduct(productId) {
@@ -459,9 +473,11 @@
         const note = pricingNote.querySelector("div");
         const priced = product.pricing_mode !== "quote" && product.base_price !== null;
         note.replaceChildren(
-            el("strong", "", state.packages.length ? "Packages or a customized order" : (priced ? "Prices set by the shop" : "Request a quote")),
+            el("strong", "", state.packages.length ? (customizeAllowed(product) ? "Packages or a customized order" : "Packages") : (priced ? "Prices set by the shop" : "Request a quote")),
             el("p", "", state.packages.length
-                ? "Choose a published package with a fixed price, or customize your order. The total is calculated from the quantity and the shop confirms the final amount before payment."
+                ? (customizeAllowed(product)
+                    ? "Choose a published package with a fixed price, or customize your order. The total is calculated from the quantity and the shop confirms the final amount before payment."
+                    : "Choose a published package with a fixed price. The total is calculated from the quantity and the shop confirms the final amount before payment.")
                 : priced
                     ? "You will see the price per piece and a live total as you choose options. The administrator confirms the final amount before payment is requested."
                     : "This product does not have a published price yet. Submit your options and the administrator will send a quotation."),
@@ -471,7 +487,12 @@
         $("#step2-general-product").textContent = product.name;
         const largeFormat = product.category_id === "large-format" || product.pricing_mode === "area";
         $("#customize-mode-title").textContent = state.invitation ? "Customize Your Own Invitation" : "Customize Order";
-        $("#customize-mode-note").textContent = state.invitation
+        $("#order-mode-lead").textContent = customizeAllowed(product)
+            ? "Choose a ready-made package with a fixed price and inclusions, or customize the order yourself. The shop confirms the final amount before payment is requested."
+            : "Choose one of the ready-made packages with a fixed price and inclusions. The shop confirms the final amount before payment is requested.";
+        $("#customize-mode-note").textContent = !customizeAllowed(product)
+            ? "Not available for this item. Please choose one of its packages."
+            : state.invitation
             ? "Set the printing, finish, envelope, quantity, design direction, and event details yourself."
             : largeFormat
                 ? "Enter your exact size, material, and requirements. Priced per square foot or by quotation."
@@ -485,8 +506,9 @@
         renderReferenceFiles();
         resetMockup();
         renderPackages();
-        // Without packages, the customized order is the only option.
-        setMode(state.packages.length ? "" : "customize", { silent: true });
+        // With only one way to order (no packages, or customized orders disabled), choose it for the customer.
+        const initialMode = !customizeAllowed(product) ? (state.packages.length ? "package" : "") : (state.packages.length ? "" : "customize");
+        setMode(initialMode, { silent: true });
         configureLegacyEvent();
         setSequence(state.invitation ? "invitation" : "general");
 
@@ -628,6 +650,11 @@
         const packageButton = $('[data-order-mode="package"]');
         packageButton.disabled = !state.packages.length;
         packageButton.setAttribute("aria-disabled", String(!state.packages.length));
+        const customizeButton = $('[data-order-mode="customize"]');
+        const customizeOff = !customizeAllowed();
+        customizeButton.disabled = customizeOff;
+        customizeButton.setAttribute("aria-disabled", String(customizeOff));
+        customizeButton.hidden = customizeOff;
     }
 
     /** The Next button stays locked on the ordering step while a package is required but not chosen. */
@@ -640,7 +667,8 @@
     }
 
     function setMode(mode, { silent = false } = {}) {
-        if (mode === "package" && !state.packages.length) mode = "customize";
+        if (mode === "package" && !state.packages.length) mode = customizeAllowed() ? "customize" : "";
+        if (mode === "customize" && !customizeAllowed()) mode = state.packages.length ? "package" : "";
         state.mode = mode;
         if (mode !== "package") state.package = null;
         if (!silent) {
@@ -1280,11 +1308,15 @@
                 $("#product-error").textContent = "Choose a product to continue.";
                 return false;
             }
+            if (!productOrderable()) {
+                $("#product-error").textContent = `${state.product.name} is not available to order right now. Please choose another product.`;
+                return false;
+            }
             return true;
         }
         if (stepNumber === 2) {
             if (!state.mode) {
-                modeError.textContent = "Choose “Select Package” or “Customize Order” to continue.";
+                modeError.textContent = customizeAllowed() ? "Choose “Select Package” or “Customize Order” to continue." : "Select a package to continue.";
                 return false;
             }
             if (state.mode === "package" && !state.package) {

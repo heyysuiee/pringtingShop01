@@ -106,7 +106,7 @@ def admin_delete_product(product_id: str, request: Request) -> Response:
 
 @router.get("/api/admin/catalog/packages")
 def admin_read_all_packages(request: Request) -> dict[str, Any]:
-    """Every package of every product (the Package Management page)."""
+    """Every package of every product (the Packages tab of Services & Products)."""
     require_admin(request)
     return package_services.admin_all_packages()
 

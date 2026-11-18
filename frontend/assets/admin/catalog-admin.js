@@ -1,9 +1,10 @@
 "use strict";
 
 /**
- * Admin catalog management: categories, products, each product's order-form fields and options, and prices.
- * Everything is saved through /api/admin/catalog and is what the customer order form renders.
- * dashboard.js calls renderServices() / renderPricing() when those views are shown.
+ * Admin catalog management — the single Services & Products module: categories, products and their prices,
+ * each product's order-form fields and option prices, and every product's packages (inclusions, base price,
+ * additional-piece price, photos). Everything is saved through /api/admin/catalog and is what the customer
+ * order page renders. dashboard.js calls renderServices() when the Services & Products view is shown.
  */
 (() => {
     const FIELD_TYPE_LABELS = {
@@ -114,7 +115,6 @@
 
     function rerenderActiveView() {
         if (document.querySelector("[data-service-table]")) renderServices();
-        if (document.querySelector("[data-pricing-table]")) renderPricing();
     }
 
     function emptyRow(tbody, columns, message) {
@@ -240,9 +240,8 @@
     // ================================================================ Services & Products view
 
     const UI = () => window.AdminUI;
-    const views = { products: null, pricing: null, packages: null };
-    const serviceFilter = { search: "", category: "", availability: "" };
-    const pricingFilter = { search: "", category: "", state: "" };
+    const views = { products: null, packages: null };
+    const serviceFilter = { search: "", category: "", availability: "", price: "" };
 
     /** Bind a toolbar control once per page render (the view's DOM is replaced on navigation). */
     function bindControl(selector, event, handler) {
@@ -259,6 +258,91 @@
         select.value = categories().some((category) => category.id === value) ? value : "";
     }
 
+    // ---------------------------------------------------------------- tabs (Products · Packages · Categories)
+
+    const TABS = ["products", "packages", "categories"];
+    let activeTab = "products";
+
+    /** Show one tab. The tab is kept in the URL hash (#packages) so a reload or a shared link reopens it. */
+    function selectTab(tab, { focus = false } = {}) {
+        activeTab = TABS.includes(tab) ? tab : "products";
+        document.querySelectorAll("[data-catalog-tab]").forEach((button) => {
+            const on = button.dataset.catalogTab === activeTab;
+            button.classList.toggle("active", on);
+            button.setAttribute("aria-selected", String(on));
+            button.tabIndex = on ? 0 : -1;
+            if (on && focus) button.focus();
+        });
+        document.querySelectorAll("[data-catalog-panel]").forEach((panel) => { panel.hidden = panel.dataset.catalogPanel !== activeTab; });
+        document.querySelectorAll("[data-tab-only]").forEach((element) => { element.hidden = element.dataset.tabOnly !== activeTab; });
+        const hash = activeTab === "products" ? "" : `#${activeTab}`;
+        if (window.location.hash !== hash) {
+            // replaceState: switching tabs must not add history entries (Back leaves the page, as before).
+            window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hash}`);
+        }
+    }
+
+    function setupTabs() {
+        const list = document.querySelector("[data-catalog-tabs]");
+        if (!list) return;
+        const fromHash = window.location.hash.slice(1);
+        if (TABS.includes(fromHash)) activeTab = fromHash;
+        if (!list.dataset.bound) {
+            list.dataset.bound = "true";
+            list.addEventListener("click", (event) => {
+                const button = event.target.closest("[data-catalog-tab]");
+                if (button) selectTab(button.dataset.catalogTab);
+            });
+            list.addEventListener("keydown", (event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const index = TABS.indexOf(activeTab);
+                const next = event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1
+                    : (index + (event.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+                selectTab(TABS[next], { focus: true });
+            });
+        }
+        selectTab(activeTab);
+    }
+
+    function setTabCount(tab, value) {
+        const element = document.querySelector(`[data-tab-count="${tab}"]`);
+        if (element) element.textContent = value === null || value === undefined ? "" : String(value);
+    }
+
+    // ---------------------------------------------------------------- products tab
+
+    /** Packages per product, from the package list (null until it has loaded). */
+    function packageCount(productId) {
+        if (!packageState.data) return null;
+        return packageState.data.products.find((item) => item.id === productId)?.package_count ?? 0;
+    }
+
+    /** Active packages of a product (null until the package list has loaded). */
+    function activePackageCount(productId) {
+        if (!packageState.data) return null;
+        return packageState.data.packages.filter((pkg) => pkg.product_id === productId && pkg.active).length;
+    }
+
+    /** Products saved before the setting existed allow customized orders. */
+    const customizeAllowed = (product) => product?.allow_customize !== false;
+
+    function hasPublishedPrice(product) {
+        return product.pricing_mode !== "quote" && product.base_price !== null;
+    }
+
+    /** Switch to the Packages tab, filtered to one product. */
+    function showPackagesFor(product) {
+        Object.assign(packageFilter, { search: "", service: product.category_id, product: product.id, status: "" });
+        const search = document.querySelector("#package-search");
+        if (search) search.value = "";
+        const status = document.querySelector("#package-status-filter");
+        if (status) status.value = "";
+        selectTab("packages");
+        renderPackagesPanel();
+        document.querySelector("[data-catalog-tabs]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     function productTable(host) {
         if (views.products && views.products.container === host && host.isConnected) return views.products;
         views.products = new (UI().DataTable)(host, {
@@ -268,10 +352,32 @@
                     h("span", { className: "table-secondary", text: product.description || "No description" }),
                 )) },
                 { label: "Category", sortKey: "category_label", render: (product) => product.category_label },
-                { label: "Pricing", sortKey: "base_price", value: (product) => (product.pricing_mode === "quote" ? null : product.base_price), render: (product) => priceText(product) },
+                { label: "Pricing", sortKey: "base_price", value: (product) => (product.pricing_mode === "quote" ? null : product.base_price), render: (product) => {
+                    const options = product.fields.flatMap((field) => field.options);
+                    const priced = options.filter((option) => option.price_adjustment).length;
+                    const quoteOnly = options.filter((option) => option.requires_quote).length;
+                    return h("span", {},
+                        h("span", { className: `status-badge ${hasPublishedPrice(product) ? "available" : "pending"}`, text: priceText(product) }),
+                        options.length ? h("span", { className: "table-secondary", text: `${priced} priced option${priced === 1 ? "" : "s"}${quoteOnly ? ` · ${quoteOnly} quote-only` : ""}` }) : null);
+                } },
+                { label: "Packages", sortKey: "packages", value: (product) => packageCount(product.id) ?? -1, render: (product) => {
+                    const count = packageCount(product.id);
+                    if (count === null) return h("span", { className: "table-secondary", text: packageState.error ? "—" : "Loading…" });
+                    if (!count) return h("span", { className: "status-badge pending", text: "Customize only", title: "No packages yet: customers order with the customize form." });
+                    const view = h("button", { className: "table-link", type: "button", text: `${count} package${count === 1 ? "" : "s"} →`, title: `Show the packages of ${product.name}` });
+                    view.addEventListener("click", () => showPackagesFor(product));
+                    return view;
+                } },
                 { label: "Order form", sortKey: "fields", value: (product) => product.fields.length, render: (product) => {
                     const optionCount = product.fields.reduce((total, field) => total + field.options.length, 0);
                     return h("span", {}, h("span", { className: "table-primary", text: `${product.fields.length} fields` }), h("span", { className: "table-secondary", text: `${optionCount} options` }));
+                } },
+                { label: "Customized orders", sortKey: "allow_customize", value: (product) => (customizeAllowed(product) ? 0 : 1), render: (product) => {
+                    if (customizeAllowed(product)) return h("span", { className: "status-badge available", text: "Enabled", title: "Customers can submit customized orders (quotation requests)." });
+                    const active = activePackageCount(product.id);
+                    return h("span", {},
+                        h("span", { className: "status-badge unavailable", text: "Disabled", title: "Customers can order this product only through its packages." }),
+                        active === 0 ? h("span", { className: "table-secondary", text: "⚠ No active packages: customers cannot order it" }) : h("span", { className: "table-secondary", text: "Packages only" }));
                 } },
                 { label: "Availability", sortKey: "active", value: (product) => (product.active ? 0 : 1), render: (product) => statusBadge(product.active) },
                 { label: "Order form preview", render: (product) => h("a", { className: "table-link", href: orderPreviewUrl(product), target: "_blank", rel: "noopener", text: "Preview ↗" }) },
@@ -281,31 +387,53 @@
                 const needle = (filter.search || "").toLowerCase();
                 return (!filter.category || product.category_id === filter.category) &&
                     (!filter.availability || (filter.availability === "available") === product.active) &&
+                    (!filter.price || (filter.price === "priced") === hasPublishedPrice(product)) &&
                     (!needle || `${product.name} ${product.category_label} ${product.description}`.toLowerCase().includes(needle));
             },
             initialQuery: { ...serviceFilter },
             defaultSort: { key: "category_label", dir: "asc" },
             emptyMessage: "No products yet. Add a product to start the catalog.",
+            filteredEmptyMessage: "No products match these filters.",
             onRowClick: (product) => openProductEditor(product.id),
             rowTitle: (product) => `Configure ${product.name}`,
             onLoad: (result) => {
                 const count = document.querySelector("[data-service-count]");
-                if (count) count.textContent = `${result.total} of ${allProducts().length} products`;
+                const products = allProducts();
+                if (count) count.textContent = `${result.total} of ${products.length} products · ${products.filter(hasPublishedPrice).length} with a published price`;
             },
         });
         return views.products;
     }
 
+    function renderCategories() {
+        const categoryRows = document.querySelector("[data-category-rows]");
+        if (!categoryRows) return;
+        categoryRows.replaceChildren(...categories().map((category) => h(
+            "tr",
+            { className: "clickable-row", tabindex: "0", title: `Edit ${category.label}`, dataset: { catalogAction: "edit-category", id: category.id } },
+            h("td", {}, h("span", { className: "table-primary", text: category.label }), h("span", { className: "table-secondary", text: category.description || "—" })),
+            h("td", { text: `${category.products.length} product${category.products.length === 1 ? "" : "s"}` }),
+            h("td", {}, statusBadge(category.active, "Shown", "Hidden")),
+        )));
+        if (!categories().length) emptyRow(categoryRows, 3, "No categories yet. Add one to start your catalog.");
+    }
+
+    /** Render the Services & Products page: all three tabs share one catalog and one package list. */
     function renderServices() {
         const host = document.querySelector("[data-service-table]");
-        const categoryRows = document.querySelector("[data-category-rows]");
         if (!host) return;
+        setupTabs();
+        const categoryRows = document.querySelector("[data-category-rows]");
         if (!state.catalog) {
-            host.replaceChildren(h("p", { className: "empty-state", text: state.error ? `The catalog could not be loaded. ${state.error}` : "Loading product catalog…" }));
+            const message = state.error ? `The catalog could not be loaded. ${state.error}` : "Loading product catalog…";
+            host.replaceChildren(h("p", { className: "empty-state", text: message }));
+            document.querySelector("[data-package-table]")?.replaceChildren(h("p", { className: "empty-state", text: state.error ? message : "Loading packages…" }));
             if (categoryRows) emptyRow(categoryRows, 3, state.error ? "—" : "Loading categories…");
             if (!state.error) load().then(rerenderActiveView, rerenderActiveView);
             return;
         }
+        // Package counts (Products tab) and the Packages tab come from the package list.
+        if (!packageState.data && !packageState.error) loadPackages().then(rerenderActiveView, rerenderActiveView);
 
         const table = productTable(host);
         const apply = (values) => {
@@ -318,78 +446,19 @@
         fillCategorySelect(document.querySelector("#service-category-filter"), serviceFilter.category);
         const availability = bindControl("#service-availability-filter", "change", (event) => apply({ availability: event.target.value }));
         if (availability) availability.value = serviceFilter.availability;
-
-        if (categoryRows) {
-            categoryRows.replaceChildren(...categories().map((category) => h(
-                "tr",
-                { className: "clickable-row", tabindex: "0", title: `Edit ${category.label}`, dataset: { catalogAction: "edit-category", id: category.id } },
-                h("td", {}, h("span", { className: "table-primary", text: category.label }), h("span", { className: "table-secondary", text: category.description || "—" })),
-                h("td", { text: `${category.products.length} product${category.products.length === 1 ? "" : "s"}` }),
-                h("td", {}, statusBadge(category.active, "Shown", "Hidden")),
-            )));
-            if (!categories().length) emptyRow(categoryRows, 3, "No categories yet. Add one to start your catalog.");
-        }
+        const price = bindControl("#service-price-filter", "change", (event) => apply({ price: event.target.value }));
+        if (price) price.value = serviceFilter.price;
         table.setQuery({ ...serviceFilter });
+
+        renderCategories();
+        renderPackagesPanel();
+        setTabCount("products", allProducts().length);
+        setTabCount("categories", categories().length);
+        setTabCount("packages", packageState.data ? packageState.data.packages.length : null);
     }
 
     function orderPreviewUrl(product) {
         return `/order?${new URLSearchParams({ service: product.category_id, design: product.id })}`;
-    }
-
-    // ================================================================ Pricing view
-
-    function renderPricing() {
-        const host = document.querySelector("[data-pricing-table]");
-        if (!host) return;
-        if (!state.catalog) {
-            host.replaceChildren(h("p", { className: "empty-state", text: state.error ? `The catalog could not be loaded. ${state.error}` : "Loading administrator-defined prices…" }));
-            if (!state.error) load().then(rerenderActiveView, rerenderActiveView);
-            return;
-        }
-        if (!views.pricing || views.pricing.container !== host || !host.isConnected) {
-            views.pricing = new (UI().DataTable)(host, {
-                columns: [
-                    { label: "Product", sortKey: "name", render: (product) => h("span", {}, h("span", { className: "table-primary", text: product.name }), h("span", { className: "table-secondary", text: product.active ? "Available" : "Unavailable" })) },
-                    { label: "Category", sortKey: "category_label", render: (product) => product.category_label },
-                    { label: "Method", sortKey: "pricing_mode", render: (product) => PRICING_LABELS[product.pricing_mode] },
-                    { label: "Base price", sortKey: "base_price", value: (product) => (product.pricing_mode === "quote" ? null : product.base_price), render: (product) => {
-                        const ready = product.pricing_mode !== "quote" && product.base_price !== null;
-                        return h("span", { className: `status-badge ${ready ? "available" : "pending"}`, text: priceText(product) });
-                    } },
-                    { label: "Option prices", render: (product) => {
-                        const options = product.fields.flatMap((field) => field.options);
-                        return `${options.filter((option) => option.price_adjustment).length} priced · ${options.filter((option) => option.requires_quote).length} quote-only · ${options.length} total`;
-                    } },
-                ],
-                rows: () => allProducts(),
-                filter: (product, filter) => {
-                    const needle = (filter.search || "").toLowerCase();
-                    const priced = product.pricing_mode !== "quote" && product.base_price !== null;
-                    return (!filter.category || product.category_id === filter.category) &&
-                        (!filter.state || (filter.state === "priced") === priced) &&
-                        (!needle || `${product.name} ${product.category_label}`.toLowerCase().includes(needle));
-                },
-                initialQuery: { ...pricingFilter },
-                defaultSort: { key: "category_label", dir: "asc" },
-                emptyMessage: "No products in the catalog yet.",
-                onRowClick: (product) => openPricingEditor(product.id),
-                rowTitle: (product) => `Set prices for ${product.name}`,
-                onLoad: () => {
-                    const count = document.querySelector("[data-pricing-count]");
-                    const products = allProducts();
-                    if (count) count.textContent = `${products.length} products · ${products.filter((product) => product.base_price !== null && product.pricing_mode !== "quote").length} with a published price`;
-                },
-            });
-        }
-        const apply = (values) => {
-            Object.assign(pricingFilter, values);
-            views.pricing.setQuery({ ...pricingFilter });
-        };
-        bindControl("#pricing-search", "input", (event) => apply({ search: event.target.value.trim() }));
-        bindControl("#pricing-category-filter", "change", (event) => apply({ category: event.target.value }));
-        bindControl("#pricing-state-filter", "change", (event) => apply({ state: event.target.value }));
-        fillCategorySelect(document.querySelector("#pricing-category-filter"), pricingFilter.category);
-        views.pricing.setQuery({ ...pricingFilter });
     }
 
     // ================================================================ dialog helpers
@@ -477,6 +546,7 @@
                     state.catalog = { ...state.catalog, ...(await api("DELETE", `/api/admin/catalog/categories/${encodeURIComponent(category.id)}`)) };
                     closeDialog();
                     rerenderActiveView();
+                    void refreshPackageData();
                     toast("Category deleted.");
                 });
             });
@@ -495,6 +565,7 @@
                 state.catalog = { ...state.catalog, ...result };
                 closeDialog();
                 rerenderActiveView();
+                void refreshPackageData();
                 toast(category ? "Category saved." : "Category added.");
             });
         });
@@ -522,6 +593,20 @@
         description.value = product?.description || "";
         const active = selectOf("active", [["true", "Available to order"], ["false", "Unavailable"]], product ? String(product.active) : "true");
         const eventMode = selectOf("event_mode", Object.entries(EVENT_LABELS), product?.event_mode || "none");
+        const allowCustomize = selectOf("allow_customize", [["true", "Enabled — customers can request a customized order"], ["false", "Disabled — packages only"]], String(customizeAllowed(product)));
+        const customizeNote = h("span", { className: "field-note", "aria-live": "polite" });
+        const refreshCustomizeNote = () => {
+            if (allowCustomize.value === "true") {
+                customizeNote.textContent = "The order page offers “Customize Order”; customized orders follow the quotation process.";
+                return;
+            }
+            const active = product ? activePackageCount(product.id) : 0;
+            customizeNote.textContent = active === 0
+                ? "⚠ This product has no active packages, so customers will not be able to order it until a package is added or customized orders are enabled."
+                : "The order page hides “Customize Order” for this product; customers choose one of its packages. Package ordering and prices are not affected.";
+        };
+        allowCustomize.addEventListener("change", refreshCustomizeNote);
+        refreshCustomizeNote();
         const minQuantity = h("input", { name: "min_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: product?.min_quantity ?? 1 });
         const maxQuantity = h("input", { name: "max_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: product?.max_quantity ?? 10000 });
         const pricingMode = selectOf("pricing_mode", Object.entries(PRICING_LABELS), product?.pricing_mode || "unit");
@@ -540,6 +625,7 @@
             formField("Description", description, { full: true }),
             formField("Availability", active),
             formField("Event details on the order form", eventMode, { note: "Celebrant, event type, date, and venue." }),
+            h("div", { className: "form-field full" }, h("label", { for: allowCustomize.id = `allow-customize-${Math.random().toString(36).slice(2, 7)}`, text: "Customized orders" }), allowCustomize, customizeNote),
             formField("Minimum quantity", minQuantity),
             formField("Maximum quantity", maxQuantity),
             formField("Pricing method", pricingMode, { note: "“Per square foot” uses the product's width, height, and measurement unit fields." }),
@@ -562,6 +648,7 @@
                     removeProduct(product.id);
                     closeDialog();
                     rerenderActiveView();
+                    void refreshPackageData();
                     toast("Product deleted.");
                 });
             });
@@ -579,6 +666,7 @@
                 description: description.value.trim(),
                 active: active.value === "true",
                 event_mode: eventMode.value,
+                allow_customize: allowCustomize.value === "true",
                 min_quantity: Number(minQuantity.value),
                 max_quantity: Number(maxQuantity.value),
                 pricing_mode: pricingMode.value,
@@ -591,6 +679,7 @@
                     : await api("POST", "/api/admin/catalog/products", payload);
                 storeProduct(result.product);
                 rerenderActiveView();
+                void refreshPackageData();
                 toast(product ? "Product saved. The order form now shows these changes." : "Product created. Add its order-form fields next.");
                 openProductEditor(result.product.id);
             });
@@ -662,9 +751,12 @@
         });
         const add = h("button", { className: "button button-primary button-small", type: "button", text: "＋ Add field" });
         add.addEventListener("click", () => openFieldEditor(product.id, null));
+        const hasOptions = product.fields.some((field) => OPTION_TYPES.has(field.field_type) && field.options.length);
+        const prices = h("button", { className: "button button-small", type: "button", text: "₱ Option prices", title: "Edit the price of every option on one screen", disabled: !hasOptions });
+        prices.addEventListener("click", () => openOptionPricesEditor(product.id));
         return h("section", { className: "catalog-fields" },
-            h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: `Order form fields (${product.fields.length})` }), add),
-            h("p", { className: "field-note", text: "Customers see these questions, in this order, after choosing this product. Quantity and contact details are always asked." }),
+            h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: `Order form fields (${product.fields.length})` }), h("div", { className: "catalog-row-actions" }, prices, add)),
+            h("p", { className: "field-note", text: "Customers see these questions, in this order, after choosing this product. Quantity and contact details are always asked. Each option can add to the price; use “Option prices” to set them all at once." }),
             product.fields.length ? list : h("p", { className: "empty-state", text: "No fields yet. Add the sizes, materials, and other options customers should choose." }),
         );
     }
@@ -678,7 +770,7 @@
     function packageListSection(product) {
         const listHost = h("div");
         const add = h("button", { className: "button button-primary button-small", type: "button", text: "＋ Add package" });
-        add.addEventListener("click", () => openPackageEditor(product, null, { back: () => openProductEditor(product.id) }));
+        add.addEventListener("click", () => openPackageEditor(product, null, { back: () => openProductEditor(product.id), onSaved: refreshPackageData }));
         const largeFormat = product.category_id === "large-format" || product.pricing_mode === "area";
         const section = h("section", { className: "catalog-packages" },
             h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: "Packages" }), add),
@@ -696,9 +788,13 @@
                     listHost.replaceChildren(h("p", { className: "empty-state", text: "No packages yet. Add the ready-made packages customers can order." }));
                     return;
                 }
+                const afterChange = async () => {
+                    await reload();
+                    await refreshPackageData();
+                };
                 listHost.replaceChildren(h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
                     h("thead", {}, h("tr", {}, ...["", "Package", "Base price", "Minimum order", "Additional piece", "Availability", ""].map((text) => h("th", { scope: "col", text })))),
-                    h("tbody", {}, ...packages.map((pkg) => packageRow(product, pkg, reload))),
+                    h("tbody", {}, ...packages.map((pkg) => packageRow(product, pkg, afterChange))),
                 )));
             } catch (error) {
                 listHost.replaceChildren(h("p", { className: "empty-state", text: error instanceof Error ? error.message : "Packages could not be loaded." }));
@@ -732,7 +828,7 @@
     function packageRow(product, pkg, reload) {
         const { toggle, remove } = packageActions(pkg, reload);
         const edit = h("button", { className: "button button-small", type: "button", text: "Edit" });
-        edit.addEventListener("click", () => openPackageEditor(product, pkg, { back: () => openProductEditor(product.id) }));
+        edit.addEventListener("click", () => openPackageEditor(product, pkg, { back: () => openProductEditor(product.id), onSaved: refreshPackageData }));
         const addOn = pkg.add_on_price === null || pkg.add_on_price === undefined
             ? "Fixed quantity"
             : `${money(pkg.add_on_price)} each${pkg.add_on_label ? ` (${pkg.add_on_label})` : ""}`;
@@ -932,7 +1028,7 @@
         ));
     }
 
-    // ================================================================ Package Management view
+    // ================================================================ Packages tab (every product's packages)
 
     const packageState = { data: null, loading: null, error: "" };
     const packageFilter = { search: "", service: "", product: "", status: "" };
@@ -955,9 +1051,20 @@
         return packageState.loading;
     }
 
+    /** Reload the package list after a package, product, or category change (counts, names, Packages tab). */
+    async function refreshPackageData() {
+        try {
+            await loadPackages(true);
+        } catch {
+            // The Packages tab shows the loading error.
+        }
+        rerenderActiveView();
+    }
+
+    /** Reload the catalog and the package list (the Packages tab's editors and the Reload button). */
     async function refreshPackagesView() {
         await Promise.all([loadPackages(true), load(true)]);
-        if (document.querySelector("[data-package-table]")) renderPackages();
+        rerenderActiveView();
     }
 
     function productForPackage(productId) {
@@ -993,12 +1100,12 @@
         openDialog(h("div", {}, h("h2", { className: "dialog-heading", text: "Add a package" }), h("p", { className: "dialog-subtitle", text: "Choose the product this package belongs to." }), form), false);
     }
 
-    function renderPackages() {
+    function renderPackagesPanel() {
         const host = document.querySelector("[data-package-table]");
         if (!host) return;
         if (!packageState.data || !state.catalog) {
-            host.replaceChildren(h("p", { className: "empty-state", text: packageState.error ? `The packages could not be loaded. ${packageState.error}` : "Loading packages…" }));
-            if (!packageState.error) Promise.all([loadPackages(), load()]).then(renderPackages, renderPackages);
+            host.replaceChildren(h("p", { className: "empty-state", text: packageState.error ? `The packages could not be loaded. ${packageState.error} Select Reload to try again.` : "Loading packages…" }));
+            views.packages = null;
             return;
         }
         const data = packageState.data;
@@ -1020,13 +1127,14 @@
 
         const serviceSelect = document.querySelector("#package-service-filter");
         const productSelect = document.querySelector("#package-product-filter");
-        if (serviceSelect && !serviceSelect.dataset.bound) {
-            serviceSelect.replaceChildren(new Option("All services", ""), ...data.services.map((service) => new Option(service.label, service.id)));
-            serviceSelect.value = packageFilter.service;
+        if (serviceSelect) {
+            serviceSelect.replaceChildren(new Option("All categories", ""), ...data.services.map((service) => new Option(service.label, service.id)));
+            serviceSelect.value = data.services.some((service) => service.id === packageFilter.service) ? packageFilter.service : "";
+            packageFilter.service = serviceSelect.value;
         }
         const fillProducts = () => {
             if (!productSelect) return;
-            const options = data.products.filter((product) => !packageFilter.service || product.category_id === packageFilter.service);
+            const options = (packageState.data?.products || []).filter((product) => !packageFilter.service || product.category_id === packageFilter.service);
             productSelect.replaceChildren(new Option("All products", ""), ...options.map((product) => new Option(product.name, product.id)));
             productSelect.value = options.some((product) => product.id === packageFilter.product) ? packageFilter.product : "";
             packageFilter.product = productSelect.value;
@@ -1040,7 +1148,8 @@
                         h("span", { className: "table-primary", text: pkg.name }),
                         h("span", { className: "table-secondary", text: pkg.description || pkg.inclusions.slice(0, 2).join(" · ") }),
                     )) },
-                    { label: "Product / service", sortKey: "product_name", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: pkg.product_name }), h("span", { className: "table-secondary", text: pkg.category_label })) },
+                    { label: "Product / category", sortKey: "product_name", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: pkg.product_name }), h("span", { className: "table-secondary", text: pkg.category_label })) },
+                    { label: "Inclusions", value: (pkg) => pkg.inclusions.length, sortKey: "inclusion_count", align: "right", render: (pkg) => String(pkg.inclusions.length) },
                     { label: "Base price", sortKey: "price", align: "right", render: (pkg) => h("span", {}, h("span", { className: "table-primary", text: money(pkg.price) }), h("span", { className: "table-secondary", text: perPieceText(pkg) })) },
                     { label: "Minimum order", sortKey: "included_quantity", align: "right", render: (pkg) => `${pkg.included_quantity.toLocaleString()} pcs` },
                     { label: "Additional piece", render: (pkg) => (pkg.add_on_price === null ? "Fixed quantity" : `${money(pkg.add_on_price)} each`) },
@@ -1070,7 +1179,7 @@
                 rowTitle: (pkg) => `Edit ${pkg.name}`,
                 onLoad: (result) => {
                     const count = document.querySelector("[data-package-count]");
-                    if (count) count.textContent = `${result.total} of ${packages.length}`;
+                    if (count) count.textContent = `${result.total} of ${(packageState.data?.packages || []).length}`;
                 },
             });
         }
@@ -1089,37 +1198,6 @@
         const status = bindControl("#package-status-filter", "change", (event) => apply({ status: event.target.value }));
         if (status) status.value = packageFilter.status;
         views.packages.setQuery({ ...packageFilter });
-
-        const productsHost = document.querySelector("[data-package-products]");
-        if (productsHost) {
-            const rows = [...data.products].sort((a, b) => a.category_label.localeCompare(b.category_label) || a.name.localeCompare(b.name));
-            productsHost.replaceChildren(h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
-                h("thead", {}, h("tr", {}, ...["Product", "Service", "Packages", ""].map((text) => h("th", { scope: "col", text })))),
-                h("tbody", {}, ...rows.map((product) => {
-                    const add = h("button", { className: "button button-small", type: "button", text: "＋ Add package" });
-                    add.addEventListener("click", () => {
-                        const full = productForPackage(product.id);
-                        if (full) openPackageEditor(full, null, { onSaved: refreshPackagesView });
-                    });
-                    const filterButton = h("button", { className: "button button-small", type: "button", text: "Show", disabled: !product.package_count });
-                    filterButton.addEventListener("click", () => {
-                        packageFilter.service = product.category_id;
-                        if (serviceSelect) serviceSelect.value = product.category_id;
-                        fillProducts();
-                        packageFilter.product = product.id;
-                        if (productSelect) productSelect.value = product.id;
-                        apply({});
-                        host.scrollIntoView({ behavior: "smooth", block: "start" });
-                    });
-                    return h("tr", {},
-                        h("td", {}, h("span", { className: "table-primary", text: product.name }), product.active ? null : h("span", { className: "table-secondary", text: "Unavailable to order" })),
-                        h("td", { text: product.category_label }),
-                        h("td", {}, product.package_count ? h("span", { className: "status-badge available", text: `${product.package_count} package${product.package_count === 1 ? "" : "s"}` }) : h("span", { className: "status-badge pending", text: "No packages" })),
-                        h("td", {}, h("div", { className: "catalog-row-actions" }, filterButton, add)),
-                    );
-                })),
-            )));
-        }
     }
 
     // ================================================================ field editor
@@ -1328,23 +1406,16 @@
         ));
     }
 
-    // ================================================================ pricing editor
+    // ================================================================ option prices (opened from the product editor)
 
-    function openPricingEditor(productId) {
+    /**
+     * Every option price of one product on a single screen (the same values the field editor's option
+     * table edits). The base price and pricing method are edited in the product details form.
+     */
+    function openOptionPricesEditor(productId) {
         const product = findProduct(productId);
         if (!product) return;
         const form = h("form", { className: "catalog-form", novalidate: true });
-        const mode = selectOf("pricing_mode", Object.entries(PRICING_LABELS), product.pricing_mode);
-        const base = h("input", { name: "base_price", type: "number", min: 0, step: "0.01", placeholder: "Not set — customers request a quote", value: product.base_price ?? "" });
-        const baseField = formField("", base, { note: "Leave blank to keep this product on “Request a quote”." });
-        const refreshBase = () => {
-            baseField.querySelector("label").textContent = mode.value === "area" ? "Base price per square foot (PHP)" : "Base price per piece (PHP)";
-            base.disabled = mode.value === "quote";
-        };
-        mode.addEventListener("change", refreshBase);
-        refreshBase();
-        form.append(h("div", { className: "form-grid" }, formField("Pricing method", mode), baseField));
-
         const rows = [];
         const optionFields = product.fields.filter((field) => OPTION_TYPES.has(field.field_type) && field.options.length);
         optionFields.forEach((field) => {
@@ -1367,31 +1438,28 @@
         });
         if (!optionFields.length) form.append(h("p", { className: "field-note", text: "This product has no choice fields with options yet." }));
 
-        const save = h("button", { className: "button button-primary", type: "submit", text: "Save prices" });
-        form.append(h("div", { className: "dialog-actions" },
-            h("button", { className: "button", type: "button", dataset: { action: "close-dialog" }, text: "Cancel" }),
-            save,
-        ));
+        const back = h("button", { className: "button", type: "button", text: "← Back to product" });
+        back.addEventListener("click", () => openProductEditor(product.id));
+        const save = h("button", { className: "button button-primary", type: "submit", text: "Save option prices", disabled: !optionFields.length });
+        form.append(h("div", { className: "dialog-actions" }, back, save));
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
             void guarded(save, async () => {
                 const result = await api("POST", `/api/admin/catalog/products/${encodeURIComponent(product.id)}/pricing`, {
-                    pricing_mode: mode.value,
-                    base_price: mode.value === "quote" ? null : numberOrNull(base.value),
                     options: rows.map((read) => read()),
                 });
                 storeProduct(result.product);
-                closeDialog();
                 rerenderActiveView();
-                toast(`Prices saved for ${product.name}. New estimates use them immediately.`);
+                toast(`Option prices saved for ${product.name}. New estimates use them immediately.`);
+                openProductEditor(product.id);
             });
         });
 
         openDialog(h("div", { className: "catalog-editor" },
             h("p", { className: "catalog-breadcrumb", text: `${product.category_label} / ${product.name}` }),
-            h("h2", { className: "dialog-heading", text: "Set prices" }),
-            h("p", { className: "dialog-subtitle", text: "Enter only prices approved by the shop. Estimate = (base price + per-piece options) × quantity + per-order options. For size-based products, the base and per-sq-ft options are multiplied by the area first. Options marked “Quote only” switch the order to a quotation." }),
+            h("h2", { className: "dialog-heading", text: "Option prices" }),
+            h("p", { className: "dialog-subtitle", text: `Base price: ${priceText(product)} (set in the product details). Enter only prices approved by the shop. Estimate = (base price + per-piece options) × quantity + per-order options. For size-based products, the base and per-sq-ft options are multiplied by the area first. Options marked “Quote only” switch the order to a quotation.` }),
             form,
         ));
     }
@@ -1419,7 +1487,6 @@
                 case "edit-category": openCategoryForm(categories().find((category) => category.id === id) || null); break;
                 case "add-product": openProductEditor(null); break;
                 case "edit-product": openProductEditor(id); break;
-                case "edit-pricing": openPricingEditor(id); break;
                 case "add-package":
                     try {
                         await loadPackages();
@@ -1429,14 +1496,14 @@
                     }
                     openPackageProductPicker();
                     break;
-                case "reload-packages":
-                    await refreshPackagesView();
-                    toast("Packages reloaded.");
-                    break;
                 case "reload-catalog":
-                    await load(true);
-                    rerenderActiveView();
-                    toast("Catalog reloaded.");
+                    try {
+                        await refreshPackagesView();
+                        toast("Catalog and packages reloaded.");
+                    } catch (error) {
+                        rerenderActiveView();
+                        toast(error instanceof Error ? error.message : "The catalog could not be reloaded.");
+                    }
                     break;
                 default: break;
             }
@@ -1447,7 +1514,9 @@
     document.addEventListener("keydown", handleTrigger);
 
     // The script loads at the end of <body>, so the shared dialog already exists.
-    dialog()?.addEventListener("close", () => dialog().classList.remove("admin-dialog-wide"));
+    dialog()?.addEventListener("close", () => {
+        if (!dialog().open) dialog().classList.remove("admin-dialog-wide");
+    });
 
-    window.PrintShopCatalogAdmin = { renderServices, renderPricing, renderPackages, reload: () => load(true) };
+    window.PrintShopCatalogAdmin = { renderServices, reload: () => refreshPackagesView() };
 })();

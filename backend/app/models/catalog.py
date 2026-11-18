@@ -82,6 +82,8 @@ class CatalogProduct(TypedDict):
     min_quantity: int
     max_quantity: int
     event_mode: str
+    # Whether customers may submit a customized order (quotation request) instead of choosing a package.
+    allow_customize: bool
     sort_order: int
     active: bool
     fields: list[CatalogField]

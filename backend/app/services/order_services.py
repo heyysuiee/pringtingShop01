@@ -626,6 +626,9 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     has_event_fields = catalog_services.product_has_event_section(product)
     package_id = customization_payload.get("package_id")
     package = package_services.orderable_package(product, package_id) if package_id not in (None, "") else None
+    if package is None:
+        # Packages are always orderable; a customized order needs the product's customization enabled.
+        catalog_services.ensure_customizable(product)
     decoded_uploads = _decode_order_uploads(product, payload.get("files", []), payload.get("field_files"))
     field_file_names: dict[str, list[str]] = {}
     for metadata, _ in decoded_uploads:

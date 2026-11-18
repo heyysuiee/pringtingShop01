@@ -827,5 +827,159 @@ class AdminInsightTests(CatalogTestCase):
         self.assertEqual(customers_export.status_code, 200)
 
 
+class CustomizedOrderAvailabilityTests(CatalogTestCase):
+    """Each product's "Customized orders" setting: enabled by default, packages unaffected when disabled."""
+
+    def set_customize(self, admin: TestClient, product_id: str, allowed: object) -> object:
+        return admin.patch(f"/api/admin/catalog/products/{product_id}", json={"allow_customize": allowed})
+
+    def custom_quote(self, product_id: str, **extra: object) -> object:
+        return self.client.post("/api/catalog/quote", json={"product_id": product_id, "quantity": 12, "options": {}, **extra})
+
+    def test_existing_and_new_products_allow_customized_orders_by_default(self) -> None:
+        admin = self.admin()
+        catalog = admin.get("/api/admin/catalog").json()
+        products = [product for category in catalog["categories"] for product in category["products"]]
+        self.assertTrue(products)
+        self.assertTrue(all(product["allow_customize"] is True for product in products))
+        public = self.client.get("/api/catalog").json()
+        self.assertTrue(all(product["allow_customize"] is True for category in public["categories"] for product in category["products"]))
+        category_id = catalog["categories"][0]["id"]
+        created = admin.post("/api/admin/catalog/products", json={"name": f"Default Customize {uuid.uuid4().hex[:6]}", "category_id": category_id})
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertTrue(created.json()["product"]["allow_customize"])
+        admin.delete(f"/api/admin/catalog/products/{created.json()['product']['id']}")
+
+    def test_setting_is_validated_saved_and_published(self) -> None:
+        admin = self.admin()
+        for bad in ("false", 0, None, "no"):
+            response = self.set_customize(admin, "white-mug", bad)
+            self.assertEqual(response.status_code, 422, (bad, response.text))
+        self.assertTrue(admin.get("/api/admin/catalog/products/white-mug").json()["product"]["allow_customize"])
+        try:
+            saved = self.set_customize(admin, "white-mug", False)
+            self.assertEqual(saved.status_code, 200, saved.text)
+            self.assertFalse(saved.json()["product"]["allow_customize"])
+            self.assertFalse(catalog_repository.get_product("white-mug", active_only=False)["allow_customize"])
+            self.assertFalse(self.client.get("/api/catalog/products/white-mug").json()["product"]["allow_customize"])
+            # Other product settings are untouched.
+            self.assertEqual(saved.json()["product"]["pricing_mode"], admin.get("/api/admin/catalog/products/white-mug").json()["product"]["pricing_mode"])
+        finally:
+            self.set_customize(admin, "white-mug", True)
+
+    def test_disabled_blocks_customized_orders_and_estimates(self) -> None:
+        admin = self.admin()
+        shopper, account = self.customer()
+        try:
+            self.assertEqual(self.set_customize(admin, "white-mug", False).status_code, 200)
+            blocked = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS)
+            self.assertEqual(blocked.status_code, 422, blocked.text)
+            self.assertIn("Customized orders are not available", blocked.json()["detail"])
+            estimate = self.custom_quote("white-mug", options=MUG_OPTIONS)
+            self.assertEqual(estimate.status_code, 422, estimate.text)
+        finally:
+            self.set_customize(admin, "white-mug", True)
+        # Enabled again: customized quotation requests work as usual.
+        allowed = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS)
+        self.assertEqual(allowed.status_code, 201, allowed.text)
+        self.assertEqual(allowed.json()["order_kind"], "customize")
+        self.assertEqual(self.custom_quote("white-mug", options=MUG_OPTIONS).status_code, 200)
+
+    def test_package_orders_work_when_customized_orders_are_disabled(self) -> None:
+        admin = self.admin()
+        package = PackageAndImageTests.tote_package(self, admin, add_on_price=90)
+        shopper, account = self.customer()
+        try:
+            self.assertEqual(self.set_customize(admin, "personalized-tote-bag", False).status_code, 200)
+            quote = self.custom_quote("personalized-tote-bag", package_id=package["id"])
+            self.assertEqual(quote.status_code, 200, quote.text)
+            self.assertEqual(quote.json()["estimated_total"], 1180.0)
+            ordered = self.order(shopper, account["email"], "personalized-tote-bag", 12, {"personalization": "Team Rocket"}, package_id=package["id"])
+            self.assertEqual(ordered.status_code, 201, ordered.text)
+            body = ordered.json()
+            self.assertEqual(body["order_kind"], "package")
+            self.assertEqual(body["pricing"]["estimated_total"], 1180.0)
+            self.assertEqual(body["payment"]["payment_option"], "down_payment")
+            self.assertEqual(self.custom_quote("personalized-tote-bag").status_code, 422)
+        finally:
+            self.set_customize(admin, "personalized-tote-bag", True)
+            admin.delete(f"/api/admin/catalog/packages/{package['id']}")
+
+    def test_existing_customized_orders_and_quotations_are_unchanged(self) -> None:
+        admin = self.admin()
+        shopper, account = self.customer()
+        created = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS)
+        self.assertEqual(created.status_code, 201, created.text)
+        reference = created.json()["reference"]
+        before = admin.get(f"/api/admin/orders/{reference}").json()
+        try:
+            self.assertEqual(self.set_customize(admin, "white-mug", False).status_code, 200)
+            after = admin.get(f"/api/admin/orders/{reference}").json()
+            for key in ("status", "order_kind", "customization", "pricing", "payment", "total_amount"):
+                self.assertEqual(after.get(key), before.get(key), key)
+            # The quotation process continues for an order placed before the setting changed.
+            quoted = PaymentOptionTests.quote(self, admin, reference, 500)
+            accepted = PaymentOptionTests.accept(self, shopper, account["email"], quoted, "down_payment")
+            self.assertEqual(accepted["status"], "Awaiting Down Payment")
+            self.assertEqual(accepted["payment"]["down_payment_required"], 250.0)
+        finally:
+            self.set_customize(admin, "white-mug", True)
+
+
+class ServicesProductsConsolidationTests(CatalogTestCase):
+    """Package Management and Pricing Management were merged into the one Services & Products module."""
+
+    ADMIN_PAGES = ("dashboard", "orders", "customers", "payments", "reports", "services", "notifications", "settings")
+
+    def test_services_page_holds_products_packages_and_categories(self) -> None:
+        page = self.admin().get("/admin/services")
+        self.assertEqual(page.status_code, 200)
+        for marker in ('data-catalog-tab="products"', 'data-catalog-tab="packages"', 'data-catalog-tab="categories"',
+                       "data-service-table", "data-package-table", "data-category-rows", 'data-catalog-action="add-package"'):
+            self.assertIn(marker, page.text, marker)
+
+    def test_old_package_and_pricing_urls_redirect_to_services(self) -> None:
+        admin = self.admin()
+        packages = admin.get("/admin/packages", follow_redirects=False)
+        self.assertEqual(packages.status_code, 303)
+        self.assertEqual(packages.headers["location"], "/admin/services#packages")
+        pricing = admin.get("/admin/pricing", follow_redirects=False)
+        self.assertEqual(pricing.status_code, 303)
+        self.assertEqual(pricing.headers["location"], "/admin/services")
+        # Following the redirect still requires an administrator session.
+        anonymous = TestClient(app).get("/admin/packages")
+        self.assertEqual(anonymous.url.path, "/admin/login", anonymous.url)
+
+    def test_admin_navigation_has_no_removed_modules_or_broken_links(self) -> None:
+        admin = self.admin()
+        for view in self.ADMIN_PAGES:
+            page = admin.get(f"/admin/{view}")
+            self.assertEqual(page.status_code, 200, view)
+            self.assertNotIn("Package Management", page.text, view)
+            self.assertNotIn("Pricing Management", page.text, view)
+            self.assertNotIn('href="/admin/packages"', page.text, view)
+            self.assertNotIn('href="/admin/pricing"', page.text, view)
+            self.assertIn('href="/admin/services" data-view="services"', page.text, view)
+            # Every sidebar link points at a page that is served.
+            for link in ("/admin/dashboard", "/admin/orders", "/admin/customers", "/admin/payments", "/admin/reports",
+                         "/admin/services", "/admin/notifications", "/admin/settings"):
+                self.assertIn(f'href="{link}"', page.text, (view, link))
+
+    def test_package_and_option_price_apis_used_by_services_products_still_work(self) -> None:
+        admin = self.admin()
+        product = admin.get("/api/admin/catalog/products/white-mug").json()["product"]
+        option = next(option for field in product["fields"] for option in field["options"])
+        # The "Option prices" screen sends only option prices; base price and pricing method are left unchanged.
+        saved = admin.post("/api/admin/catalog/products/white-mug/pricing", json={
+            "options": [{"id": option["id"], "price_adjustment": option["price_adjustment"], "price_type": option["price_type"], "requires_quote": option["requires_quote"]}],
+        })
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["product"]["base_price"], product["base_price"])
+        self.assertEqual(saved.json()["product"]["pricing_mode"], product["pricing_mode"])
+        listing = admin.get("/api/admin/catalog/packages")
+        self.assertEqual(listing.status_code, 200, listing.text)
+        self.assertEqual(set(listing.json()), {"packages", "products", "services"})
+
+
 if __name__ == "__main__":
     unittest.main()

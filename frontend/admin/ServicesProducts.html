@@ -32,8 +32,6 @@
                 <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true" data-icon="wallet">▣</span>Payments &amp; Transactions<span class="nav-count" id="payment-count"></span></a>
                 <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true" data-icon="chart-column">▥</span>Sales &amp; Reports</a>
                 <a href="/admin/services" data-view="services" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true" data-icon="shopping-bag">▧</span>Services &amp; Products</a>
-                <a href="/admin/packages" data-view="packages"><span class="nav-icon" aria-hidden="true" data-icon="package">▦</span>Package Management</a>
-                <a href="/admin/pricing" data-view="pricing"><span class="nav-icon" aria-hidden="true" data-icon="tag">₱</span>Pricing Management</a>
                 <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true" data-icon="bell">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
             </nav>
             <div class="sidebar-bottom">
@@ -67,29 +65,60 @@
                     <header class="page-heading">
                         <div>
                             <h1>Services &amp; products</h1>
-                            <p>Manage categories and products, and the questions, sizes, materials, and uploads each product's order form asks for. Select a row to edit it.</p>
+                            <p>Manage the whole catalog in one place: categories, products and their prices, order-form options, and the ready-made packages with their inclusions and additional-piece prices.</p>
                         </div>
-                        <div class="page-heading-actions"><button class="button" type="button" data-catalog-action="reload-catalog"><span data-icon="refresh-cw" data-icon-size="16" aria-hidden="true">↻</span> Reload</button><button class="button" type="button" data-catalog-action="add-category">＋ Add category</button><button class="button button-primary" type="button" data-catalog-action="add-product">＋ Add product</button></div>
+                        <div class="page-heading-actions">
+                            <button class="button" type="button" data-catalog-action="reload-catalog"><span data-icon="refresh-cw" data-icon-size="16" aria-hidden="true">↻</span> Reload</button>
+                            <button class="button button-primary" type="button" data-catalog-action="add-product" data-tab-only="products">＋ Add product</button>
+                            <button class="button button-primary" type="button" data-catalog-action="add-package" data-tab-only="packages" hidden>＋ Add package</button>
+                            <button class="button button-primary" type="button" data-catalog-action="add-category" data-tab-only="categories" hidden>＋ Add category</button>
+                        </div>
                     </header>
-                    <div class="notice-card services-pricing-note"><strong>Live catalog:</strong> changes are saved to the database and appear on the customer order form immediately. Products stay on “Request a quote” until a price is entered.</div>
-                    <section class="panel table-panel" data-catalog-services>
-                        <div class="panel-heading"><div><h2>Service categories</h2><p>Hidden categories are not offered on the order form. Select a row to edit.</p></div></div>
-                        <div class="table-wrap">
-                            <table class="data-table">
-                                <thead><tr><th scope="col">Category</th><th scope="col">Products</th><th scope="col">Visibility</th></tr></thead>
-                                <tbody data-category-rows><tr><td class="empty-state" colspan="3">Loading categories…</td></tr></tbody>
-                            </table>
-                        </div>
-                    </section>
-                    <div class="filter-bar">
-                        <label class="search-control filter-search"><span aria-hidden="true">⌕</span><input id="service-search" type="search" placeholder="Search products or category…" autocomplete="off"></label>
-                        <div class="filter-field"><label for="service-category-filter">Category</label><select id="service-category-filter"><option value="">All categories</option></select></div>
-                        <div class="filter-field"><label for="service-availability-filter">Availability</label><select id="service-availability-filter"><option value="">All</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select></div>
+                    <div class="notice-card services-pricing-note"><strong>Live catalog:</strong> changes are saved to the database and appear on the customer order page immediately. Products stay on “Request a quote” until a price is entered. Existing orders keep the package details and prices they were placed with.</div>
+                    <div class="tab-list catalog-tabs" role="tablist" aria-label="Services and products sections" data-catalog-tabs>
+                        <button class="tab-button active" type="button" role="tab" id="catalog-tab-products" aria-controls="catalog-panel-products" aria-selected="true" data-catalog-tab="products">Products <span class="segmented-count" data-tab-count="products"></span></button>
+                        <button class="tab-button" type="button" role="tab" id="catalog-tab-packages" aria-controls="catalog-panel-packages" aria-selected="false" tabindex="-1" data-catalog-tab="packages">Packages <span class="segmented-count" data-tab-count="packages"></span></button>
+                        <button class="tab-button" type="button" role="tab" id="catalog-tab-categories" aria-controls="catalog-panel-categories" aria-selected="false" tabindex="-1" data-catalog-tab="categories">Categories <span class="segmented-count" data-tab-count="categories"></span></button>
                     </div>
-                    <section class="panel">
-                        <div class="panel-heading"><div><h2>Product catalog <span class="table-secondary" data-service-count></span></h2><p>Select a product to configure its details and order form.</p></div></div>
-                        <div data-service-table></div>
-                    </section>
+
+                    <div role="tabpanel" id="catalog-panel-products" aria-labelledby="catalog-tab-products" data-catalog-panel="products">
+                        <div class="filter-bar">
+                            <label class="search-control filter-search"><span aria-hidden="true">⌕</span><input id="service-search" type="search" placeholder="Search products or category…" autocomplete="off"></label>
+                            <div class="filter-field"><label for="service-category-filter">Category</label><select id="service-category-filter"><option value="">All categories</option></select></div>
+                            <div class="filter-field"><label for="service-availability-filter">Availability</label><select id="service-availability-filter"><option value="">All</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select></div>
+                            <div class="filter-field"><label for="service-price-filter">Price</label><select id="service-price-filter"><option value="">All products</option><option value="priced">Has a published price</option><option value="quote">Request a quote</option></select></div>
+                        </div>
+                        <section class="panel">
+                            <div class="panel-heading"><div><h2>Product catalog <span class="table-secondary" data-service-count></span></h2><p>Select a product to edit its details, base price, packages, and order-form options (with their prices).</p></div></div>
+                            <div data-service-table></div>
+                        </section>
+                    </div>
+
+                    <div role="tabpanel" id="catalog-panel-packages" aria-labelledby="catalog-tab-packages" data-catalog-panel="packages" hidden>
+                        <section class="stats-grid" data-package-stats aria-label="Package summary"></section>
+                        <div class="filter-bar">
+                            <label class="search-control filter-search"><span aria-hidden="true">⌕</span><input id="package-search" type="search" placeholder="Search packages, products, inclusions…" autocomplete="off"></label>
+                            <div class="filter-field"><label for="package-service-filter">Category</label><select id="package-service-filter"><option value="">All categories</option></select></div>
+                            <div class="filter-field"><label for="package-product-filter">Product</label><select id="package-product-filter"><option value="">All products</option></select></div>
+                            <div class="filter-field"><label for="package-status-filter">Status</label><select id="package-status-filter"><option value="">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+                        </div>
+                        <section class="panel">
+                            <div class="panel-heading"><div><h2>Packages <span class="table-secondary" data-package-count></span></h2><p>Ready-made packages across every product. Select a package to edit its name, description, inclusions, price, additional-piece price, and photos. Products without packages are ordered with the customize form only.</p></div></div>
+                            <div data-package-table></div>
+                        </section>
+                    </div>
+
+                    <div role="tabpanel" id="catalog-panel-categories" aria-labelledby="catalog-tab-categories" data-catalog-panel="categories" hidden>
+                        <section class="panel table-panel" data-catalog-services>
+                            <div class="panel-heading"><div><h2>Service categories</h2><p>Hidden categories and their products are not offered on the order form. Select a row to edit.</p></div></div>
+                            <div class="table-wrap">
+                                <table class="data-table">
+                                    <thead><tr><th scope="col">Category</th><th scope="col">Products</th><th scope="col">Visibility</th></tr></thead>
+                                    <tbody data-category-rows><tr><td class="empty-state" colspan="3">Loading categories…</td></tr></tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
                 </div>
             </main>
         </div>

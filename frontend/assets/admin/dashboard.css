@@ -715,6 +715,24 @@ button {
 .services-pricing-note {
     margin-bottom: 13px;
 }
+/* Services & Products tabs: Products · Packages · Categories */
+.catalog-tabs .tab-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.catalog-tabs .segmented-count:empty {
+    display: none;
+}
+/* .button sets display, which would otherwise override the hidden attribute. */
+[data-tab-only][hidden],
+[data-catalog-panel][hidden] {
+    display: none !important;
+}
+[data-catalog-panel] > .filter-bar,
+[data-catalog-panel] > .stats-grid {
+    margin-bottom: 13px;
+}
 .notification-list {
     display: grid;
     gap: 9px;
@@ -1779,7 +1797,7 @@ textarea:focus-visible {
     }
 }
 
-/* ---------- Catalog management (Services & Products, Pricing) ---------- */
+/* ---------- Catalog management (Services & Products) ---------- */
 
 .admin-dialog.admin-dialog-wide {
     width: min(980px, calc(100vw - 28px));

@@ -27,8 +27,6 @@
         orders: "Order Management",
         customers: "Customer Management",
         services: "Services & Products",
-        packages: "Package Management",
-        pricing: "Pricing Management",
         payments: "Payments & Transactions",
         reports: "Sales & Reports",
         notifications: "Notifications",
@@ -202,8 +200,12 @@
 
     // ================================================================ navigation
 
+    // Former admin pages now part of another view (Package and Pricing Management → Services & Products).
+    const VIEW_ALIASES = { packages: "services", pricing: "services" };
+
     function viewFromLocation() {
-        const route = window.location.pathname.split("/").filter(Boolean).pop();
+        const segment = window.location.pathname.split("/").filter(Boolean).pop();
+        const route = VIEW_ALIASES[segment] || segment;
         return LABELS[route] ? route : "dashboard";
     }
 
@@ -253,8 +255,6 @@
             orders: renderOrders,
             customers: renderCustomers,
             services: () => window.PrintShopCatalogAdmin?.renderServices(),
-            packages: () => window.PrintShopCatalogAdmin?.renderPackages(),
-            pricing: () => window.PrintShopCatalogAdmin?.renderPricing(),
             payments: renderPayments,
             reports: renderReports,
             notifications: renderNotifications,
@@ -309,7 +309,7 @@
                 element.classList.toggle("has-items", value > 0);
             });
             // Records changed elsewhere (a new order, a customer action): refresh the open table, unless a dialog is open.
-            if (lastSignature && counts.signature !== lastSignature && !dialog.open && activeView !== "packages" && activeView !== "services" && activeView !== "pricing") {
+            if (lastSignature && counts.signature !== lastSignature && !dialog.open && activeView !== "services") {
                 refreshActiveView();
             }
             lastSignature = counts.signature;
@@ -2119,6 +2119,8 @@
         document.querySelectorAll(".profile-menu[open]").forEach((menu) => menu.removeAttribute("open"));
     });
     dialog.addEventListener("close", () => {
+        // The close event is dispatched asynchronously: if another editor was opened in the meantime, keep it.
+        if (dialog.open) return;
         dialog.classList.remove("admin-dialog-wide", "admin-dialog-xl");
         document.querySelector("#dialog-content").replaceChildren();
     });

@@ -66,6 +66,7 @@ SCHEMA = (
         min_quantity INTEGER NOT NULL DEFAULT 1,
         max_quantity INTEGER NOT NULL DEFAULT 10000,
         event_mode TEXT NOT NULL DEFAULT 'none',
+        allow_customize INTEGER NOT NULL DEFAULT 1,
         sort_order INTEGER NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
@@ -145,6 +146,10 @@ def _ensure_columns(connection: sqlite3.Connection) -> None:
     if "images" not in product_columns:
         # Every image of a product, in display order (JSON list of site paths). ``image`` is the first.
         connection.execute("ALTER TABLE catalog_products ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
+    if "allow_customize" not in product_columns:
+        # Whether customers may submit a customized order (quotation request) for the product. Existing
+        # products keep their current behavior: customized orders stay enabled.
+        connection.execute("ALTER TABLE catalog_products ADD COLUMN allow_customize INTEGER NOT NULL DEFAULT 1")
 
 
 def _marker_set(connection: sqlite3.Connection, marker: str) -> bool:
@@ -294,6 +299,7 @@ def _product_from_row(row: sqlite3.Row, category_label: str) -> CatalogProduct:
         "min_quantity": int(row["min_quantity"]),
         "max_quantity": int(row["max_quantity"]),
         "event_mode": row["event_mode"],
+        "allow_customize": bool(row["allow_customize"]) if "allow_customize" in keys else True,
         "sort_order": int(row["sort_order"]),
         "active": bool(row["active"]),
         "fields": [],
@@ -457,8 +463,8 @@ def _insert_product(connection: sqlite3.Connection, data: dict[str, Any]) -> Non
         """
         INSERT INTO catalog_products (
             id, category_id, name, description, image, images, pricing_mode, base_price,
-            min_quantity, max_quantity, event_mode, sort_order, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            min_quantity, max_quantity, event_mode, allow_customize, sort_order, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             data["id"],
@@ -472,6 +478,7 @@ def _insert_product(connection: sqlite3.Connection, data: dict[str, Any]) -> Non
             int(data.get("min_quantity", 1)),
             int(data.get("max_quantity", 10000)),
             data.get("event_mode", "none"),
+            1 if data.get("allow_customize", True) else 0,
             int(data.get("sort_order", 0)),
             1 if data.get("active", True) else 0,
             now,
@@ -575,7 +582,7 @@ def update_product(product_id: str, updates: dict[str, Any]) -> None:
         "catalog_products",
         product_id,
         values,
-        ("category_id", "name", "description", "image", "images", "pricing_mode", "base_price", "min_quantity", "max_quantity", "event_mode", "sort_order", "active"),
+        ("category_id", "name", "description", "image", "images", "pricing_mode", "base_price", "min_quantity", "max_quantity", "event_mode", "allow_customize", "sort_order", "active"),
     )
 
 

@@ -49,8 +49,6 @@ ADMIN_PAGES = {
     "/admin/orders": "OrderManagement.html",
     "/admin/customers": "CustomerManagement.html",
     "/admin/services": "ServicesProducts.html",
-    "/admin/packages": "PackageManagement.html",
-    "/admin/pricing": "PricingManagement.html",
     "/admin/payments": "PaymentMonitoring.html",
     "/admin/reports": "SalesReports.html",
     "/admin/notifications": "NotificationManagement.html",
@@ -63,6 +61,9 @@ REDIRECTS = {
     "/signin": "/sign-in",
     "/register": "/create-account",
     "/sign-up": "/create-account",
+    # Package Management and Pricing Management were merged into Services & Products.
+    "/admin/packages": "/admin/services#packages",
+    "/admin/pricing": "/admin/services",
 }
 
 

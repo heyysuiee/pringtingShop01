@@ -120,6 +120,12 @@ def orderable_product(product_id: Any) -> CatalogProduct:
     return product
 
 
+def ensure_customizable(product: CatalogProduct) -> None:
+    """Refuse a customized order (quotation request) for a product the shop has limited to its packages."""
+    if not product.get("allow_customize", True):
+        raise _bad(f"Customized orders are not available for {product['name']}. Choose one of its packages instead.", 422)
+
+
 def public_product(product_id: str) -> CatalogProduct:
     product = catalog_repository.get_product(product_id, active_only=True)
     if product is None:
@@ -309,6 +315,7 @@ def quote(payload: dict[str, Any]) -> dict[str, Any]:
         scoped = package_fields(product)
         selections = _parse_selections(scoped, raw_options, strict=False)
         return _package_pricing(package, quantity_value, scoped, selections)
+    ensure_customizable(product)
     selections = _parse_selections(product, raw_options, strict=False)
     return calculate_price(product, quantity_value, selections)
 
@@ -898,6 +905,11 @@ def _product_values(payload: dict[str, Any], current: CatalogProduct | None) -> 
         raise _bad("Minimum quantity cannot be greater than maximum quantity.")
     if wants("event_mode"):
         values["event_mode"] = _choice(payload, "event_mode", "Event details", EVENT_MODES, "none")
+    if wants("allow_customize"):
+        allow = payload.get("allow_customize", True)
+        if not isinstance(allow, bool):
+            raise _bad("Customized order availability must be true (enabled) or false (disabled).")
+        values["allow_customize"] = allow
     if wants("active"):
         values["active"] = _bool(payload, "active", True)
     if "sort_order" in payload:
