@@ -42,6 +42,36 @@ def initialize() -> None:
         )
 
 
+# Administrator state kept in the shared app_meta key/value table (no extra tables): the notification
+# read state and the backup/restore history. Keys use the "admin." and "backup." prefixes, which a
+# database restore leaves unchanged.
+SETTING_PREFIXES = ("admin.", "backup.")
+
+
+def _ensure_meta(connection: Any) -> None:
+    connection.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+
+
+def get_setting(key: str) -> str | None:
+    if not key.startswith(SETTING_PREFIXES):
+        raise ValueError("Administrator settings use the admin. or backup. prefix.")
+    with connection_scope() as connection:
+        _ensure_meta(connection)
+        row = connection.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(key: str, value: str) -> None:
+    if not key.startswith(SETTING_PREFIXES):
+        raise ValueError("Administrator settings use the admin. or backup. prefix.")
+    with connection_scope() as connection:
+        _ensure_meta(connection)
+        connection.execute(
+            "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
 def get_password_hash() -> str | None:
     """The password hash saved by a reset, or None when the initial env hash is still in use."""
     with connection_scope() as connection:

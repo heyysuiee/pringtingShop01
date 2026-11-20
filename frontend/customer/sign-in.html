@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/assets/auth.css">
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
+    <link rel="stylesheet" href="/assets/chatbot.css">
     <title>Sign In — ImPRESSion PrintShop</title>
 </head>
 
@@ -49,7 +50,7 @@
             <h1 id="auth-title">Welcome back</h1>
             <p class="auth-lead">Sign in to place orders and follow their progress in your customer portal.</p>
             <div class="auth-alert" id="auth-alert" role="status" aria-live="polite" hidden></div>
-            <form class="auth-form" id="sign-in-form" novalidate>
+            <form class="auth-form" id="sign-in-form" method="post" novalidate>
                 <div class="auth-field">
                     <label for="sign-in-email">Email address</label>
                     <input id="sign-in-email" name="email" type="email" class="auth-input" autocomplete="email" maxlength="254" inputmode="email" required aria-describedby="sign-in-email-error">
@@ -83,6 +84,7 @@
 
     <script src="/assets/shop.js"></script>
     <script src="/assets/auth.js"></script>
+    <script src="/assets/chatbot.js" defer></script>
 </body>
 
 </html>

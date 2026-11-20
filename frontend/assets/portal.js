@@ -1,8 +1,8 @@
 "use strict";
 
 (() => {
+    // Signed-in customers can open one of their own orders by its reference; there is no guest lookup.
     const form = document.querySelector("#orders-lookup-form");
-    const emailInput = document.querySelector("#lookup-email");
     const referenceInput = document.querySelector("#lookup-ref");
     const error = document.querySelector("#lookup-error");
     // Errors while an order is open go here: the lookup form (and its error line) is hidden for account orders.
@@ -16,9 +16,9 @@
     const paymentPanel = document.querySelector("#customer-payment");
     const MAX_PROOF_BYTES = 5 * 1024 * 1024;
     let activeEmail = "";
-    let accessReference = "";
     let currentOrder = null;
-    let detailSource = "lookup";
+    // Every order is opened through the signed-in account (the server checks that the account owns it).
+    let detailSource = "account";
     // Changing an order (accepting a quotation, paying, approving a draft) needs the signed-in account.
     let signedIn = false;
     fetch("/api/customer/session", { credentials: "same-origin" })
@@ -37,18 +37,6 @@
 
     function money(value) {
         return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value);
-    }
-
-    function paymentSummary(order) {
-        const payment = order.payment || {};
-        if (order.status === "Quotation Sent") return "Quotation ready · review and accept or decline it";
-        if (order.status === "Quotation Declined") return "Quotation declined · no payment due";
-        const option = payment.payment_option === "cod" ? "COD" : "50% down payment";
-        if (order.total_amount === null) return `${option} · due after the quotation is accepted`;
-        const received = payment.amount_paid || 0;
-        const state = received >= order.total_amount - 0.005 ? "Paid in full" : received > 0 ? `${money(received)} verified` : "Not paid yet";
-        const pending = payment.pending_verification ? ` · ${money(payment.pending_verification)} pending verification` : "";
-        return `${option} · ${state}${pending}`;
     }
 
     async function request(url, options = {}) {
@@ -77,7 +65,7 @@
         } catch (issue) {
             const message = issue instanceof Error ? issue.message : failure;
             if (issue.status === 401) {
-                // The order can be viewed with its email and reference, but changing it needs the owner's account.
+                // The session ended while the order was open: changing an order needs the owner's signed-in account.
                 detailError.textContent = "Sign in to your customer account to respond to this order.";
                 button.disabled = false;
                 detailError.scrollIntoView({ block: "center", behavior: "instant" });
@@ -105,44 +93,6 @@
         if (!value) return "—";
         const parsed = new Date(value);
         return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
-    }
-
-    function renderOrders(orders) {
-        list.replaceChildren();
-        detail.hidden = true;
-        list.hidden = false;
-        if (!orders.length) {
-            const empty = make("div", "card portal-empty");
-            empty.append(make("span", "confirm-badge confirm-badge-muted", "i"), make("h2", "", "No orders found"), make("p", "", "No requests were found for that email address. Check the email and try again, or place a new order."));
-            list.append(empty);
-            return;
-        }
-        const heading = make("div", "orders-list-heading");
-        heading.append(make("div", "", `${orders.length} ${orders.length === 1 ? "order" : "orders"} found`));
-        list.append(heading);
-        orders.forEach((order) => {
-            const card = make("article", "card order-history-card");
-            const main = make("div", "order-history-main");
-            const kind = order.order_kind === "package"
-                ? (order.package?.name ? `Package: ${order.package.name}` : "Ready-made package")
-                : order.order_kind === "customize" ? "Customized order" : "";
-            main.append(make("span", "service-tag", order.product.category), make("h2", "", order.product.name), make("p", "field-hint", [order.reference, `Submitted ${formatDate(order.created_at)}`, kind].filter(Boolean).join(" · ")));
-            const meta = make("div", "order-history-meta");
-            meta.append(make("span", `order-status-pill ${statusSlug(order.status)}`, order.status), make("span", "payment-status", paymentSummary(order)));
-            if (order.total_amount !== null) {
-                const received = order.payments.reduce((total, payment) => total + payment.amount, 0);
-                meta.append(make("span", "field-hint", `Total ${money(order.total_amount)} · Balance ${money(Math.max(0, order.total_amount - received))}`));
-            } else if (estimateOf(order) !== null) {
-                meta.append(make("span", "field-hint", `Estimate ${money(estimateOf(order))} · awaiting confirmation`));
-            } else {
-                meta.append(make("span", "field-hint", "Waiting for Admin Quotation"));
-            }
-            const button = make("button", "btn btn-dark btn-small", "View details");
-            button.type = "button";
-            button.addEventListener("click", () => loadOrder(order.reference));
-            card.append(main, meta, button);
-            list.append(card);
-        });
     }
 
     function estimateOf(order) {
@@ -554,23 +504,18 @@
         detail.scrollIntoView({ block: "start", behavior: "instant" });
     }
 
-    async function loadOrder(reference, source = "lookup") {
+    async function loadOrder(reference) {
         error.textContent = "";
         try {
-            // Signed-in customers are verified by their session; lookup visitors prove access with email + reference.
-            const url = source === "account"
-                ? `/api/account/orders/${encodeURIComponent(reference)}`
-                : `/api/orders/${encodeURIComponent(reference)}?email=${encodeURIComponent(activeEmail)}`;
-            const order = await request(url);
-            if (source === "account") activeEmail = order.customer.email;
-            detailSource = source;
-            if (source === "account") {
-                accountSection.hidden = true;
-                lookupPanel.hidden = true;
-            }
+            // Verified by the session: the server only returns orders owned by the signed-in account.
+            const order = await request(`/api/account/orders/${encodeURIComponent(reference)}`);
+            activeEmail = order.customer.email;
+            detailSource = "account";
+            accountSection.hidden = true;
+            lookupPanel.hidden = true;
             renderDetail(order);
         } catch (issue) {
-            if (source === "account" && issue.status === 401) {
+            if (issue.status === 401) {
                 // The sign-in ended (expired, or the password was reset on another device).
                 document.dispatchEvent(new CustomEvent("customer-session-ended"));
                 return;
@@ -582,51 +527,25 @@
     document.addEventListener("customer-order-select", (event) => {
         const { reference } = event.detail || {};
         if (typeof reference !== "string" || !reference) return;
-        void loadOrder(reference, "account");
+        void loadOrder(reference);
     });
-
-    async function loadOrders(email, reference) {
-        error.textContent = "";
-        detailSource = "lookup";
-        activeEmail = email.trim().toLowerCase();
-        accessReference = reference.trim();
-        const result = await request(`/api/orders?email=${encodeURIComponent(activeEmail)}&reference=${encodeURIComponent(accessReference)}`);
-        renderOrders(result.orders);
-        return result.orders;
-    }
 
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!form.reportValidity()) return;
-        try {
-            const reference = referenceInput.value.trim();
-            const orders = await loadOrders(emailInput.value, reference);
-            if (orders.some((order) => order.reference === reference)) await loadOrder(reference);
-            else list.scrollIntoView({ block: "start", behavior: "instant" });
-        } catch (issue) {
-            error.textContent = issue instanceof Error ? issue.message : "Your order history could not be loaded.";
-        }
+        await loadOrder(referenceInput.value.trim());
     });
 
-    document.querySelector("#back-to-orders").addEventListener("click", async () => {
-        if (detailSource === "account") {
-            detail.hidden = true;
-            accountSection.hidden = false;
-            accountPanel.hidden = false;
-            lookupPanel.hidden = false;
-            list.hidden = true;
-            error.textContent = "";
-            // The order may have changed while it was open (approved, cancelled): reload the account's list.
-            document.dispatchEvent(new CustomEvent("customer-orders-changed"));
-            accountPanel.scrollIntoView({ block: "start", behavior: "instant" });
-            return;
-        }
-        try {
-            await loadOrders(activeEmail, accessReference);
-            list.scrollIntoView({ block: "start", behavior: "instant" });
-        } catch (issue) {
-            error.textContent = issue instanceof Error ? issue.message : "Your orders could not be loaded.";
-        }
+    document.querySelector("#back-to-orders").addEventListener("click", () => {
+        detail.hidden = true;
+        accountSection.hidden = false;
+        accountPanel.hidden = false;
+        lookupPanel.hidden = false;
+        list.hidden = true;
+        error.textContent = "";
+        // The order may have changed while it was open (approved, cancelled): reload the account's list.
+        document.dispatchEvent(new CustomEvent("customer-orders-changed"));
+        accountPanel.scrollIntoView({ block: "start", behavior: "instant" });
     });
 
     document.querySelector("#approve-draft").addEventListener("click", async (event) => {
@@ -647,10 +566,7 @@
         void orderAction("cancel", {}, "The request could not be cancelled.", button);
     });
 
+    // Old links (/customer-portal?email=…&ref=…) only prefill the reference; opening it still needs sign-in.
     const parameters = new URLSearchParams(window.location.search);
-    if (parameters.has("email")) {
-        emailInput.value = parameters.get("email");
-        referenceInput.value = parameters.get("ref") || "";
-        form.requestSubmit();
-    }
+    if (parameters.get("ref")) referenceInput.value = parameters.get("ref");
 })();

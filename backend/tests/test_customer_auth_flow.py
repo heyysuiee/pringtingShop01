@@ -35,6 +35,7 @@ from backend.app.repositories import order_repository  # noqa: E402
 from backend.app.schemas.user import CustomerRegistration  # noqa: E402
 from backend.app.services import auth_services, email_service  # noqa: E402
 from backend.app.utils.order_number import base_reference, candidate_reference  # noqa: E402
+from backend.tests.support import present, stored_order  # noqa: E402
 
 
 PASSWORD = "Correct-Horse-Battery-1"
@@ -192,15 +193,15 @@ class OrderUpdateTests(AuthFlowTestCase):
             json=order_payload(account["email"]),
             headers={"Idempotency-Key": uuid.uuid4().hex + uuid.uuid4().hex[:8]},
         ).json()["reference"]
-        before = order_repository.get_order(reference)
+        before = stored_order(reference)
         # A stray key (only possible by bypassing the types) must not overwrite order identity or customer data.
         updates = {"status": "Under Review", "admin_notes": "Checked", "reference": "HACKED", "customer": {"email": "x@y.z"}}
-        updated = order_repository.update_order(reference, updates, "Test update")  # type: ignore[arg-type]
+        updated = present(order_repository.update_order(reference, updates, "Test update"))  # type: ignore[arg-type]
         self.assertEqual(updated["status"], "Under Review")
         self.assertEqual(updated["admin_notes"], "Checked")
         self.assertEqual(updated["reference"], reference)
         self.assertEqual(updated["customer"], before["customer"])
-        stored = order_repository.get_order(reference)
+        stored = stored_order(reference)
         self.assertEqual(stored["status"], "Under Review")
         self.assertEqual(stored["customer"]["email"], account["email"])
         self.assertEqual(len(stored["history"]), len(before["history"]) + 1)
@@ -381,7 +382,7 @@ class PasswordResetRulesTests(AuthFlowTestCase):
         customer = self.register()
         response = self.client.post("/api/customer/password-reset/request", json={"email": customer["email"]})
         self.assertEqual(response.json()["expires_in"], 300)
-        record = customer_repository.get_reset(customer["id"])
+        record = present(customer_repository.get_reset(customer["id"]))
         lifetime = datetime.fromisoformat(record["code_expires_at"]) - datetime.fromisoformat(record["created_at"])
         self.assertLessEqual(lifetime, timedelta(minutes=5))
         self.assertGreater(lifetime, timedelta(minutes=4))
@@ -518,7 +519,7 @@ class SessionInvalidationTests(AuthFlowTestCase):
                 customer_repository.initialize()
                 customer_repository.initialize()  # running it twice is harmless
                 self.assertEqual(customer_repository.get_session_version("old-1"), 0)
-                self.assertEqual(customer_repository.get_by_id("old-1")["email"], "old@example.test")
+                self.assertEqual(present(customer_repository.get_by_id("old-1"))["email"], "old@example.test")
 
 
 class PersistentOtpLimitTests(AuthFlowTestCase):
@@ -593,6 +594,31 @@ class AuthPageTests(AuthFlowTestCase):
         self.assertIn('href="/create-account"', html)
         self.assertIn("Forgot password?", html)
 
+    def test_every_sign_in_and_password_form_posts_instead_of_using_the_url(self) -> None:
+        # Without method="post", a form sent before auth.js loads would put the password in the URL.
+        for path in ("/sign-in", "/create-account", "/forgot-password", "/admin/login", "/admin/forgot-password"):
+            forms = re.findall(r"<form [^>]*>", self.client.get(path).text)
+            self.assertTrue(forms, path)
+            for form in forms:
+                self.assertIn('method="post"', form, f"{path}: {form}")
+
+    def test_early_form_post_is_not_processed_and_returns_to_the_same_page(self) -> None:
+        customer = self.register(self.new_client())
+        browser = self.new_client()
+        for path in ("/sign-in", "/create-account", "/forgot-password", "/admin/login", "/admin/forgot-password"):
+            response = browser.post(
+                f"{path}?next=%2Forder%3Fservice%3Dsticker",
+                data={"email": customer["email"], "password": PASSWORD, "confirm_password": PASSWORD},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 303, path)
+            self.assertEqual(response.headers["location"], f"{path}?next=%2Forder%3Fservice%3Dsticker")
+            self.assertNotIn(PASSWORD, response.headers["location"])
+            self.assertNotIn("email", response.headers["location"])
+            # The plain form post is never treated as a login.
+            self.assertNotIn("set-cookie", response.headers, path)
+        self.assertEqual(browser.get("/api/customer/session").status_code, 401)
+
 
 class CacheHeaderTests(AuthFlowTestCase):
     def test_pages_scripts_and_styles_are_revalidated_on_every_load(self) -> None:
@@ -640,24 +666,14 @@ class AdminDashboardAccessTests(AuthFlowTestCase):
         from backend.app.services import order_services
 
         stats = order_services.admin_dashboard()
-        for key in (
-            "total_customers",
-            "total_orders",
-            "pending_orders",
-            "processing_orders",
-            "completed_orders",
-            "cancelled_orders",
-            "total_revenue",
-            "status_counts",
-            "recent_orders",
-        ):
+        for key in ("stages", "payments_to_verify", "revenue", "revenue_trend", "recent_orders", "total_orders"):
             self.assertIn(key, stats)
-        self.assertEqual(
-            stats["total_orders"],
-            len(order_repository.list_orders()),
-        )
-        self.assertGreaterEqual(stats["total_revenue"], 0)
-
+        self.assertEqual(set(stats["stages"]), {"new", "to_review", "awaiting_customer", "production", "release", "completed"})
+        orders = order_repository.list_orders()
+        self.assertEqual(stats["total_orders"], len(orders))
+        # The workflow stages and the cancelled count cover every order exactly once.
+        self.assertEqual(sum(stats["stages"].values()) + stats["cancelled_orders"], len(orders))
+        self.assertGreaterEqual(stats["revenue"]["total"], 0)
 
 if __name__ == "__main__":
     unittest.main()

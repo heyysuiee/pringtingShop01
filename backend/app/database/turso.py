@@ -209,6 +209,23 @@ class TursoConnection:
         last_id = result.get("last_insert_rowid")
         return Cursor(rows, rowcount, int(last_id) if last_id is not None else None)
 
+    def execute_batch(self, statements: Sequence[tuple[str, Sequence[Any]]], chunk_size: int = 200) -> None:
+        """Run many statements with few HTTP requests (used by the database restore).
+
+        Must be called inside an explicit transaction (after BEGIN). Statements are sent in chunks; the
+        first failing statement raises, and the caller's ``with connection:`` then rolls everything back.
+        """
+        if not self.in_transaction:
+            raise sqlite3.OperationalError("execute_batch requires an open transaction.")
+        for start in range(0, len(statements), chunk_size):
+            chunk = statements[start:start + chunk_size]
+            results = self._pipeline([{"type": "execute", "stmt": self._statement(sql, parameters)} for sql, parameters in chunk])
+            if len(results) != len(chunk):
+                raise sqlite3.OperationalError("Turso returned an incomplete response.")
+            for result in results:
+                if result.get("type") != "ok":
+                    _raise_error(result.get("error", {}))
+
     def commit(self) -> None:
         if self.in_transaction:
             self.execute("COMMIT")

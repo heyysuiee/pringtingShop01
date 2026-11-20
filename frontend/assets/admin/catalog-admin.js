@@ -280,6 +280,8 @@
             // replaceState: switching tabs must not add history entries (Back leaves the page, as before).
             window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hash}`);
         }
+        // The sidebar highlights "Package Management" on the Packages tab and "Services & Products" otherwise.
+        document.dispatchEvent(new CustomEvent("catalog-tab-change", { detail: { tab: activeTab } }));
     }
 
     function setupTabs() {
@@ -1518,5 +1520,12 @@
         if (!dialog().open) dialog().classList.remove("admin-dialog-wide");
     });
 
-    window.PrintShopCatalogAdmin = { renderServices, reload: () => refreshPackagesView() };
+    /** Open a tab from outside (the sidebar's Package Management link). */
+    function openTab(tab) {
+        if (!TABS.includes(tab)) return;
+        activeTab = tab;
+        if (document.querySelector("[data-catalog-tabs]")) selectTab(tab);
+    }
+
+    window.PrintShopCatalogAdmin = { renderServices, openTab, reload: () => refreshPackagesView() };
 })();

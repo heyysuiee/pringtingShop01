@@ -204,7 +204,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    justify-content: flex-end;
+    gap: 0.5rem;
 }
 
 .stats-grid-8 {
@@ -354,7 +355,7 @@
 
 .export-group {
     display: grid;
-    gap: 5px;
+    gap: 0.375rem;
     margin-left: auto;
 }
 
@@ -371,7 +372,7 @@
 .export-buttons {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 0.5rem;
 }
 
 .export-buttons .button {
@@ -384,8 +385,8 @@
 .segmented {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 12px;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
 }
 
 .segmented-button {
@@ -529,8 +530,8 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    padding: 12px 2px 0;
+    gap: 0.5rem 1rem;
+    padding: 0.75rem 2px 0;
 }
 
 .table-count {
@@ -542,7 +543,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    justify-content: flex-end;
+    gap: 0.5rem;
 }
 
 .table-footer select {
@@ -559,12 +561,13 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
+    gap: 0.5rem;
 }
 
 .pager .button {
     min-height: 34px;
     min-width: 34px;
+    padding: 0 0.625rem;
 }
 
 .pager-number.active {
@@ -574,7 +577,7 @@
 }
 
 .pager-gap {
-    padding: 0 4px;
+    padding: 0 2px;
     color: var(--ui-muted);
 }
 
@@ -1936,7 +1939,8 @@ button.notification-item:hover {
 .sales-shortcuts {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
 }
 
 /* Sidebar notification badges: hidden when zero, highlighted when something needs action. */
@@ -1987,4 +1991,387 @@ button.notification-item:hover {
 .submission-history h4 {
     margin: 0 0 6px;
     font-size: 13.5px;
+}
+
+/* ---------------------------------------------------------------- status dots for new states */
+
+.status-badge.success::before,
+.status-badge.customer::before {
+    background: var(--status-good) !important;
+}
+
+.status-badge.reference-missing::before,
+.status-badge.failed::before,
+.status-badge.with-balance::before {
+    background: var(--status-critical) !important;
+}
+
+.status-badge.no-transactions::before {
+    background: var(--status-neutral) !important;
+}
+
+/* ---------------------------------------------------------------- header notification dropdown */
+
+.notification-menu {
+    position: relative;
+}
+
+.notification-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 70;
+    display: grid;
+    gap: 0.5rem;
+    width: min(380px, calc(100vw - 24px));
+    max-height: min(520px, calc(100vh - 90px));
+    padding: 0.75rem;
+    overflow: auto;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md, 14px);
+    /* Opaque, so the page underneath never shows through the list. */
+    background: linear-gradient(var(--glass-solid, #15161c), var(--glass-solid, #15161c)), #101118;
+    box-shadow: var(--shadow-lg, 0 18px 40px rgba(0, 0, 0, 0.45));
+}
+
+.notification-panel[hidden] {
+    display: none;
+}
+
+.notification-panel-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.5rem;
+    padding: 0 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.notification-panel-head strong {
+    font-size: 14px;
+}
+
+.notification-panel-head .table-link {
+    margin-left: auto;
+    font-size: 12.5px;
+}
+
+.notification-panel-head .table-link:disabled {
+    opacity: 0.45;
+    cursor: default;
+    text-decoration: none;
+}
+
+.notification-panel-list {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.notification-panel-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-secondary, inherit);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.notification-panel-item:hover,
+.notification-panel-item:focus-visible {
+    border-color: var(--line);
+    background: var(--glass-2);
+}
+
+.notification-panel-item.unread {
+    border-color: rgba(255, 62, 157, 0.3);
+    background: rgba(255, 62, 157, 0.07);
+    color: var(--text-primary, inherit);
+}
+
+.notification-panel-item .notification-symbol {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+}
+
+.notification-panel-text {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.notification-panel-text strong {
+    font-size: 13px;
+}
+
+.notification-panel-text span,
+.notification-panel-item time {
+    overflow: hidden;
+    color: var(--text-muted, var(--ui-muted));
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notification-panel-empty {
+    margin: 0;
+    padding: 1rem 0.5rem;
+    color: var(--text-muted, var(--ui-muted));
+    font-size: 13px;
+    text-align: center;
+}
+
+.notification-panel-all {
+    display: block;
+    padding: 0.5rem;
+    border-top: 1px solid var(--line);
+    color: var(--accent-pink-light, inherit);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+}
+
+.notification-panel-all:hover {
+    text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------- notifications page table */
+
+.notification-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    min-width: 240px;
+    max-width: 440px;
+}
+
+.notification-row .notification-symbol {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+}
+
+.notification-row.unread .table-primary {
+    font-weight: 800;
+}
+
+.notification-body {
+    max-width: 400px;
+    white-space: normal;
+}
+
+.unread-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 0.4rem;
+    border-radius: 50%;
+    background: var(--accent-pink, #ff3e9d);
+    vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------- dashboard */
+
+.dashboard-stages {
+    margin-bottom: 1rem;
+}
+
+.dashboard-notice {
+    font-size: 13.5px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 1rem;
+}
+
+.revenue-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.revenue-figures {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.revenue-figures .mini-stat small {
+    display: block;
+}
+
+@media (max-width: 900px) {
+    .revenue-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .revenue-figures {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 520px) {
+    .revenue-figures {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ---------------------------------------------------------------- customers & payments */
+
+.customer-views {
+    margin-bottom: 0.75rem;
+}
+
+.view-note {
+    margin-top: 0;
+}
+
+.filter-field[hidden] {
+    display: none;
+}
+
+.missing-reference {
+    color: var(--danger, #f87171);
+}
+
+.not-counted {
+    color: var(--text-muted, var(--ui-muted));
+    text-decoration: line-through;
+}
+
+.print-options {
+    display: grid;
+    gap: 0.75rem;
+}
+
+/* ---------------------------------------------------------------- settings: backup & restore */
+
+.backup-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.backup-card {
+    display: grid;
+    align-content: start;
+    gap: 0.625rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md, 14px);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.backup-card h3,
+.backup-history-title {
+    margin: 0;
+    font-size: 15px;
+}
+
+.backup-history-title {
+    margin: 1.25rem 0 0.5rem;
+}
+
+.backup-card .button {
+    justify-self: start;
+}
+
+.backup-card input[type="file"] {
+    width: 100%;
+    min-height: 42px;
+    padding: 0.5rem;
+    border: 1px dashed var(--line-strong);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary, inherit);
+    font: inherit;
+    font-size: 13px;
+}
+
+.backup-status {
+    margin: 0;
+    color: var(--text-secondary, inherit);
+    font-size: 13px;
+}
+
+.field-note.field-error {
+    color: var(--danger, #f87171);
+}
+
+@media (max-width: 760px) {
+    .backup-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ---------------------------------------------------------------- printing the admin pages
+   Printable reports open in their own document; these rules keep a direct browser print of an admin
+   page (Ctrl+P) to the page content only. */
+
+@media print {
+    .sidebar,
+    .topbar,
+    .skip-link,
+    .filter-bar,
+    .segmented,
+    .tab-list,
+    .page-heading-actions,
+    .panel-actions,
+    .table-footer-controls,
+    .toast-region,
+    .notification-panel,
+    .export-buttons,
+    button {
+        display: none !important;
+    }
+
+    .workspace {
+        margin: 0 !important;
+    }
+
+    .main-content {
+        padding: 0 !important;
+    }
+
+    body.admin-page,
+    .panel,
+    .stat-card,
+    .data-table th,
+    .data-table td {
+        background: #fff !important;
+        color: #111 !important;
+        box-shadow: none !important;
+    }
+
+    .panel {
+        break-inside: avoid;
+        border-color: #bbb !important;
+    }
+}
+
+/* Settings: two panels side by side line up, and sections keep the standard gap. */
+.split-grid > .panel {
+    margin: 0;
+}
+
+.panel + .split-grid,
+.split-grid + .panel {
+    margin-top: 16px;
+}
+
+.notification-table .data-table td:last-child {
+    white-space: nowrap;
 }

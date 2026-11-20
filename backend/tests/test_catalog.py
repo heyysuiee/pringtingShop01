@@ -16,13 +16,15 @@ os.environ.setdefault("PRINTSHOP_ENV_FILE", "")
 
 from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from httpx import Response  # noqa: E402
 
 from backend.app.core.rate_limit import limiter  # noqa: E402
 from backend.app.core.security import SESSION_COOKIE, create_session_token  # noqa: E402
 from backend.app.database.catalog_seed import CATALOG_SEED  # noqa: E402
 from backend.app.main import app  # noqa: E402
-from backend.app.repositories import catalog_repository, order_repository  # noqa: E402
+from backend.app.repositories import catalog_repository  # noqa: E402
 from backend.app.services import catalog_services  # noqa: E402
+from backend.tests.support import present, stored_order  # noqa: E402
 
 
 PASSWORD = "Correct-Horse-Battery-1"
@@ -108,7 +110,7 @@ class CatalogTestCase(unittest.TestCase):
         admin.cookies.set(SESSION_COOKIE, create_session_token("admin@example.test", "admin"))
         return admin
 
-    def order(self, shopper: TestClient, email: str, product_id: str, quantity: int, options: dict, **extra) -> object:
+    def order(self, shopper: TestClient, email: str, product_id: str, quantity: int, options: dict, **extra) -> Response:
         customization = {"quantity": quantity, "options": options, "notes": extra.pop("notes", "")}
         package_id = extra.pop("package_id", None)
         if package_id:
@@ -127,6 +129,40 @@ class CatalogTestCase(unittest.TestCase):
             "field_files": extra.pop("field_files", {}),
         }
         return shopper.post("/api/orders", json=payload, headers={"Idempotency-Key": idempotency_key()})
+
+    def tote_package(self, admin: TestClient, **overrides: object) -> dict:
+        payload = {
+            "name": f"Tote Set {uuid.uuid4().hex[:6]}",
+            "description": "Test package",
+            "price": 1000,
+            "included_quantity": 10,
+            "inclusions": ["10 canvas tote bags", "Front print"],
+            "image_uploads": [{"name": "a.png", "dataUrl": PNG}, {"name": "b.png", "dataUrl": PNG}],
+            **overrides,
+        }
+        created = admin.post("/api/admin/catalog/products/personalized-tote-bag/packages", json=payload)
+        self.assertEqual(created.status_code, 201, created.text)
+        return next(item for item in created.json()["packages"] if item["id"] == created.json()["package_id"])
+
+    def quote(self, admin: TestClient, reference: str, amount: float, cod_allowed: bool = False) -> dict:
+        version = admin.get(f"/api/admin/orders/{reference}").json()["version"]
+        review = admin.post(f"/api/admin/orders/{reference}/status", json={"status": "Under Review", "expected_version": version})
+        self.assertEqual(review.status_code, 200, review.text)
+        quoted = admin.post(
+            f"/api/admin/orders/{reference}/quotation",
+            json={"total_amount": amount, "cod_allowed": cod_allowed, "expected_version": review.json()["version"]},
+        )
+        self.assertEqual(quoted.status_code, 200, quoted.text)
+        self.assertEqual(quoted.json()["status"], "Quotation Sent")
+        return quoted.json()
+
+    def accept(self, shopper: TestClient, email: str, quoted: dict, option: str) -> dict:
+        accepted = shopper.post(
+            f"/api/orders/{quoted['reference']}/quotation/accept",
+            json={"email": email, "payment_option": option, "quotation_revision": quoted["quotation"]["revision"]},
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        return accepted.json()
 
 
 class SeedTests(CatalogTestCase):
@@ -278,8 +314,8 @@ class OrderValidationTests(CatalogTestCase):
         shopper, account = self.customer()
         response = self.order(shopper, account["email"], "white-mug", 1, MUG_OPTIONS)
         self.assertEqual(response.status_code, 201, response.text)
-        stored = order_repository.get_order(response.json()["reference"])
-        self.assertEqual(stored["product"]["id"], "white-mug")
+        stored = stored_order(response.json()["reference"])
+        self.assertEqual(stored["product"].get("id"), "white-mug")
 
     def test_missing_required_option_is_rejected(self) -> None:
         shopper, account = self.customer()
@@ -338,7 +374,7 @@ class OrderValidationTests(CatalogTestCase):
         # Event answers are not repeated in the specification list.
         spec_labels = [spec["label"] for spec in body["customization"]["specifications"]]
         self.assertNotIn("Celebrant's name", spec_labels)
-        stored = order_repository.get_order(body["reference"])
+        stored = stored_order(body["reference"])
         self.assertIsInstance(stored["event_details"], list)
 
     def test_birthday_package_uses_published_total_and_add_on(self) -> None:
@@ -580,20 +616,6 @@ TOTE_CUSTOM_OPTIONS = {
 
 
 class PackageAndImageTests(CatalogTestCase):
-    def tote_package(self, admin: TestClient, **overrides: object) -> dict:
-        payload = {
-            "name": f"Tote Set {uuid.uuid4().hex[:6]}",
-            "description": "Test package",
-            "price": 1000,
-            "included_quantity": 10,
-            "inclusions": ["10 canvas tote bags", "Front print"],
-            "image_uploads": [{"name": "a.png", "dataUrl": PNG}, {"name": "b.png", "dataUrl": PNG}],
-            **overrides,
-        }
-        created = admin.post("/api/admin/catalog/products/personalized-tote-bag/packages", json=payload)
-        self.assertEqual(created.status_code, 201, created.text)
-        return next(item for item in created.json()["packages"] if item["id"] == created.json()["package_id"])
-
     def test_any_product_can_have_packages_with_several_images(self) -> None:
         admin = self.admin()
         package = self.tote_package(admin)
@@ -666,26 +688,6 @@ class PackageAndImageTests(CatalogTestCase):
 
 
 class PaymentOptionTests(CatalogTestCase):
-    def quote(self, admin: TestClient, reference: str, amount: float, cod_allowed: bool = False) -> dict:
-        version = admin.get(f"/api/admin/orders/{reference}").json()["version"]
-        review = admin.post(f"/api/admin/orders/{reference}/status", json={"status": "Under Review", "expected_version": version})
-        self.assertEqual(review.status_code, 200, review.text)
-        quoted = admin.post(
-            f"/api/admin/orders/{reference}/quotation",
-            json={"total_amount": amount, "cod_allowed": cod_allowed, "expected_version": review.json()["version"]},
-        )
-        self.assertEqual(quoted.status_code, 200, quoted.text)
-        self.assertEqual(quoted.json()["status"], "Quotation Sent")
-        return quoted.json()
-
-    def accept(self, shopper: TestClient, email: str, quoted: dict, option: str) -> dict:
-        accepted = shopper.post(
-            f"/api/orders/{quoted['reference']}/quotation/accept",
-            json={"email": email, "payment_option": option, "quotation_revision": quoted["quotation"]["revision"]},
-        )
-        self.assertEqual(accepted.status_code, 200, accepted.text)
-        return accepted.json()
-
     def test_down_payment_breakdown(self) -> None:
         shopper, account = self.customer()
         created = self.order(shopper, account["email"], "white-mug", 2, MUG_OPTIONS, payment_option="down_payment")
@@ -704,7 +706,7 @@ class PaymentOptionTests(CatalogTestCase):
         self.assertEqual(quoted["payment"]["down_payment_status"], "Pending")
         draft = admin.post(f"/api/admin/orders/{body['reference']}/draft", json={"file": {"name": "draft.png", "dataUrl": PNG}, "expected_version": quoted["version"]})
         self.assertEqual(draft.status_code, 409, "A draft needs the down payment first.")
-        paid = admin.post(f"/api/admin/orders/{body['reference']}/payments", json={"amount": 250, "method": "GCash", "received": True, "expected_version": quoted["version"]})
+        paid = admin.post(f"/api/admin/orders/{body['reference']}/payments", json={"amount": 250, "method": "GCash", "reference": "GC-TEST-0250", "received": True, "expected_version": quoted["version"]})
         self.assertEqual(paid.status_code, 200, paid.text)
         self.assertEqual(paid.json()["status"], "Confirmed")
         self.assertEqual(paid.json()["payment"]["down_payment_status"], "Paid")
@@ -803,7 +805,7 @@ class AdminInsightTests(CatalogTestCase):
             f"/api/orders/{reference}/quotation/accept",
             json={"email": account["email"], "payment_option": "down_payment", "quotation_revision": quoted["quotation"]["revision"]},
         ).json()
-        paid = admin.post(f"/api/admin/orders/{reference}/payments", json={"amount": 500, "method": "Maya", "received": True, "expected_version": accepted["version"]})
+        paid = admin.post(f"/api/admin/orders/{reference}/payments", json={"amount": 500, "method": "Maya", "reference": "MAYA-TEST-0500", "received": True, "expected_version": accepted["version"]})
         self.assertEqual(paid.status_code, 200, paid.text)
 
         customers = admin.get("/api/admin/customers", params={"search": account["email"]}).json()
@@ -830,10 +832,10 @@ class AdminInsightTests(CatalogTestCase):
 class CustomizedOrderAvailabilityTests(CatalogTestCase):
     """Each product's "Customized orders" setting: enabled by default, packages unaffected when disabled."""
 
-    def set_customize(self, admin: TestClient, product_id: str, allowed: object) -> object:
+    def set_customize(self, admin: TestClient, product_id: str, allowed: object) -> Response:
         return admin.patch(f"/api/admin/catalog/products/{product_id}", json={"allow_customize": allowed})
 
-    def custom_quote(self, product_id: str, **extra: object) -> object:
+    def custom_quote(self, product_id: str, **extra: object) -> Response:
         return self.client.post("/api/catalog/quote", json={"product_id": product_id, "quantity": 12, "options": {}, **extra})
 
     def test_existing_and_new_products_allow_customized_orders_by_default(self) -> None:
@@ -860,7 +862,7 @@ class CustomizedOrderAvailabilityTests(CatalogTestCase):
             saved = self.set_customize(admin, "white-mug", False)
             self.assertEqual(saved.status_code, 200, saved.text)
             self.assertFalse(saved.json()["product"]["allow_customize"])
-            self.assertFalse(catalog_repository.get_product("white-mug", active_only=False)["allow_customize"])
+            self.assertFalse(present(catalog_repository.get_product("white-mug", active_only=False))["allow_customize"])
             self.assertFalse(self.client.get("/api/catalog/products/white-mug").json()["product"]["allow_customize"])
             # Other product settings are untouched.
             self.assertEqual(saved.json()["product"]["pricing_mode"], admin.get("/api/admin/catalog/products/white-mug").json()["product"]["pricing_mode"])
@@ -887,7 +889,7 @@ class CustomizedOrderAvailabilityTests(CatalogTestCase):
 
     def test_package_orders_work_when_customized_orders_are_disabled(self) -> None:
         admin = self.admin()
-        package = PackageAndImageTests.tote_package(self, admin, add_on_price=90)
+        package = self.tote_package(admin, add_on_price=90)
         shopper, account = self.customer()
         try:
             self.assertEqual(self.set_customize(admin, "personalized-tote-bag", False).status_code, 200)
@@ -918,8 +920,8 @@ class CustomizedOrderAvailabilityTests(CatalogTestCase):
             for key in ("status", "order_kind", "customization", "pricing", "payment", "total_amount"):
                 self.assertEqual(after.get(key), before.get(key), key)
             # The quotation process continues for an order placed before the setting changed.
-            quoted = PaymentOptionTests.quote(self, admin, reference, 500)
-            accepted = PaymentOptionTests.accept(self, shopper, account["email"], quoted, "down_payment")
+            quoted = self.quote(admin, reference, 500)
+            accepted = self.accept(shopper, account["email"], quoted, "down_payment")
             self.assertEqual(accepted["status"], "Awaiting Down Payment")
             self.assertEqual(accepted["payment"]["down_payment_required"], 250.0)
         finally:
@@ -955,11 +957,16 @@ class ServicesProductsConsolidationTests(CatalogTestCase):
         for view in self.ADMIN_PAGES:
             page = admin.get(f"/admin/{view}")
             self.assertEqual(page.status_code, 200, view)
-            self.assertNotIn("Package Management", page.text, view)
+            # "Package Management" is the Packages tab of Services & Products (no separate page or route).
+            self.assertIn('href="/admin/services#packages" data-view="services" data-catalog-target="packages"', page.text, view)
             self.assertNotIn("Pricing Management", page.text, view)
             self.assertNotIn('href="/admin/packages"', page.text, view)
             self.assertNotIn('href="/admin/pricing"', page.text, view)
             self.assertIn('href="/admin/services" data-view="services"', page.text, view)
+            # One entry each for Settings, Notifications, and Log out (no duplicates in the header or profile menu).
+            self.assertEqual(page.text.count('href="/admin/settings"'), 1, view)
+            self.assertEqual(page.text.count('href="/admin/notifications"'), 1, view)
+            self.assertEqual(page.text.count('data-action="logout"'), 1, view)
             # Every sidebar link points at a page that is served.
             for link in ("/admin/dashboard", "/admin/orders", "/admin/customers", "/admin/payments", "/admin/reports",
                          "/admin/services", "/admin/notifications", "/admin/settings"):

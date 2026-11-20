@@ -35,6 +35,7 @@ from backend.app.core.security import SESSION_COOKIE, create_session_token  # no
 from backend.app.database.connection import connection_scope  # noqa: E402
 from backend.app.main import app  # noqa: E402
 from backend.app.repositories import notification_repository, order_repository  # noqa: E402
+from backend.tests.support import stored_order  # noqa: E402
 
 
 PASSWORD = "Correct-Horse-Battery-1"
@@ -437,7 +438,7 @@ class PaymentVerificationTests(WorkflowTestCase):
         path = f"/api/admin/orders/{reference}/payment-submissions/{submission['id']}/verify"
         self.assertEqual(self.admin.post(path, json={"received": True, "expected_version": version}).status_code, 409)
         self.assertEqual(self.admin.post(path, json={"received": True}).status_code, 409)
-        stored = order_repository.get_order(reference)
+        stored = stored_order(reference)
         self.assertEqual(len(stored["payments"]), 1)
         confirmations = [item for item in self.notifications(reference=reference) if item["kind"] == "order_confirmed"]
         self.assertEqual(len(confirmations), 1)
@@ -531,7 +532,7 @@ class PaymentVerificationTests(WorkflowTestCase):
             headers=headers,
         )
         self.assertEqual(verified.status_code, 422, verified.text)
-        self.assertEqual(order_repository.get_order(reference)["payments"], [])
+        self.assertEqual(stored_order(reference)["payments"], [])
         self.assertTrue(math.isfinite(self.admin_view(reference)["total_amount"]))
 
     def test_customer_cannot_cancel_with_a_pending_payment(self) -> None:
@@ -549,12 +550,14 @@ class OrderSecurityTests(WorkflowTestCase):
         quoted = self.customized_order(1000)
         reference = quoted["reference"]
         body = {"email": self.email, "quotation_revision": 1}
-        # Knowing the email address and the reference is enough to look an order up, never to change it.
+        # Knowing the email address and the reference is not enough to look an order up or to change it.
         anonymous = TestClient(app)
-        self.assertEqual(anonymous.get(f"/api/orders/{reference}", params={"email": self.email}).status_code, 200)
+        self.assertEqual(anonymous.get(f"/api/orders/{reference}", params={"email": self.email}).status_code, 401)
+        self.assertEqual(anonymous.get("/api/orders", params={"email": self.email, "reference": reference}).status_code, 401)
         self.assertEqual(anonymous.post(f"/api/orders/{reference}/quotation/accept", json=body).status_code, 401)
         self.assertEqual(anonymous.post(f"/api/orders/{reference}/cancel", json=body).status_code, 401)
         stranger, _ = self.new_customer()
+        self.assertEqual(stranger.get(f"/api/orders/{reference}", params={"email": self.email}).status_code, 404)
         for action in ("quotation/accept", "quotation/decline", "cancel", "payments", "approve"):
             self.assertEqual(stranger.post(f"/api/orders/{reference}/{action}", json=body).status_code, 404, action)
         self.assertEqual(self.admin_view(reference)["status"], "Quotation Sent")
@@ -576,7 +579,7 @@ class OrderSecurityTests(WorkflowTestCase):
         ):
             self.assertEqual(self.shopper.post(path, json=body).status_code, 401, path)
         self.assertEqual(self.shopper.get(f"/api/admin/orders/{reference}/audit").status_code, 401)
-        stored = order_repository.get_order(reference)
+        stored = stored_order(reference)
         self.assertEqual((stored["status"], stored["payments"], stored["total_amount"]), ("Awaiting Down Payment", [], 1000.0))
 
     def test_confirmed_cannot_be_set_by_hand(self) -> None:
@@ -645,7 +648,7 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
         self.assertEqual(order["fulfillment"]["release_status"], "Out for Delivery")
         pickup = self.place(fulfillment={"method": "pickup", "street": "ignored"})
         self.assertEqual((pickup["fulfillment"]["method"], pickup["fulfillment"]["address"]), ("pickup", []))
-        self.assertEqual(order_repository.get_order(pickup["reference"])["fulfillment"], {"method": "pickup"})
+        self.assertEqual(stored_order(pickup["reference"]).get("fulfillment"), {"method": "pickup"})
 
     def test_full_delivery_flow_from_confirmation_to_completion(self) -> None:
         reference = self.confirmed_order(1000, fulfillment=DELIVERY)["reference"]
@@ -767,6 +770,124 @@ class AdminOverviewTests(WorkflowTestCase):
         self.assertEqual((row["outstanding_balance"], row["total_transaction_amount"]), (1200.0, 1200.0))
         self.assertEqual(row["payment_status"], "With balance")
 
+
+
+# ====================================================================== 8. order access, files, and repeated submissions
+
+
+class OrderAccessTests(WorkflowTestCase):
+    """Orders, their files, and repeated submissions are only ever served to the signed-in account that owns them."""
+
+    def place_with_file(self, client: TestClient, email: str, key: str | None = None) -> tuple[dict, int, str]:
+        payload = self.order_payload(files=[{"name": "artwork.png", "dataUrl": PNG}])
+        payload["customer"]["email"] = email
+        key = key or idempotency_key()
+        response = client.post("/api/orders", json=payload, headers={"Idempotency-Key": key})
+        self.assertIn(response.status_code, (200, 201), response.text)
+        return response.json(), response.status_code, key
+
+    def test_guest_reusing_an_idempotency_key_gets_nothing(self) -> None:
+        order, _, key = self.place_with_file(self.shopper, self.email)
+        payload = self.order_payload()
+        response = TestClient(app).post("/api/orders", json=payload, headers={"Idempotency-Key": key})
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn(order["reference"], response.text)
+        self.assertNotIn(self.email, response.text)
+
+    def test_another_customer_reusing_an_idempotency_key_gets_a_conflict_without_the_order(self) -> None:
+        order, _, key = self.place_with_file(self.shopper, self.email)
+        stranger, stranger_email = self.new_customer()
+        payload = self.order_payload()
+        payload["customer"]["email"] = stranger_email
+        response = stranger.post("/api/orders", json=payload, headers={"Idempotency-Key": key})
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn(order["reference"], response.text)
+        self.assertNotIn(self.email, response.text)
+
+    def test_repeated_submission_by_the_owner_returns_the_same_order_once(self) -> None:
+        first, first_status, key = self.place_with_file(self.shopper, self.email)
+        again, again_status, _ = self.place_with_file(self.shopper, self.email, key)
+        self.assertEqual((first_status, again_status), (201, 200))
+        self.assertEqual(again["reference"], first["reference"])
+        # A brand-new account placed exactly one order, however many times the request was sent.
+        owner = stored_order(first["reference"]).get("customer_id") or ""
+        self.assertEqual(len(order_repository.list_orders_for_customer(owner)), 1)
+
+    def test_customer_cannot_read_another_customers_order(self) -> None:
+        order, _, _ = self.place_with_file(self.shopper, self.email)
+        reference = order["reference"]
+        stranger, _ = self.new_customer()
+        for path in (f"/api/orders/{reference}", f"/api/account/orders/{reference}"):
+            response = stranger.get(path, params={"email": self.email})
+            self.assertEqual(response.status_code, 404, path)
+            self.assertNotIn(self.email, response.text)
+        listed = stranger.get("/api/orders", params={"email": self.email, "reference": reference})
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["orders"], [])
+        for path in (f"/api/orders/{reference}", f"/api/account/orders/{reference}", "/api/orders", "/api/account/orders"):
+            self.assertEqual(TestClient(app).get(path, params={"email": self.email, "reference": reference}).status_code, 401, path)
+
+    def test_customer_cannot_download_another_customers_file(self) -> None:
+        order, _, _ = self.place_with_file(self.shopper, self.email)
+        file_url = order["attachments"][0]["url"]
+        self.assertNotIn("email", file_url)
+        stranger, _ = self.new_customer()
+        self.assertEqual(stranger.get(file_url).status_code, 404)
+        self.assertEqual(stranger.get(file_url, params={"email": self.email}).status_code, 404)
+        self.assertEqual(TestClient(app).get(file_url, params={"email": self.email}).status_code, 401)
+
+    def test_owner_reads_their_order_and_downloads_their_file(self) -> None:
+        order, _, _ = self.place_with_file(self.shopper, self.email)
+        reference = order["reference"]
+        for path in (f"/api/orders/{reference}", f"/api/account/orders/{reference}"):
+            response = self.shopper.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.json()["reference"], reference)
+        self.assertIn(reference, [item["reference"] for item in self.shopper.get("/api/orders").json()["orders"]])
+        download = self.shopper.get(order["attachments"][0]["url"])
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(download.content, base64.b64decode(PNG.split(",", 1)[1]))
+        self.assertIn("no-store", download.headers["cache-control"])
+        self.assertEqual(download.headers["x-content-type-options"], "nosniff")
+
+    def test_admin_still_reads_files_and_manages_the_order(self) -> None:
+        order, _, _ = self.place_with_file(self.shopper, self.email)
+        reference = order["reference"]
+        view = self.admin_view(reference)
+        self.assertTrue(view["attachments"][0]["url"].startswith(f"/api/admin/orders/{reference}/files/"))
+        self.assertEqual(self.admin.get(view["attachments"][0]["url"]).status_code, 200)
+        updated = self.admin_post(reference, "status", {"status": "Under Review"})
+        self.assertEqual(updated["status"], "Under Review")
+        # The customer still sees the admin's change on their own order.
+        self.assertEqual(self.shopper.get(f"/api/orders/{reference}").json()["status"], "Under Review")
+        # An admin session is not a customer session, and a customer session is not an admin session.
+        self.assertEqual(self.admin.get(f"/api/orders/{reference}").status_code, 401)
+        self.assertEqual(self.shopper.get(view["attachments"][0]["url"]).status_code, 401)
+
+    def test_existing_order_records_are_unchanged_by_reads_and_downloads(self) -> None:
+        order, _, _ = self.place_with_file(self.shopper, self.email)
+        reference = order["reference"]
+        with connection_scope() as connection:
+            before = dict(connection.execute("SELECT * FROM orders WHERE reference = ?", (reference,)).fetchone())
+        stranger, _ = self.new_customer()
+        self.shopper.get(f"/api/orders/{reference}")
+        self.shopper.get(order["attachments"][0]["url"])
+        stranger.get(f"/api/orders/{reference}")
+        stranger.get(order["attachments"][0]["url"])
+        TestClient(app).get(f"/api/orders/{reference}", params={"email": self.email})
+        with connection_scope() as connection:
+            after = dict(connection.execute("SELECT * FROM orders WHERE reference = ?", (reference,)).fetchone())
+        self.assertEqual(after, before)
+
+    def test_order_placed_before_accounts_opens_only_for_the_matching_signed_in_account(self) -> None:
+        # The existing rule for orders without an owner (also used for quotation, payment, and cancel actions).
+        reference = ProductionAndFulfillmentTests.legacy_order(self, "Awaiting Down Payment", 400)  # type: ignore[arg-type]
+        self.assertEqual(self.shopper.get(f"/api/orders/{reference}").status_code, 200)
+        stranger, _ = self.new_customer()
+        self.assertEqual(stranger.get(f"/api/orders/{reference}", params={"email": self.email}).status_code, 404)
+        self.assertEqual(TestClient(app).get(f"/api/orders/{reference}", params={"email": self.email}).status_code, 401)
+        # Not listed by email: an account only lists the orders it placed.
+        self.assertNotIn(reference, [item["reference"] for item in self.shopper.get("/api/orders").json()["orders"]])
 
 if __name__ == "__main__":
     unittest.main()

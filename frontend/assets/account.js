@@ -14,10 +14,36 @@
     const notificationsList = document.querySelector("#account-notifications");
     const notificationCount = document.querySelector("#notification-count");
     const readAllButton = document.querySelector("#notifications-read-all");
+    // The bell in the navigation bar and the dropdown it opens.
+    const notifyMenu = document.querySelector("#nav-notifications");
+    const notifyToggle = document.querySelector("#notifications-toggle");
+    const notifyPanel = document.querySelector("#notifications-panel");
     // Only the customer portal has an account panel; on other pages this script does nothing.
     if (!panel) return;
 
     let activeCustomer = null;
+
+    function setNotificationsOpen(open) {
+        if (!notifyPanel || !notifyToggle) return;
+        notifyPanel.hidden = !open;
+        notifyToggle.setAttribute("aria-expanded", String(open));
+    }
+
+    notifyToggle?.addEventListener("click", () => {
+        const opening = notifyPanel.hidden;
+        setNotificationsOpen(opening);
+        if (opening) void loadNotifications();
+    });
+    // Close the dropdown on a click outside it or on Escape.
+    document.addEventListener("click", (event) => {
+        if (notifyPanel && !notifyPanel.hidden && !notifyMenu.contains(event.target)) setNotificationsOpen(false);
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && notifyPanel && !notifyPanel.hidden) {
+            setNotificationsOpen(false);
+            notifyToggle.focus();
+        }
+    });
 
     // "Pending Confirmation" → "pending-confirmation": the class that colours the status badge.
     const statusSlug = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -45,14 +71,26 @@
         return result;
     }
 
-    // The "Orders will appear here" card belongs to the guest lookup; signed-in customers see their orders above.
+    // The "Sign in to see your orders" card is for guests; signed-in customers see their orders above.
     const lookupEmptyCard = () => document.querySelector("#portal-empty");
+    // Finding an order by reference is for signed-in customers only (the server checks ownership).
+    const lookupPanel = document.querySelector("#order-lookup");
+    const orderDetail = document.querySelector("#order-detail");
 
     function showSignedOut() {
         activeCustomer = null;
         panel.hidden = true;
+        setNotificationsOpen(false);
+        if (notifyMenu) notifyMenu.hidden = true;
         if (signedOut) signedOut.hidden = false;
         if (lookupEmptyCard()) lookupEmptyCard().hidden = false;
+        if (lookupPanel) lookupPanel.hidden = true;
+        // An order that was open stays private once the session has ended.
+        if (orderDetail) orderDetail.hidden = true;
+        const accountSection = document.querySelector("#customer-account");
+        if (accountSection) accountSection.hidden = false;
+        const ordersList = document.querySelector("#orders-list");
+        if (ordersList) ordersList.hidden = false;
     }
 
     /** The session expired or was ended elsewhere (for example a password reset): show the sign-in prompt. */
@@ -74,7 +112,9 @@
         activeCustomer = customer;
         if (signedOut) signedOut.hidden = true;
         panel.hidden = false;
+        if (notifyMenu) notifyMenu.hidden = false;
         if (lookupEmptyCard()) lookupEmptyCard().hidden = true;
+        if (lookupPanel) lookupPanel.hidden = false;
         showMessage(`Signed in as ${customer.email}.`);
         for (const [name, value] of Object.entries({
             name: customer.name,
@@ -101,8 +141,9 @@
         const unread = result.unread || 0;
         if (notificationCount) {
             notificationCount.hidden = unread === 0;
-            notificationCount.textContent = unread ? `${unread} new` : "";
+            notificationCount.textContent = unread > 9 ? "9+" : String(unread || "");
         }
+        notifyToggle?.setAttribute("aria-label", unread ? `Notifications, ${unread} unread` : "Notifications");
         if (readAllButton) readAllButton.hidden = unread === 0;
         if (!result.notifications.length) {
             const empty = document.createElement("li");
@@ -136,6 +177,7 @@
                         handleFailure(error, "The notification could not be updated.");
                     }
                 }
+                setNotificationsOpen(false);
                 document.dispatchEvent(new CustomEvent("customer-order-select", { detail: { reference: item.order_reference, signedIn: true } }));
             });
             entry.append(button);

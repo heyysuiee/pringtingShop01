@@ -1,0 +1,187 @@
+/* Admin "AI Chatbot" page (chatbot-admin.js). Uses the admin theme's tokens from theme.css. */
+
+.cb-tabs {
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.cb-host > * + * {
+    margin-top: 16px;
+}
+
+.cb-notice {
+    font-size: 12px;
+}
+
+.cb-chart {
+    min-height: 220px;
+}
+
+.cb-question {
+    display: inline-block;
+    max-width: 46ch;
+    white-space: normal;
+}
+
+.cb-row-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    white-space: nowrap;
+}
+
+.status-badge.cb-badge-warn::before { background: var(--accent-orange) !important; }
+.status-badge.cb-badge-ok::before { background: var(--accent-green) !important; }
+.status-badge.cb-badge-info::before { background: var(--accent-cyan) !important; }
+.status-badge.cb-badge-source::before { background: var(--accent-purple-light) !important; }
+.status-badge.cb-badge-muted { opacity: 0.75; }
+
+/* Latest conversations / linked inquiries */
+.cb-recent {
+    display: grid;
+    gap: 8px;
+}
+
+.cb-recent-item {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+    padding: 11px 13px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--glass-1);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.cb-recent-item:hover,
+.cb-recent-item:focus-visible {
+    border-color: var(--line-accent);
+    background: var(--glass-2);
+}
+
+.cb-recent-question {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+}
+
+/* Conversation transcript */
+.cb-transcript {
+    display: grid;
+    gap: 10px;
+    margin: 8px 0 18px;
+}
+
+.cb-message {
+    max-width: 88%;
+    padding: 11px 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--glass-1);
+    color: var(--text-primary);
+}
+
+.cb-message.cb-user {
+    justify-self: end;
+    border-color: var(--line-accent);
+    background: var(--accent-soft);
+}
+
+.cb-message-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+.cb-text p {
+    margin: 0 0 6px;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.cb-text p:last-child {
+    margin-bottom: 0;
+}
+
+.cb-inquiry-message {
+    margin: 14px 0;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--glass-1);
+}
+
+/* FAQ list */
+.cb-faq-list {
+    display: grid;
+    gap: 8px;
+}
+
+.cb-faq {
+    display: grid;
+    gap: 5px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--glass-1);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.cb-faq:hover,
+.cb-faq:focus-visible {
+    border-color: var(--line-accent);
+}
+
+.cb-faq-hidden {
+    opacity: 0.6;
+}
+
+.cb-faq-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.cb-faq-form textarea,
+.cb-settings textarea {
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.cb-check {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+}
+
+.cb-toggle-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.cb-toggle-row p {
+    margin: 2px 0 0;
+}
+
+@media (max-width: 720px) {
+    .cb-message {
+        max-width: 100%;
+    }
+
+    .cb-question {
+        max-width: 28ch;
+    }
+}

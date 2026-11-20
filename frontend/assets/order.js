@@ -515,9 +515,17 @@
         if (!state.sequence.some((item) => item.step === state.activeStep)) showStep(1, false);
         else syncNextButton();
 
+        syncSelectionUrl();
+    }
+
+    /** Keep the chosen service, product, and package in the address bar (refresh or sign-in keeps them). */
+    function syncSelectionUrl() {
+        if (!state.product) return;
         const url = new URL(window.location.href);
-        url.searchParams.set("service", product.category_id);
-        url.searchParams.set("design", product.id);
+        url.searchParams.set("service", state.product.category_id);
+        url.searchParams.set("design", state.product.id);
+        if (state.mode === "package" && state.package) url.searchParams.set("package", state.package.id);
+        else url.searchParams.delete("package");
         window.history.replaceState(null, "", url);
     }
 
@@ -698,6 +706,7 @@
         configureQuantity({ reset: true });
         scheduleQuote();
         syncNextButton();
+        syncSelectionUrl();
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
@@ -778,6 +787,7 @@
         state.quote = null;
         scheduleQuote();
         syncNextButton();
+        syncSelectionUrl();
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
@@ -1581,14 +1591,252 @@
     $("#btn-back").addEventListener("click", () => moveStep(-1));
     $("#edit-order").addEventListener("click", () => showStep(state.invitation ? 3 : 8));
     $("#btn-cancel").addEventListener("click", async () => {
-        if (await window.PrintConfirm("Cancel this order request and return to the product catalog?", { title: "Cancel this order?", confirmLabel: "Cancel order", cancelLabel: "Keep ordering", tone: "danger" })) window.location.assign("/services");
+        if (await window.PrintConfirm("Cancel this order request and return to the services list?", { title: "Cancel this order?", confirmLabel: "Cancel order", cancelLabel: "Keep ordering", tone: "danger" })) window.location.assign("/order");
     });
     form.addEventListener("input", () => {
         if (state.activeStep === REVIEW_STEP) renderSummary();
     });
     form.addEventListener("submit", submitOrder);
 
-    // ---------------------------------------------------------------- start: sign-in gate, then catalog
+    // ---------------------------------------------------------------- services selection (/order with no service)
+
+    const serviceSelect = $("#service-select");
+    const serviceGrid = $("#service-select-grid");
+
+    /** The order form for a service, product, or package: /order?service=…&design=…&package=… */
+    function orderPath(categoryId, productId, packageId) {
+        const query = new URLSearchParams({ service: categoryId });
+        if (productId) query.set("design", productId);
+        if (packageId) query.set("package", packageId);
+        return `/order?${query}`;
+    }
+
+    /** Guests go to Sign In first, which returns them to exactly this selection afterwards. */
+    function signInPath(next) {
+        return `/sign-in?${new URLSearchParams({ next })}`;
+    }
+
+    function serviceLink(signedIn, className, text, ...ids) {
+        const link = el("a", className, text);
+        link.href = signedIn ? orderPath(...ids) : signInPath(orderPath(...ids));
+        return link;
+    }
+
+    /** The lowest published price for a product: its base rate, else its cheapest package, else none (quotation). */
+    function startingPrice(product) {
+        if (product.pricing_mode !== "quote" && product.base_price !== null) {
+            return { amount: money(product.base_price), unit: product.pricing_mode === "area" ? "per sq ft" : "per piece" };
+        }
+        const packages = product.packages || [];
+        if (!packages.length) return null;
+        const cheapest = packages.reduce((low, pkg) => (pkg.price < low.price ? pkg : low));
+        return { amount: money(cheapest.price), unit: `package of ${packageMinimum(cheapest).toLocaleString()} pcs` };
+    }
+
+    /** Small preview image; when the product has photos, selecting it opens them in the lightbox. */
+    function serviceRowMedia(product) {
+        const images = productImages(product);
+        if (!images.length) {
+            const placeholder = el("span", "service-row-thumb service-row-thumb-empty", product.name.slice(0, 1));
+            placeholder.setAttribute("aria-hidden", "true");
+            return placeholder;
+        }
+        const button = el("button", "service-row-thumb");
+        button.type = "button";
+        button.setAttribute("aria-label", `View photos of ${product.name}`);
+        const image = el("img");
+        image.src = images[0];
+        image.alt = "";
+        image.loading = "lazy";
+        image.decoding = "async";
+        button.append(image);
+        button.addEventListener("click", () => openLightbox(images.map((src, index) => ({
+            src,
+            alt: `${product.name} — photo ${index + 1}`,
+            caption: `${product.name} · photo ${index + 1} of ${images.length}`,
+        }))));
+        return button;
+    }
+
+    /** One compact row: preview · name, description, and tags · starting price · Avail Service (+ its packages). */
+    function serviceRow(category, product, signedIn) {
+        const row = el("li", "service-row");
+        row.id = `service-row-${product.id}`;
+        const packages = product.packages || [];
+
+        const info = el("div", "service-row-info");
+        const name = el("h4", "service-row-name", product.name);
+        name.id = `service-row-${product.id}-name`;
+        info.append(name);
+        if (product.description) info.append(el("p", "service-row-description", product.description));
+        // Only facts worth a glance; the package count and "customize" option are shown under the row.
+        const tags = [];
+        if (!customizeAllowed(product)) tags.push("Packages only");
+        if (product.min_quantity > 1) tags.push(`Min. ${product.min_quantity.toLocaleString()} pcs`);
+        if (tags.length) {
+            const tagList = el("p", "service-row-tags");
+            tags.forEach((tag) => tagList.append(el("span", "service-row-tag", tag)));
+            info.append(tagList);
+        }
+
+        const price = el("div", "service-row-price");
+        const starting = startingPrice(product);
+        if (starting) {
+            price.append(el("small", "", "Starts at"), el("strong", "", starting.amount), el("small", "", starting.unit));
+        } else {
+            price.classList.add("is-quote");
+            price.append(el("small", "", "Pricing"), el("strong", "", "By quotation"));
+        }
+
+        const actions = el("div", "service-row-actions");
+        const avail = serviceLink(signedIn, "btn btn-dark btn-small service-row-avail", "Avail Service", category.id, product.id);
+        avail.setAttribute("aria-describedby", name.id);
+        if (!signedIn) avail.title = "Sign in first; you return to this service right after.";
+        actions.append(avail);
+
+        row.append(serviceRowMedia(product), info, price, actions);
+
+        // Packages open the order form with that package already chosen.
+        if (packages.length) {
+            const details = el("details", "service-row-packages");
+            details.append(el("summary", "", `View ${packages.length} package${packages.length === 1 ? "" : "s"}${customizeAllowed(product) ? " · or customize your own" : ""}`));
+            const list = el("ul", "service-package-list");
+            for (const pkg of packages) {
+                const entry = el("li");
+                const choose = serviceLink(signedIn, "service-package-link", "", category.id, product.id, pkg.id);
+                const copy = el("span", "service-package-copy");
+                copy.append(el("strong", "", pkg.name));
+                const inclusions = (pkg.inclusion_details?.length ? pkg.inclusion_details.map((inc) => inc.name) : pkg.inclusions || []).filter(Boolean);
+                const terms = [`${packageMinimum(pkg).toLocaleString()} pcs`, ...inclusions.slice(0, 3)];
+                if (inclusions.length > 3) terms.push(`+${inclusions.length - 3} more`);
+                copy.append(el("small", "", terms.join(" · ")));
+                choose.append(copy, el("span", "service-package-price", money(pkg.price)), el("span", "service-package-cta", "Choose"));
+                choose.setAttribute("aria-label", `Choose the ${pkg.name} package for ${product.name}, ${money(pkg.price)}`);
+                entry.append(choose);
+                list.append(entry);
+            }
+            details.append(list);
+            row.append(details);
+        }
+        return row;
+    }
+
+    /** One section per service category, with its services listed as rows. */
+    function categorySection(category, signedIn) {
+        const section = el("section", "service-category-block");
+        section.id = `service-category-${category.id}`;
+        const head = el("header", "service-category-block-head");
+        const titles = el("div", "service-category-block-titles");
+        const title = el("h3", "service-category-block-title", category.label);
+        title.id = `${section.id}-title`;
+        section.setAttribute("aria-labelledby", title.id);
+        titles.append(title);
+        if (category.description) titles.append(el("p", "service-category-block-description", category.description));
+        const count = category.products.length;
+        head.append(titles, el("span", "service-category-block-count", `${count} service${count === 1 ? "" : "s"}`));
+        const rows = el("ul", "service-rows");
+        rows.setAttribute("aria-label", `${category.label} services`);
+        rows.append(...category.products.map((product) => serviceRow(category, product, signedIn)));
+        section.append(head, rows);
+        return section;
+    }
+
+    function renderCategoryJump(categories) {
+        const nav = $("#service-select-jump");
+        if (!nav) return;
+        nav.replaceChildren(...categories.map((category) => {
+            const link = el("a", "service-jump-link", category.label);
+            link.href = `#service-category-${category.id}`;
+            return link;
+        }));
+        nav.hidden = categories.length < 2;
+    }
+
+    function showServiceError(message) {
+        const box = $("#service-select-error");
+        box.textContent = message;
+        box.hidden = !message;
+    }
+
+    const serviceView = { signature: "", signedIn: false, loadedAt: 0, notice: "", jumped: false };
+
+    /** Only active products that can be ordered, grouped under their (active) category, in the shop's order. */
+    function orderableCategories(categories) {
+        return categories
+            .map((category) => ({ ...category, products: category.products.filter((product) => productOrderable(product)) }))
+            .filter((category) => category.products.length);
+    }
+
+    function renderServiceList(categories) {
+        const orderable = orderableCategories(categories);
+        const signature = JSON.stringify([serviceView.signedIn, orderable]);
+        if (signature === serviceView.signature) return; // unchanged: keep open package lists as they are
+        serviceView.signature = signature;
+        renderCategoryJump(orderable);
+        if (!orderable.length) {
+            serviceGrid.replaceChildren(el("p", "service-select-status", "No services are open for online ordering right now. Please contact the shop."));
+            return;
+        }
+        serviceGrid.replaceChildren(...orderable.map((category) => categorySection(category, serviceView.signedIn)));
+        // A link such as /order#service-category-souvenir opens at that category once the list exists.
+        if (!serviceView.jumped && window.location.hash.startsWith("#service-category-")) {
+            serviceView.jumped = true;
+            document.getElementById(window.location.hash.slice(1))?.scrollIntoView({ block: "start" });
+        }
+    }
+
+    /** The public services list. Choosing a service checks the sign-in status before any order form opens. */
+    async function startServiceSelection(notice = "") {
+        serviceSelect.hidden = false;
+        if (gate) gate.hidden = true;
+        stepper.hidden = true;
+        form.hidden = true;
+        serviceView.notice = notice;
+        showServiceError(notice);
+        const [catalog, session] = await Promise.allSettled([
+            requestJson("/api/catalog", { cache: "no-store" }),
+            fetch("/api/customer/session", { credentials: "same-origin", cache: "no-store" }).then((response) => (response.ok ? response.json() : null)),
+        ]);
+        const customer = session.status === "fulfilled" ? session.value?.customer : null;
+        serviceView.signedIn = Boolean(customer);
+        serviceView.loadedAt = Date.now();
+        const authNote = $("#service-select-auth");
+        authNote.hidden = false;
+        authNote.textContent = customer
+            ? `Signed in as ${customer.name || customer.email}. Choose Avail Service to open its order form.`
+            : "You will be asked to sign in first. Your chosen service and package are kept, and the order form opens right after.";
+        serviceGrid.removeAttribute("aria-busy");
+        if (catalog.status === "rejected") {
+            serviceView.signature = "";
+            serviceGrid.replaceChildren(el("p", "service-select-status", "Services could not be loaded right now. Refresh the page or contact the shop."));
+            showServiceError(`The service list could not be loaded. ${catalog.reason instanceof Error ? catalog.reason.message : ""}`.trim());
+            return;
+        }
+        state.categories = catalog.value.categories || [];
+        renderServiceList(state.categories);
+    }
+
+    // Returning to the tab reloads the list, so services the administrator added, changed, or hid show up.
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || serviceSelect.hidden) return;
+        if (Date.now() - serviceView.loadedAt < 15000) return;
+        void startServiceSelection(serviceView.notice);
+    });
+
+    /** After sign-in the customer lands on the product (and package) they chose; no need to choose again. */
+    function applyRequestedSelection() {
+        const productId = parameters.get("design");
+        if (!productId || state.product?.id !== productId) return;
+        const pkg = state.packages.find((item) => item.id === parameters.get("package"));
+        if (pkg) {
+            setMode("package", { silent: true });
+            selectPackage(pkg);
+        }
+        // The product is already chosen, so open its ordering options.
+        showStep(2, false);
+    }
+
+    // ---------------------------------------------------------------- start: sign-in check, then catalog
 
     const gate = $("#order-gate");
 
@@ -1619,10 +1867,17 @@
     }
 
     async function start() {
+        // /order on its own is the services selection. A service in the URL means "order this".
+        if (!parameters.get("service") && !parameters.get("design")) {
+            await startServiceSelection();
+            return;
+        }
         let customer;
         try {
-            const response = await fetch("/api/customer/session", { credentials: "same-origin" });
+            const response = await fetch("/api/customer/session", { credentials: "same-origin", cache: "no-store" });
             if (response.status === 401) {
+                // Guests never see the order form: sign in first, then come back to this exact selection.
+                window.location.replace(signInPath(window.location.pathname + window.location.search));
                 showGate();
                 return;
             }
@@ -1647,9 +1902,18 @@
             $("#btn-next").disabled = true;
             return;
         }
+        const requested = state.categories.some((category) => category.id === parameters.get("service")
+            || category.products.some((product) => product.id === parameters.get("design")));
+        if (!requested) {
+            // A removed or hidden service: go back to the list instead of opening another service's form.
+            window.history.replaceState(null, "", "/order");
+            await startServiceSelection("The service you selected is no longer available. Please choose another service.");
+            return;
+        }
         setSequence("general");
         populateCategories();
         showStep(1, false);
+        applyRequestedSelection();
         renderPaymentBreakdown();
     }
 

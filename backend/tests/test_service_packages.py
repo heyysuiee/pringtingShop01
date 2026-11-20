@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from backend.app.core.rate_limit import limiter  # noqa: E402
 from backend.app.core.security import SESSION_COOKIE, create_session_token  # noqa: E402
 from backend.app.main import app  # noqa: E402
+from backend.tests.support import present  # noqa: E402
 
 
 PASSWORD = "Correct-Horse-Battery-1"
@@ -90,9 +91,13 @@ class PackageTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
-    def public_package(self, product_id: str, package_id: str) -> dict | None:
+    def find_public_package(self, product_id: str, package_id: str) -> dict | None:
+        """The package as the customer site lists it, or None when it is not published."""
         packages = self.client.get(f"/api/catalog/products/{product_id}/packages").json()["packages"]
         return next((item for item in packages if item["id"] == package_id), None)
+
+    def public_package(self, product_id: str, package_id: str) -> dict:
+        return present(self.find_public_package(product_id, package_id), f"published package {package_id}")
 
     def order(self, service: str, package_id: str, quantity: int, expect: int = 201) -> dict:
         product_id, options, files = SERVICES[service]
@@ -234,7 +239,7 @@ class PackageManagementTests(PackageTestCase):
     def test_inactive_packages_are_hidden_and_cannot_be_ordered(self) -> None:
         package = self.create("party-hats")
         self.admin.patch(f"/api/admin/catalog/packages/{package['id']}", json={"active": False})
-        self.assertIsNone(self.public_package("party-hats", package["id"]))
+        self.assertIsNone(self.find_public_package("party-hats", package["id"]))
         self.order("party", package["id"], 20, expect=422)
 
     def test_invitation_packages_are_unchanged(self) -> None:

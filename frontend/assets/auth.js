@@ -10,7 +10,8 @@
 (() => {
     const page = document.body.dataset.authPage;
     const alertBox = document.querySelector("#auth-alert");
-    const PASSWORD_MIN_LENGTH = 12;
+    // Same rules as the server (backend/app/schemas/user.py: password_problems).
+    const PASSWORD_MIN_LENGTH = 8;
     const SIGN_IN_EMAIL_KEY = "printshop.signInEmail";
     const SIGN_IN_NOTICE_KEY = "printshop.signInNotice";
     const RESET_EMAIL_KEY = "printshop.resetEmail";
@@ -125,26 +126,76 @@
         });
     });
 
-    /** Live checklist for a new password and its confirmation. Returns a function that reports validity. */
+    /** Each password requirement: the rule key, the test, and the message shown when it is not met. */
+    const PASSWORD_RULES = [
+        ["length", (value) => value.length >= PASSWORD_MIN_LENGTH, `Use at least ${PASSWORD_MIN_LENGTH} characters.`],
+        ["letter", (value) => /[A-Za-z]/.test(value), "Include at least one letter."],
+        ["number", (value) => /\d/.test(value), "Include at least one number."],
+        ["spaces", (value) => value.length > 0 && !/\s/.test(value), "Do not use spaces in the password."],
+    ];
+
+    /**
+     * Live checklist for a new password and its confirmation. Every requirement is updated while the
+     * customer types: green check when met, red cross once the field has been typed in and it is not
+     * met, neutral before typing. Returns a function that reports validity and shows the first problem.
+     */
     function passwordRules(passwordInput, confirmInput, list) {
+        const items = new Map([...list.querySelectorAll("[data-rule]")].map((item) => [item.dataset.rule, item]));
+        // A screen-reader state ("met" / "not met") inside each item, kept in sync with the colours.
+        items.forEach((item) => {
+            const state = item.querySelector("[data-rule-state]");
+            if (state && !state.querySelector(".visually-hidden")) state.append(Object.assign(document.createElement("span"), { className: "visually-hidden" }));
+        });
+
+        function mark(key, met, touched) {
+            const item = items.get(key);
+            if (!item) return;
+            item.classList.toggle("met", met);
+            item.classList.toggle("unmet", touched && !met);
+            const label = item.querySelector("[data-rule-state] .visually-hidden");
+            if (label) label.textContent = met ? "Requirement met: " : touched ? "Requirement not met: " : "Requirement: ";
+        }
+
         const update = () => {
-            const length = passwordInput.value.length >= PASSWORD_MIN_LENGTH;
-            const match = passwordInput.value.length > 0 && passwordInput.value === confirmInput.value;
-            list.querySelector('[data-rule="length"]').classList.toggle("met", length);
-            list.querySelector('[data-rule="match"]').classList.toggle("met", match);
-            return { length, match };
+            const value = passwordInput.value;
+            const touched = value.length > 0;
+            const results = {};
+            for (const [key, test] of PASSWORD_RULES) {
+                results[key] = test(value);
+                mark(key, results[key], touched);
+            }
+            results.match = touched && value === confirmInput.value;
+            mark("match", results.match, confirmInput.value.length > 0);
+            return results;
         };
         passwordInput.addEventListener("input", update);
         confirmInput.addEventListener("input", update);
         update();
         return () => {
-            const { length, match } = update();
-            if (!length) fieldError(passwordInput, `Use at least ${PASSWORD_MIN_LENGTH} characters.`);
-            else if (!match) fieldError(confirmInput, "The passwords do not match.");
-            if (!length) passwordInput.focus();
-            else if (!match) confirmInput.focus();
-            return length && match;
+            const results = update();
+            // Show every rule's state on submit, even for fields that were never typed in.
+            for (const [key] of PASSWORD_RULES) mark(key, results[key], true);
+            mark("match", results.match, true);
+            const broken = PASSWORD_RULES.find(([key]) => !results[key]);
+            if (broken) {
+                fieldError(passwordInput, broken[2]);
+                passwordInput.focus();
+                return false;
+            }
+            if (!results.match) {
+                fieldError(confirmInput, "Password and Confirm Password do not match.");
+                confirmInput.focus();
+                return false;
+            }
+            return true;
         };
+    }
+
+    /** Coming from the order page: say why sign-in is needed and that the chosen service is kept. */
+    function orderReturnNotice(action = "Sign in") {
+        const target = new URL(nextPath(), window.location.origin);
+        if (target.pathname !== "/order" || !target.searchParams.get("service")) return;
+        showAlert(`${action} to continue your order. The service you selected is saved, and its order form opens right after.`);
     }
 
     // ================================================================ Sign In
@@ -161,6 +212,7 @@
         sessionStorage.removeItem(SIGN_IN_NOTICE_KEY);
         if (savedEmail) email.value = savedEmail;
         if (notice) showAlert(notice, "success");
+        else orderReturnNotice();
         (email.value ? password : email).focus();
 
         // Carry the typed email address over to the Forgot Password page (kept out of the URL).
@@ -202,6 +254,7 @@
     function setupCreateAccount() {
         const form = document.querySelector("#create-account-form");
         const checkPasswords = passwordRules(form.elements.password, form.elements.confirm_password, document.querySelector("#register-rules"));
+        orderReturnNotice("Create an account");
         form.elements.name.focus();
 
         form.addEventListener("submit", (event) => {

@@ -14,6 +14,7 @@ from backend.app.repositories import (
     admin_repository,
     auth_throttle_repository,
     catalog_repository,
+    chatbot_repository,
     customer_repository,
     order_repository,
     package_repository,
@@ -21,6 +22,7 @@ from backend.app.repositories import (
 from backend.app.routes.admin import router as admin_router
 from backend.app.routes.auth import router as auth_router
 from backend.app.routes.catalog import router as catalog_router
+from backend.app.routes.chatbot import router as chatbot_router
 from backend.app.routes.order import router as order_router
 
 
@@ -53,6 +55,7 @@ ADMIN_PAGES = {
     "/admin/reports": "SalesReports.html",
     "/admin/notifications": "NotificationManagement.html",
     "/admin/settings": "Settings.html",
+    "/admin/chatbot": "Chatbot.html",
 }
 # Old or alternative URLs kept working.
 REDIRECTS = {
@@ -82,6 +85,8 @@ async def lifespan(app: FastAPI):
     catalog_repository.initialize()
     # Packages reference catalog products, so this runs after the catalog is seeded/migrated.
     package_repository.initialize()
+    # Chatbot conversations, inquiries, and FAQs (links to customer accounts, so after customers).
+    chatbot_repository.initialize()
     app.state.database_ready = True
     try:
         yield
@@ -120,6 +125,7 @@ app.include_router(auth_router)
 app.include_router(catalog_router)
 app.include_router(order_router)
 app.include_router(admin_router)
+app.include_router(chatbot_router)
 
 
 def _customer_page(filename: str):
@@ -162,6 +168,21 @@ for _path, _target in REDIRECTS.items():
 for _path in ("/login", "/admin", "/admin/login"):
     app.add_api_route(_path, _admin_login, methods=["GET"])
 app.add_api_route("/admin/forgot-password", _admin_forgot_password, methods=["GET"])
+
+# The sign-in, registration, and password-reset forms use method="post", so a form sent before the page
+# script has loaded keeps the email and password in the request body, never in the URL. The scripts
+# send the real request as JSON to the /api/... endpoints. A plain form post is not processed (the body
+# is never read): the browser is sent back to the same page, keeping its ?next= return address.
+AUTH_FORM_PAGES = ("/sign-in", "/create-account", "/forgot-password", "/login", "/admin", "/admin/login", "/admin/forgot-password")
+
+
+def _reload_auth_page(request: Request) -> RedirectResponse:
+    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(target, status_code=303)
+
+
+for _path in AUTH_FORM_PAGES:
+    app.add_api_route(_path, _reload_auth_page, methods=["POST"], include_in_schema=False)
 
 
 @app.get("/api/health")

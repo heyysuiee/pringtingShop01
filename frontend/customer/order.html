@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/assets/auth.css">
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
+    <link rel="stylesheet" href="/assets/chatbot.css">
     <title>Place an Order — Printing Shop</title>
 </head>
 
@@ -54,6 +55,24 @@
     </header>
 
     <main class="page-main">
+        <!-- Services selection: shown on /order without a chosen service. Built from /api/catalog. -->
+        <div class="container">
+            <section class="service-select" id="service-select" aria-labelledby="service-select-title" hidden>
+                <header class="service-select-heading">
+                    <span class="order-step-kicker">Start your order · Choose a service</span>
+                    <h2 class="card-title" id="service-select-title">What would you like to order?</h2>
+                    <p class="field-hint">Services are grouped by category. Choose <strong>Avail Service</strong> to
+                        open its order form, or view a service's packages to start with one already selected.</p>
+                    <p class="service-select-auth" id="service-select-auth" role="status" hidden></p>
+                </header>
+                <nav class="service-jump" id="service-select-jump" aria-label="Jump to a service category" hidden></nav>
+                <div class="order-error" id="service-select-error" role="alert" hidden></div>
+                <div class="service-catalog" id="service-select-grid" aria-busy="true">
+                    <p class="service-select-status">Loading services…</p>
+                </div>
+            </section>
+        </div>
+
         <div class="container narrow">
 
             <section class="container narrow order-gate" id="order-gate" aria-labelledby="order-gate-title" hidden>
@@ -79,6 +98,7 @@
 
                 <!-- 01 · Product -->
                 <section class="wizard-step active" data-step="1" data-wizard-section="product" aria-labelledby="step1-title">
+                    <a class="text-button service-change-link" href="/order">← Choose a different service</a>
                     <p class="order-step-kicker">01 · Start with a product</p>
                     <h2 id="step1-title" class="step-title">What would you like printed?</h2>
                     <p class="order-step-lead">Choose a service and product. The next step shows the options for that
@@ -506,6 +526,7 @@
     <script src="/assets/mockup.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/order.js"></script>
+    <script src="/assets/chatbot.js" defer></script>
 </body>
 
 </html>

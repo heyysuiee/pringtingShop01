@@ -10,7 +10,6 @@ from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse
@@ -112,6 +111,20 @@ QUOTABLE_STATUSES = {
 }
 # Methods the administrator can record for money received directly ("Cash on Delivery" only for older COD orders).
 PAYMENT_METHODS = ("GCash", "Maya", "Bank transfer", "Cash", "Cash on Delivery", "Other")
+# Cash has no transaction number from a payment provider. The administrator records either the shop's
+# official receipt number or, when none was issued, the system issues a cash receipt number; the payment is
+# then identified by that number together with who confirmed receiving the money and when.
+CASH_METHODS = frozenset({"Cash", "Cash on Delivery"})
+# Verification states of payment entries (shown in Payments & Transactions).
+VERIFICATION_VERIFIED = "Verified"
+VERIFICATION_PENDING = "Pending Verification"
+VERIFICATION_REJECTED = "Rejected"
+VERIFICATION_MISSING = "Reference Missing"
+REFERENCE_TYPE_LABELS = {
+    "transaction": "Transaction reference",
+    "official_receipt": "Official receipt no.",
+    "system_cash_receipt": "Cash receipt (issued by system)",
+}
 COD_UNAVAILABLE = "Cash on Delivery is not available. Every order requires a 50% down payment."
 ADMIN = "admin"
 CUSTOMER = "customer"
@@ -436,13 +449,21 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     product["image"] = optimized_image(product.get("image", ""))
     result["product"] = product
     prefix = f"/api/admin/orders/{order['reference']}/files" if admin else f"/api/orders/{order['reference']}/files"
-    # Customers prove access to files with the order's email address; admins use their session.
-    access = "" if admin else f"?email={quote(order['customer']['email'], safe='')}"
 
+    # Both kinds of link are authorized by the session: the admin's, or the signed-in customer who owns the order.
     def url(file_id: str) -> str:
-        return f"{prefix}/{file_id}{access}"
+        return f"{prefix}/{file_id}"
 
     result.setdefault("pricing", {})
+    # Who recorded or verified a payment is for the shop's records only.
+    result["payments"] = [
+        {
+            **{key: value for key, value in payment.items() if admin or key not in {"recorded_by", "verification"}},
+            "number": index,
+            **({"verification_view": payment_verification(payment)} if admin else {}),
+        }
+        for index, payment in enumerate(order["payments"], start=1)
+    ]
     result["attachments"] = [
         {
             "id": attachment["id"],
@@ -517,13 +538,6 @@ def order_after_update(order: OrderRecord | None, admin: bool = False) -> dict[s
     return order_view(order, admin)
 
 
-def owned_order(reference: str, email: str) -> OrderRecord:
-    order = order_repository.get_order(reference)
-    if not order or not secrets.compare_digest(order["customer"]["email"].lower(), email.strip().lower()):
-        raise HTTPException(status_code=404, detail="Order not found for that email address.")
-    return order
-
-
 def attachment_response(order: Mapping[str, Any], file_id: str, inline: bool = False) -> FileResponse:
     attachments = order["attachments"] + ([order["draft_attachment"]] if order["draft_attachment"] else [])
     attachments += [item["proof"] for item in submissions(order) if item.get("proof")]
@@ -572,9 +586,18 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     idempotency_key = idempotency_key.strip()
     if not re.fullmatch(r"[A-Za-z0-9._-]{20,128}", idempotency_key):
         raise HTTPException(status_code=422, detail="A valid Idempotency-Key header is required.")
+    # Orders are only accepted from signed-in customers so every order belongs to an account. This is
+    # checked before the duplicate-submission lookup, so a reused key never reveals an order to a guest.
+    claims = session_claims(request, "customer")
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Sign in or create an account before submitting an order.")
+    account = auth_services.get_customer(claims["sub"])
+    if account is None:
+        raise HTTPException(status_code=401, detail="The signed-in customer account is unavailable.")
+    customer_id = account["id"]
     existing = order_repository.get_order_by_idempotency_key(idempotency_key)
     if existing is not None:
-        return order_view(existing), True
+        return _replayed_order(existing, customer_id), True
 
     customer_payload = payload.get("customer")
     product_payload = payload.get("product")
@@ -593,16 +616,8 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         phone = validate_phone(_text(customer_payload.get("phone"), "Contact number", 40, True))
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    # Orders are only accepted from signed-in customers so every order belongs to an account.
-    claims = session_claims(request, "customer")
-    if claims is None:
-        raise HTTPException(status_code=401, detail="Sign in or create an account before submitting an order.")
-    account = auth_services.get_customer(claims["sub"])
-    if account is None:
-        raise HTTPException(status_code=401, detail="The signed-in customer account is unavailable.")
     if email != account["email"]:
         raise HTTPException(status_code=403, detail="Use the email address from your signed-in account.")
-    customer_id = account["id"]
     customer_payload = {
         "name": account["name"],
         "email": account["email"],
@@ -793,7 +808,7 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
             (UPLOAD_DIR / attachment["filename"]).unlink(missing_ok=True)
         existing = order_repository.get_order_by_idempotency_key(idempotency_key)
         if existing is not None:
-            return order_view(existing), True
+            return _replayed_order(existing, customer_id), True
         raise HTTPException(status_code=409, detail="The order conflicted with an existing database record.") from error
     except Exception:
         for attachment in files:
@@ -802,10 +817,15 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     return order_view(order), False
 
 
-def customer_orders(email: str, reference: str) -> dict[str, Any]:
-    normalized_email = _text(email, "Email", 254, True).lower()
-    owned_order(reference, normalized_email)
-    return {"orders": [order_view(order) for order in order_repository.list_orders(normalized_email)]}
+def _replayed_order(existing: OrderRecord, customer_id: str) -> dict[str, Any]:
+    """A repeated submission (same Idempotency-Key) returns the saved order only to the account that placed it.
+
+    Another account reusing the key gets a conflict that says nothing about the existing order.
+    """
+    owner = existing.get("customer_id")
+    if not owner or not secrets.compare_digest(str(owner), str(customer_id)):
+        raise HTTPException(status_code=409, detail="This order request could not be submitted. Reload the page and try again.")
+    return order_view(existing)
 
 
 def account_orders(customer_id: str) -> dict[str, Any]:
@@ -813,19 +833,17 @@ def account_orders(customer_id: str) -> dict[str, Any]:
 
 
 def account_order(customer_id: str, reference: str) -> dict[str, Any]:
-    order = order_repository.get_order(reference)
     # Ownership is checked against the signed-in account; other customers' references look like missing orders.
-    if order is None or order.get("customer_id") != customer_id:
-        raise HTTPException(status_code=404, detail="Order not found.")
-    return order_view(order)
+    return order_view(customer_owned_order(reference, None, customer_id))
 
 
-def get_customer_order(reference: str, email: str) -> dict[str, Any]:
-    return order_view(owned_order(reference, email))
-
-
-def get_customer_order_file(reference: str, file_id: str, email: str) -> FileResponse:
-    return attachment_response(owned_order(reference, email), file_id)
+def get_customer_order_file(customer_id: str, reference: str, file_id: str) -> FileResponse:
+    """An order file (upload, draft, payment proof) for the signed-in customer who owns the order."""
+    response = attachment_response(customer_owned_order(reference, None, customer_id), file_id)
+    # Customer files are private: never stored by shared caches, never sniffed into another type.
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def _audit(action: str, actor_type: str, actor_id: Any = "", **details: Any) -> dict[str, Any]:
@@ -881,7 +899,7 @@ def customer_owned_order(reference: str, email: Any, customer_id: str | None) ->
     if not customer_id:
         raise HTTPException(status_code=401, detail="Sign in to your customer account to make changes to this order.")
     order = order_repository.get_order(reference)
-    not_found = HTTPException(status_code=404, detail="Order not found for that email address.")
+    not_found = HTTPException(status_code=404, detail="Order not found in your account.")
     if order is None:
         raise not_found
     order_email = order["customer"]["email"].strip().lower()
@@ -1400,6 +1418,121 @@ def _check_payable(order: OrderRecord) -> float:
 CONFIRMED_SUFFIX = " The 50% down payment is verified: the order is now Confirmed."
 
 
+def _cash_receipt_number() -> str:
+    """A unique cash receipt number for cash received without an official receipt (CASH-YYYYMMDD-XXXXXX)."""
+    today = now_iso()[:10].replace("-", "")
+    return f"CASH-{today}-{secrets.token_hex(3).upper()}"
+
+
+def _payment_reference(method: str, value: Any) -> tuple[str, str]:
+    """The reference that identifies a payment the administrator records, and its type.
+
+    GCash, Maya, bank transfers, and other providers always give a transaction/reference number, so it is
+    required. Cash may have the shop's official receipt number; without one, the system issues a unique
+    cash receipt number. Every reference can be recorded only once across all orders.
+    """
+    reference_text = _text(value or "", "Payment reference", 120)
+    if method in CASH_METHODS:
+        if reference_text:
+            reference_type = "official_receipt"
+        else:
+            reference_text, reference_type = _cash_receipt_number(), "system_cash_receipt"
+    else:
+        if not reference_text:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Enter the {method} reference or transaction number. Payments through {method} must have a reference so they can be verified.",
+            )
+        if len(_payment_reference_key(reference_text)) < 4:
+            raise HTTPException(status_code=422, detail="Enter the complete payment reference or transaction number.")
+        reference_type = "transaction"
+    _ensure_reference_unused(reference_text)
+    return reference_text, reference_type
+
+
+def payment_verification(payment: Mapping[str, Any]) -> dict[str, Any]:
+    """How a recorded payment was verified, for the admin tables. Older payments may lack a reference."""
+    stored = payment.get("verification") if isinstance(payment.get("verification"), dict) else {}
+    reference_text = str(payment.get("reference") or "").strip()
+    source = payment.get("source", "")
+    reference_type = payment.get("reference_type") or ("transaction" if reference_text else "")
+    if not reference_text:
+        return {
+            "status": VERIFICATION_MISSING,
+            "reference_type": "",
+            "reference_type_label": "No reference recorded",
+            "detail": "Recorded before payment references were required. Add the receipt or transaction number.",
+            "verified_by": payment.get("recorded_by", ""),
+            "verified_at": payment.get("received_at"),
+        }
+    if source == "customer submission":
+        detail = "Customer submission checked against the shop's account"
+    elif reference_type == "system_cash_receipt":
+        detail = "Cash received at the shop; receipt number issued by the system"
+    elif reference_type == "official_receipt":
+        detail = "Cash received; official receipt recorded"
+    else:
+        detail = "Received payment confirmed by the administrator"
+    if stored.get("note"):
+        detail += f" · {stored['note']}"
+    return {
+        "status": VERIFICATION_VERIFIED,
+        "reference_type": reference_type,
+        "reference_type_label": REFERENCE_TYPE_LABELS.get(reference_type, "Reference"),
+        "detail": detail,
+        "verified_by": stored.get("verified_by") or payment.get("recorded_by", ""),
+        "verified_at": stored.get("verified_at") or payment.get("received_at"),
+    }
+
+
+def add_payment_reference(reference: str, payment_number: Any, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Attach the missing receipt or transaction number to an older payment that was saved without one.
+
+    Only a payment with no reference can be changed; amounts and existing references are never edited.
+    """
+    order = _admin_order(reference)
+    try:
+        number = int(payment_number)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=404, detail="Payment not found.") from error
+    if not 1 <= number <= len(order["payments"]):
+        raise HTTPException(status_code=404, detail="Payment not found.")
+    payments = [dict(item) for item in order["payments"]]
+    payment = payments[number - 1]
+    if str(payment.get("reference") or "").strip():
+        raise HTTPException(status_code=409, detail="This payment already has a reference. Recorded references cannot be changed.")
+    if payload.get("confirmed") is not True:
+        raise HTTPException(status_code=422, detail="Confirm that you checked this reference against the shop's records.")
+    method = str(payment.get("method") or "")
+    reference_text, reference_type = _payment_reference(method if method in PAYMENT_METHODS else "Other", payload.get("reference"))
+    note = _text(payload.get("note", "") or "", "Verification note", 300)
+    now = now_iso()
+    payment.update({
+        "reference": reference_text,
+        "reference_type": reference_type,
+        "verification": {
+            "status": "verified",
+            "method": "admin_added_reference",
+            "verified_by": actor,
+            "verified_at": now,
+            "note": note,
+        },
+    })
+    return _save(
+        order,
+        {"payments": payments},
+        f"Administrator added the missing {REFERENCE_TYPE_LABELS[reference_type].lower()} {reference_text} to payment "
+        f"#{number} (PHP {float(payment.get('amount') or 0):,.2f} via {method or 'unknown method'})."
+        + (f" Note: {note}" if note else ""),
+        payload.get("expected_version"),
+        admin=True,
+        audit=_audit(
+            "payment.reference_added", ADMIN, actor,
+            payment_number=number, amount=float(payment.get("amount") or 0), reference=reference_text, reference_type=reference_type, note=note,
+        ),
+    )
+
+
 def record_payment(reference: str, payload: dict[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Record money the shop received directly (cash at the shop, a transfer seen in the account)."""
     order = _admin_order(reference)
@@ -1418,29 +1551,41 @@ def record_payment(reference: str, payload: dict[str, Any], actor: str = ADMIN) 
     if payload.get("received") is not True:
         raise HTTPException(status_code=422, detail="Confirm that the payment was actually received.")
     method = _payment_method(payload.get("method"))
-    reference_text = _text(payload.get("reference", "") or "", "Payment reference", 120)
-    _ensure_reference_unused(reference_text)
+    reference_text, reference_type = _payment_reference(method, payload.get("reference"))
+    note = _text(payload.get("verification_note", "") or "", "Verification note", 300)
+    now = now_iso()
     payment = {
         "id": secrets.token_hex(8),
         "amount": amount,
         "method": method,
         "reference": reference_text,
-        "received_at": now_iso(),
+        "reference_type": reference_type,
+        "received_at": now,
         "kind": _payment_kind(order, paid_amount(order)),
         "source": "admin",
         "recorded_by": actor,
+        "verification": {
+            "status": "verified",
+            "method": "admin_cash_receipt" if method in CASH_METHODS else "admin_confirmed_reference",
+            "verified_by": actor,
+            "verified_at": now,
+            "note": note,
+        },
     }
     updates, confirmed = _payment_updates(order, payment)
     return _save(
         order,
         updates,
-        f"Administrator recorded PHP {payment['amount']:,.2f} received via {payment['method']} ({payment['kind'].lower()})."
+        f"Administrator recorded PHP {payment['amount']:,.2f} received via {payment['method']} "
+        f"({REFERENCE_TYPE_LABELS[reference_type].lower()} {reference_text}; {payment['kind'].lower()})."
+        + (f" Note: {note}" if note else "")
         + (CONFIRMED_SUFFIX if confirmed else ""),
         payload.get("expected_version"),
         admin=True,
         audit=_audit(
             "payment.recorded", ADMIN, actor,
-            payment_id=payment["id"], amount=amount, method=method, reference=reference_text, kind=payment["kind"], confirmed=confirmed,
+            payment_id=payment["id"], amount=amount, method=method, reference=reference_text, reference_type=reference_type,
+            kind=payment["kind"], confirmed=confirmed, note=note,
         ),
         notifications=[_payment_notification(order, payment, confirmed)],
     )
@@ -1489,6 +1634,14 @@ def verify_payment_submission(reference: str, submission_id: str, payload: Mappi
         "source": "customer submission",
         "submission_id": submission_id,
         "recorded_by": actor,
+        "reference_type": "transaction",
+        "verification": {
+            "status": "verified",
+            "method": "customer_submission",
+            "verified_by": actor,
+            "verified_at": now,
+            "note": "",
+        },
     }
     submission.update({
         "status": "verified", "reviewed_at": now, "reviewed_by": actor, "payment_id": payment["id"], "verified_amount": amount,

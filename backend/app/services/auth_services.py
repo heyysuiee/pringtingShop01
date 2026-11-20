@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from backend.app.core.config import settings
 from backend.app.core.security import hash_password, verify_password
 from backend.app.repositories import customer_repository
-from backend.app.schemas.user import CustomerRegistration
+from backend.app.schemas.user import CustomerRegistration, password_problems
 from backend.app.services import email_service
 from backend.app.utils.clock import now_iso, now_utc
 
@@ -21,7 +21,6 @@ OTP_LIFETIME = timedelta(minutes=5)
 OTP_LIFETIME_SECONDS = int(OTP_LIFETIME.total_seconds())
 RESET_TOKEN_LIFETIME = timedelta(minutes=10)
 OTP_MAX_ATTEMPTS = 5
-PASSWORD_MIN_LENGTH = 12
 GENERIC_REQUEST_MESSAGE = (
     "If an account exists for that email address, a verification code has been sent. "
     "Check your inbox and spam folder."
@@ -151,8 +150,9 @@ def verify_password_reset_code(email: str, code: str) -> str:
 
 def complete_password_reset(email: str, reset_token: str, new_password: str) -> None:
     invalid = HTTPException(status_code=422, detail="This password reset session has expired. Start again.")
-    if len(new_password) < PASSWORD_MIN_LENGTH:
-        raise HTTPException(status_code=422, detail=f"Use at least {PASSWORD_MIN_LENGTH} characters for the new password.")
+    problems = password_problems(new_password)
+    if problems:
+        raise HTTPException(status_code=422, detail="The new password does not meet the requirements: " + " ".join(problems))
     customer = customer_repository.get_by_email(email)
     if customer is None:
         raise invalid

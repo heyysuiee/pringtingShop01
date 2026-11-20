@@ -14,6 +14,7 @@ Business rules (shared by the dashboard, the reports, the customer table, and th
 """
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable, Iterable, Mapping
 from datetime import date, datetime, timedelta, timezone
@@ -22,7 +23,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.app.models.order import FULFILLMENT_METHODS, PAYMENT_OPTIONS, OrderRecord
-from backend.app.repositories import catalog_repository, customer_repository, order_repository
+from backend.app.repositories import admin_repository, catalog_repository, chatbot_repository, customer_repository, order_repository
 from backend.app.services import order_services
 from backend.app.utils.order_number import SHOP_TIMEZONE
 
@@ -465,7 +466,86 @@ PAYMENT_SORTS = {
     "method": "method",
     "amount": "amount",
     "payment_status": "order_payment_status",
+    "verification": "verification_status",
+    "payment_reference": "payment_reference",
 }
+# Verification filter values -> the status shown in the table.
+VERIFICATION_FILTERS = {
+    "verified": order_services.VERIFICATION_VERIFIED,
+    "pending": order_services.VERIFICATION_PENDING,
+    "rejected": order_services.VERIFICATION_REJECTED,
+    "missing": order_services.VERIFICATION_MISSING,
+}
+
+
+def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every payment entry of one order: recorded (verified) payments, then customer submissions still
+    pending or rejected. A verified submission is represented only by the payment it became, so no
+    payment is listed twice. Only recorded payments count as paid (``counts_as_paid``)."""
+    shared = {
+        "reference": order["reference"],
+        "customer_id": order.get("customer_id"),
+        "customer_name": base["customer_name"],
+        "customer_email": base["customer_email"],
+        "service_id": base["service_id"],
+        "service": base["service"],
+        "product": base["product"],
+        "order_status": base["status"],
+        "order_total": base["total_amount"],
+        "order_paid": base["amount_paid"],
+        "order_balance": base["balance"],
+        "order_payment_status": base["payment_status"],
+        "payment_option": base["payment_option"],
+        "payment_option_label": base["payment_option_label"],
+    }
+    entries = []
+    for index, payment in enumerate(order["payments"], start=1):
+        verification = order_services.payment_verification(payment)
+        entries.append({
+            **shared,
+            "id": f"{order['reference']}-P{index}",
+            "entry_type": "payment",
+            "payment_number": index,
+            "submission_id": None,
+            "amount": money(payment.get("amount")),
+            "method": payment.get("method", ""),
+            "payment_reference": str(payment.get("reference") or ""),
+            "reference_type_label": verification["reference_type_label"],
+            "received_at": payment.get("received_at"),
+            "received_date": iso(local_date(payment.get("received_at"))),
+            "kind": payment.get("kind", ""),
+            "verification_status": verification["status"],
+            "verification_detail": verification["detail"],
+            "verified_by": verification["verified_by"],
+            "verified_at": verification["verified_at"],
+            "counts_as_paid": True,
+        })
+    for item in order_services.submissions(order):
+        status = item.get("status", "pending")
+        if status == "verified":
+            continue
+        rejected = status == "rejected"
+        entries.append({
+            **shared,
+            "id": f"{order['reference']}-S{item.get('id', '')}",
+            "entry_type": "submission",
+            "payment_number": None,
+            "submission_id": item.get("id"),
+            "amount": money(item.get("amount")),
+            "method": item.get("method", ""),
+            "payment_reference": str(item.get("reference") or ""),
+            "reference_type_label": "Customer-submitted reference",
+            "received_at": item.get("submitted_at"),
+            "received_date": iso(local_date(item.get("submitted_at"))),
+            "kind": {"down_payment": "Down payment", "balance": "Balance payment"}.get(item.get("stage", ""), "Payment"),
+            "verification_status": order_services.VERIFICATION_REJECTED if rejected else order_services.VERIFICATION_PENDING,
+            "verification_detail": (f"Rejected: {item.get('review_note', '')}" if rejected
+                                    else "Submitted by the customer with a receipt; not counted as paid until verified"),
+            "verified_by": item.get("reviewed_by", "") if rejected else "",
+            "verified_at": item.get("reviewed_at") if rejected else None,
+            "counts_as_paid": False,
+        })
+    return entries
 
 
 def payment_rows(params: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[OrderRecord], ServiceIndex]:
@@ -475,37 +555,20 @@ def payment_rows(params: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[
     service = param_text(params, "service", 80)
     pay = param_text(params, "payment_status", 40)
     option = param_text(params, "payment_option", 20)
+    verification = param_text(params, "verification", 20)
     if option and option not in PAYMENT_OPTIONS:
         raise bad_request("Select a valid payment option.")
+    if verification and verification not in VERIFICATION_FILTERS:
+        raise bad_request("Select a valid verification status.")
     start, end = date_range(params, "date_from", "date_to", "Payment date")
     rows = []
     for order in orders:
         base = order_row(order, services)
         if option and base["payment_option"] != option:
             continue
-        for index, payment in enumerate(order["payments"], start=1):
-            row = {
-                "id": f"{order['reference']}-P{index}",
-                "reference": order["reference"],
-                "customer_name": base["customer_name"],
-                "customer_email": base["customer_email"],
-                "service_id": base["service_id"],
-                "service": base["service"],
-                "product": base["product"],
-                "amount": money(payment.get("amount")),
-                "method": payment.get("method", ""),
-                "payment_reference": payment.get("reference", ""),
-                "received_at": payment.get("received_at"),
-                "received_date": iso(local_date(payment.get("received_at"))),
-                "order_status": base["status"],
-                "order_total": base["total_amount"],
-                "order_paid": base["amount_paid"],
-                "order_balance": base["balance"],
-                "order_payment_status": base["payment_status"],
-                "payment_option": base["payment_option"],
-                "payment_option_label": base["payment_option_label"],
-                "payment_number": index,
-            }
+        for row in _transaction_entries(order, base):
+            if verification and row["verification_status"] != VERIFICATION_FILTERS[verification]:
+                continue
             if method and row["method"] != method:
                 continue
             if service and row["service_id"] != service:
@@ -524,9 +587,16 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
     rows, orders, services = payment_rows(params)
     result = paginate(rows, params)
     active = [order for order in orders if order["status"] not in CANCELLED_STATUSES]
+    verified_rows = [row for row in rows if row["counts_as_paid"]]
+    all_payments = [payment for order in orders for payment in order["payments"]]
     result["summary"] = {
-        "filtered_amount": money(sum(row["amount"] for row in rows)),
-        "filtered_count": len(rows),
+        # Only recorded (verified) payments are money received; pending and rejected submissions are listed separately.
+        "filtered_amount": money(sum(row["amount"] for row in verified_rows)),
+        "filtered_count": len(verified_rows),
+        "filtered_entries": len(rows),
+        "filtered_pending_amount": money(sum(row["amount"] for row in rows if row["verification_status"] == order_services.VERIFICATION_PENDING)),
+        "missing_reference": sum(1 for payment in all_payments if not str(payment.get("reference") or "").strip()),
+        "partially_paid_orders": sum(1 for order in active if payment_status(order) == "Partially Paid"),
         "total_received": money(sum(paid_amount(order) for order in orders)),
         "outstanding_balance": money(sum(
             max(0.0, float(order["total_amount"]) - paid_amount(order))
@@ -600,6 +670,13 @@ CUSTOMER_SORTS = {
 CUSTOMER_ACTIVITY = {"with_orders", "no_orders", "with_pending", "with_completed", "repeat", "with_spend", "no_spend"}
 # A customer's overall payment standing across their non-cancelled orders.
 CUSTOMER_PAYMENT_STATUSES = ("With balance", "Fully paid", "Awaiting quotation", "No transactions")
+# Customer Management views. Each customer is in at most one of "paid" and "unpaid", decided from the
+# recorded payments of their agreed (accepted or approved) orders, so switching views never duplicates rows.
+CUSTOMER_VIEWS = {
+    "all": None,
+    "paid": "Fully paid",  # every agreed order is fully paid
+    "unpaid": "With balance",  # at least one agreed order still has a balance
+}
 
 
 def customer_payment_status(active: list[OrderRecord], outstanding: float) -> str:
@@ -657,10 +734,20 @@ def customer_stats(customer: Mapping[str, Any], orders: list[OrderRecord]) -> di
     }
 
 
-def customer_rows(params: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _customer_view(params: Mapping[str, Any]) -> str:
+    view = param_text(params, "view", 20) or "all"
+    if view not in CUSTOMER_VIEWS:
+        raise bad_request("Select a valid customer view (all, paid, or unpaid).")
+    return view
+
+
+def customer_rows(params: Mapping[str, Any], *, with_orders: bool = False) -> list[dict[str, Any]]:
+    """Customer rows after the search, filters, and view. ``with_orders`` keeps each customer's order records
+    (under ``_orders``) for reports that list the order and payment history."""
     customers = customer_repository.list_customers()
     orders = order_repository.list_orders()
     grouped = _orders_by_customer(orders, customers)
+    view_status = CUSTOMER_VIEWS[_customer_view(params)]
     search = param_text(params, "search")
     activity = param_text(params, "activity", 40)
     if activity and activity not in CUSTOMER_ACTIVITY:
@@ -696,6 +783,10 @@ def customer_rows(params: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         if pay and row["payment_status"] != pay:
             continue
+        if view_status and row["payment_status"] != view_status:
+            continue
+        if with_orders:
+            row["_orders"] = own
         rows.append(row)
     return sort_rows(rows, params, CUSTOMER_SORTS, "registered")
 
@@ -703,6 +794,12 @@ def customer_rows(params: Mapping[str, Any]) -> list[dict[str, Any]]:
 def customer_list(params: Mapping[str, Any]) -> dict[str, Any]:
     rows = customer_rows(params)
     result = paginate(rows, params)
+    # How many customers each view holds with the same search and filters (for the view tabs).
+    result["view"] = _customer_view(params)
+    result["view_counts"] = {
+        view: len(rows) if view == result["view"] else len(customer_rows({**params, "view": view}))
+        for view in CUSTOMER_VIEWS
+    }
     result["summary"] = {
         "customers": len(rows),
         "total_spent": money(sum(row["total_spent"] for row in rows)),
@@ -726,13 +823,17 @@ def customer_detail(customer_id: str) -> dict[str, Any]:
     payments = []
     for order in own:
         for index, payment in enumerate(order["payments"], start=1):
+            verification = order_services.payment_verification(payment)
             payments.append({
                 "id": f"{order['reference']}-P{index}",
                 "reference": order["reference"],
+                "payment_number": index,
                 "product": (order.get("product") or {}).get("name", ""),
                 "amount": money(payment.get("amount")),
                 "method": payment.get("method", ""),
                 "payment_reference": payment.get("reference", ""),
+                "reference_type_label": verification["reference_type_label"],
+                "verification_status": verification["status"],
                 "received_at": payment.get("received_at"),
                 "received_date": iso(local_date(payment.get("received_at"))),
             })
@@ -750,6 +851,62 @@ def customer_detail(customer_id: str) -> dict[str, Any]:
         "orders": sorted(rows, key=lambda row: row["created_at"], reverse=True),
         "payments": payments,
         "service_history": sorted(history.values(), key=lambda item: (-item["orders"], item["service"])),
+    }
+
+
+def customer_print_report(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Everything the printable customer report shows, for the customers matching the screen's view,
+    search, and filters (or one customer with ``customer_id``): each customer's totals, and optionally
+    the order history and the payment history with references and verification status."""
+    include_history = str(params.get("include_history") or "").lower() in {"1", "true", "yes"}
+    customer_id = param_text(params, "customer_id", 80)
+    services = ServiceIndex()
+    if customer_id:
+        customer = customer_repository.get_by_id(customer_id)
+        if customer is None:
+            raise HTTPException(status_code=404, detail="Customer not found.")
+        own = _orders_by_customer(order_repository.list_orders(), [customer]).get(customer["id"], [])
+        row = customer_stats(customer, own)
+        row["_orders"] = own
+        rows = [row]
+        include_history = True
+    else:
+        rows = customer_rows(params, with_orders=True)
+    customers = []
+    for row in rows:
+        own = row.pop("_orders", [])
+        entry = dict(row)
+        if include_history:
+            ordered = sorted(own, key=lambda order: order["created_at"], reverse=True)
+            entry["orders"] = [
+                {key: value for key, value in order_row(order, services).items() if key in {
+                    "reference", "service", "product", "description", "request_date", "status", "total_amount",
+                    "amount_paid", "balance", "payment_status", "completion_date",
+                }}
+                for order in ordered
+            ]
+            entry["payments"] = [
+                {key: value for key, value in payment.items() if key in {
+                    "reference", "product", "amount", "method", "payment_reference", "reference_type_label",
+                    "verification_status", "received_at", "received_date", "entry_type",
+                }}
+                for order in ordered
+                for payment in _transaction_entries(order, order_row(order, services))
+            ]
+        customers.append(entry)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "view": "single" if customer_id else _customer_view(params),
+        "include_history": include_history,
+        "customers": customers,
+        "summary": {
+            "customers": len(customers),
+            "total_orders": sum(row["total_orders"] for row in customers),
+            "total_transaction_amount": money(sum(row["total_transaction_amount"] for row in customers)),
+            "total_paid": money(sum(row["total_paid"] for row in customers)),
+            "outstanding_balance": money(sum(row["outstanding_balance"] for row in customers)),
+            "total_spent": money(sum(row["total_spent"] for row in customers)),
+        },
     }
 
 
@@ -1151,10 +1308,13 @@ def action_counts() -> dict[str, Any]:
         "payments_to_verify": payments_to_verify,
         "collect_before_release": collect_before_release,
         "new_customers": new_customers,
+        "unread_notifications": unread_notification_count(orders, customers),
         # Sidebar badges.
         "orders": new_requests + to_review,
         "payments": payments_to_verify + collect_before_release,
         "customers": new_customers,
+        # Messages customers sent to the administrator from the chat window, not resolved yet.
+        "chatbot_inquiries": chatbot_repository.count_open_inquiries(),
         # Changes whenever any order or registration changes, so pages know to refresh.
         "signature": f"{len(orders)}:{max((order['updated_at'] for order in orders), default='')}:{len(customers)}",
     }
@@ -1163,41 +1323,61 @@ def action_counts() -> dict[str, Any]:
 # ================================================================== dashboard
 
 
+# Dashboard workflow stages: every order that is not cancelled or rejected is in exactly one of them.
+DASHBOARD_STAGES = {
+    "new": ("Pending Confirmation",),
+    "to_review": ("Under Review", "Awaiting Quotation", "Quotation Declined", "Awaiting COD Confirmation"),
+    "awaiting_customer": ("Quotation Sent", "Awaiting Down Payment"),
+    "production": ("Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production"),
+    "release": ("Ready for Pickup", "Out for Delivery"),
+    "completed": ("Completed",),
+}
+STATUS_GROUPS.update({key: set(value) for key, value in DASHBOARD_STAGES.items() if key != "completed"})
+
+
 def dashboard() -> dict[str, Any]:
+    """The administrator's essentials: where every active order is, payments to verify, and revenue.
+
+    Every figure is counted from the orders table on each request.
+    """
     orders, services = _load()
     rows = [order_row(order, services) for order in orders]
-    options = service_options(services, rows)
-    status_counts = {status: 0 for status in STATUS_ORDER}
-    for row in rows:
-        status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
+    stages = {key: sum(1 for row in rows if row["status"] in statuses) for key, statuses in DASHBOARD_STAGES.items()}
     completed = [row for row in rows if row["status"] == "Completed"]
+    active = [order for order in orders if order["status"] not in CANCELLED_STATUSES]
     today = today_local()
+    month_start = today.replace(day=1)
     first_month = date(today.year - (today.month <= 11), (today.month - 12) % 12 + 1, 1)  # 12 months incl. current
-    by_service = []
-    for service in options:
-        own = [row for row in rows if row["service_id"] == service["id"]]
-        by_service.append({
-            "service_id": service["id"],
-            "service": service["label"],
-            "orders": len(own),
-            "completed_orders": sum(1 for row in own if row["status"] == "Completed"),
-            "revenue": money(sum(row["confirmed_revenue"] for row in own)),
-        })
+    received_this_month = [
+        payment for order in orders for payment in order["payments"]
+        if in_range(local_date(payment.get("received_at")), month_start, today)
+    ]
     return {
-        "total_customers": len(customer_repository.list_customers()),
-        "total_orders": len(rows),
-        "pending_orders": sum(1 for row in rows if row["status"] in PENDING_STATUSES),
-        "processing_orders": sum(1 for row in rows if row["status"] in PROCESSING_STATUSES),
-        "completed_orders": len(completed),
+        "stages": stages,
+        "payments_to_verify": sum(1 for order in active if order_services.pending_submissions(order)),
+        "payments_to_verify_amount": money(sum(order_services.pending_submission_amount(order) for order in active)),
+        "payments_missing_reference": sum(
+            1 for order in orders for payment in order["payments"] if not str(payment.get("reference") or "").strip()
+        ),
         "cancelled_orders": sum(1 for row in rows if row["status"] in CANCELLED_STATUSES),
-        "fully_paid_orders": sum(1 for row in rows if row["payment_status"] == "Fully Paid" and row["status"] not in CANCELLED_STATUSES),
-        # Confirmed revenue only: completed and fully paid orders, each counted once.
-        "total_revenue": money(sum(row["confirmed_revenue"] for row in rows)),
-        "status_counts": status_counts,
-        "by_service": by_service,
+        "total_orders": len(rows),
+        "revenue": {
+            # Confirmed revenue only: completed and fully paid orders, each counted once, on the completion date.
+            "total": money(sum(row["confirmed_revenue"] for row in rows)),
+            "this_month": money(sum(
+                row["confirmed_revenue"] for row in completed
+                if in_range(local_date(row["completed_at"]), month_start, today)
+            )),
+            "received_this_month": money(sum(float(payment.get("amount") or 0) for payment in received_this_month)),
+            "payments_this_month": len(received_this_month),
+            "outstanding_balance": money(sum(
+                max(0.0, float(order["total_amount"]) - paid_amount(order))
+                for order in active if order_services.price_agreed(order)
+            )),
+            "month_label": month_start.strftime("%B %Y"),
+        },
         "revenue_trend": revenue_trend(completed, first_month, today, "month"),
         "recent_orders": sorted(rows, key=lambda row: row["created_at"], reverse=True)[:8],
-        "recent_completed": sorted(completed, key=lambda row: row["completed_at"] or "", reverse=True)[:5],
     }
 
 
@@ -1232,11 +1412,10 @@ def _classify(text: str) -> tuple[str, str]:
     return ("Customer update", "customer") if text.startswith("Customer") else ("Order updated", "admin")
 
 
-def activity_feed(params: Mapping[str, Any]) -> dict[str, Any]:
-    actor = param_text(params, "actor", 20)
-    limit = param_int(params, "limit", "Limit", 1, 500) or 100
+def _activity_events(orders: list[OrderRecord] | None = None, customers: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Every activity event (order history entries and registrations), newest first."""
     events = []
-    for order in order_repository.list_orders():
+    for order in order_repository.list_orders() if orders is None else orders:
         for index, entry in enumerate(order["history"]):
             title, who = _classify(str(entry.get("text", "")))
             events.append({
@@ -1249,7 +1428,7 @@ def activity_feed(params: Mapping[str, Any]) -> dict[str, Any]:
                 "actor": who,
                 "kind": "order",
             })
-    for customer in customer_repository.list_customers():
+    for customer in customer_repository.list_customers() if customers is None else customers:
         events.append({
             "id": f"customer:{customer['id']}",
             "at": customer["created_at"],
@@ -1261,7 +1440,139 @@ def activity_feed(params: Mapping[str, Any]) -> dict[str, Any]:
             "actor": "customer",
             "kind": "customer",
         })
+    events.sort(key=lambda event: event["at"] or "", reverse=True)
+    return events
+
+
+def activity_feed(params: Mapping[str, Any]) -> dict[str, Any]:
+    actor = param_text(params, "actor", 20)
+    limit = param_int(params, "limit", "Limit", 1, 500) or 100
+    events = _activity_events()
     if actor:
         events = [event for event in events if event["actor"] == actor]
-    events.sort(key=lambda event: event["at"] or "", reverse=True)
     return {"events": events[:limit], "total": len(events)}
+
+
+# ================================================================== administrator notifications
+#
+# Notifications are the customer activity above (new orders, payments submitted, quotation responses,
+# draft responses, cancellations, registrations). Administrator actions are listed as activity but are
+# never unread. Read state is stored in the database (app_meta), so it is the same on every device:
+# everything up to ``seen_at`` is read, plus individually opened notifications in ``read_ids``.
+
+NOTIFICATION_SEEN_KEY = "admin.notifications_seen_at"
+NOTIFICATION_READ_KEY = "admin.notifications_read_ids"
+NOTIFICATION_CATEGORIES = {
+    "orders": "Orders",
+    "payments": "Payments",
+    "quotations": "Quotations & drafts",
+    "customers": "Customer registrations",
+}
+MAX_READ_IDS = 2000
+
+
+def _notification_category(event: Mapping[str, Any]) -> str:
+    title = str(event.get("title", "")).lower()
+    if event.get("kind") == "customer":
+        return "customers"
+    if "payment" in title or "down payment" in title:
+        return "payments"
+    if "quotation" in title or "draft" in title:
+        return "quotations"
+    return "orders"
+
+
+def _read_state() -> tuple[str, set[str]]:
+    seen = admin_repository.get_setting(NOTIFICATION_SEEN_KEY) or ""
+    try:
+        read_ids = set(json.loads(admin_repository.get_setting(NOTIFICATION_READ_KEY) or "[]"))
+    except (TypeError, ValueError):
+        read_ids = set()
+    return seen, read_ids
+
+
+def _with_read_flags(events: list[dict[str, Any]], seen: str, read_ids: set[str]) -> list[dict[str, Any]]:
+    result = []
+    for event in events:
+        unread = event["actor"] == "customer" and (event["at"] or "") > seen and event["id"] not in read_ids
+        result.append({**event, "read": not unread, "category": _notification_category(event)})
+    return result
+
+
+def unread_notification_count(orders: list[OrderRecord] | None = None, customers: list[dict[str, Any]] | None = None) -> int:
+    seen, read_ids = _read_state()
+    return sum(1 for event in _with_read_flags(_activity_events(orders, customers), seen, read_ids) if not event["read"])
+
+
+def notification_list(params: Mapping[str, Any]) -> dict[str, Any]:
+    """The Notifications page: search, filters (actor, read status, category, dates), and pages."""
+    actor = param_text(params, "actor", 20)
+    status = param_text(params, "status", 20)
+    category = param_text(params, "category", 20)
+    search = param_text(params, "search")
+    if actor and actor not in {"customer", "admin"}:
+        raise bad_request("Select a valid notification source.")
+    if status and status not in {"unread", "read"}:
+        raise bad_request("Select a valid read status.")
+    if category and category not in NOTIFICATION_CATEGORIES:
+        raise bad_request("Select a valid notification category.")
+    start, end = date_range(params, "date_from", "date_to", "Notification date")
+    seen, read_ids = _read_state()
+    events = _with_read_flags(_activity_events(), seen, read_ids)
+    unread_total = sum(1 for event in events if not event["read"])
+    rows = []
+    for event in events:
+        if actor and event["actor"] != actor:
+            continue
+        if status == "unread" and event["read"]:
+            continue
+        if status == "read" and not event["read"]:
+            continue
+        if category and event["category"] != category:
+            continue
+        if not in_range(local_date(event["at"]), start, end):
+            continue
+        if not matches(search, event["title"], event["body"], event["reference"], event["customer_name"]):
+            continue
+        rows.append(event)
+    result = paginate(rows, params)
+    result["unread_count"] = unread_total
+    result["categories"] = [{"id": key, "label": label} for key, label in NOTIFICATION_CATEGORIES.items()]
+    return result
+
+
+def recent_notifications(limit: int = 6) -> dict[str, Any]:
+    """The header bell: the latest customer notifications and the unread count."""
+    seen, read_ids = _read_state()
+    events = [event for event in _with_read_flags(_activity_events(), seen, read_ids) if event["actor"] == "customer"]
+    return {
+        "items": events[:limit],
+        "unread_count": sum(1 for event in events if not event["read"]),
+        "latest_at": events[0]["at"] if events else None,
+    }
+
+
+def mark_notifications_read(ids: Any = None, mark_all: bool = False, before: Any = None) -> dict[str, Any]:
+    """Mark notifications read: all of them, all up to ``before`` (an ISO time), or the given ids."""
+    seen, read_ids = _read_state()
+    if mark_all or before:
+        cutoff = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if before and not mark_all:
+            parsed = parse_timestamp(before)
+            if parsed is None:
+                raise bad_request("Invalid notification time.")
+            cutoff = parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+        if cutoff > seen:
+            seen = cutoff
+            admin_repository.set_setting(NOTIFICATION_SEEN_KEY, seen)
+    if ids is not None:
+        if not isinstance(ids, list) or len(ids) > 500 or not all(isinstance(item, str) and len(item) <= 120 for item in ids):
+            raise bad_request("Invalid notification list.")
+        read_ids.update(ids)
+    # Keep only ids that the seen time does not already cover (event ids hold no time, so keep the newest).
+    known = {event["id"]: event["at"] or "" for event in _activity_events()}
+    read_ids = {item for item in read_ids if item in known and known[item] > seen}
+    if len(read_ids) > MAX_READ_IDS:
+        read_ids = set(sorted(read_ids, key=lambda item: known[item], reverse=True)[:MAX_READ_IDS])
+    admin_repository.set_setting(NOTIFICATION_READ_KEY, json.dumps(sorted(read_ids)))
+    return {"unread_count": unread_notification_count()}

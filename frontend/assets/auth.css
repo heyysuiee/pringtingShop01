@@ -383,7 +383,7 @@
 
 .auth-rules {
     display: grid;
-    gap: 5px;
+    gap: 6px;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -397,14 +397,21 @@
     color: var(--auth-muted);
 }
 
-.auth-rules li::before {
+.auth-rule-state {
     display: grid;
-    width: 16px;
-    height: 16px;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
     place-items: center;
     border: 1px solid var(--auth-line-strong);
     border-radius: 50%;
-    font-size: 10px;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.auth-rule-state::before {
     content: "";
 }
 
@@ -412,11 +419,28 @@
     color: var(--auth-success);
 }
 
-.auth-rules li.met::before {
+.auth-rules li.met .auth-rule-state {
     border-color: var(--auth-success);
     background: var(--auth-success);
     color: var(--text-primary);
+}
+
+.auth-rules li.met .auth-rule-state::before {
     content: "✓";
+}
+
+.auth-rules li.unmet {
+    color: var(--auth-error);
+}
+
+.auth-rules li.unmet .auth-rule-state {
+    border-color: var(--auth-error);
+    background: var(--auth-error-bg);
+    color: var(--auth-error);
+}
+
+.auth-rules li.unmet .auth-rule-state::before {
+    content: "✕";
 }
 
 /* ---------------------------------------------------------------- forgot password steps */

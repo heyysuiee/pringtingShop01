@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="/assets/auth.css">
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
+    <link rel="stylesheet" href="/assets/chatbot.css">
     <title>Customer Portal — Printing Shop</title>
 </head>
 
@@ -39,6 +40,20 @@
             <a href="/order">Order</a>
             <a href="/sample-work">Sample Work</a>
             <a href="/customer-portal" class="active" aria-current="page">Customer Portal</a>
+            <!-- Shown by account.js once the customer is signed in. -->
+            <div class="nav-notify" id="nav-notifications" hidden>
+                <button class="nav-notify-button" type="button" id="notifications-toggle" aria-label="Notifications" aria-expanded="false" aria-controls="notifications-panel">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+                    <span class="nav-notify-badge" id="notification-count" aria-hidden="true" hidden></span>
+                </button>
+                <section class="nav-notify-panel" id="notifications-panel" aria-labelledby="notifications-title" hidden>
+                    <div class="nav-notify-head">
+                        <h2 id="notifications-title">Notifications</h2>
+                        <button class="text-button" type="button" id="notifications-read-all" hidden>Mark all as read</button>
+                    </div>
+                    <ul class="notification-list" id="account-notifications" aria-live="polite"></ul>
+                </section>
+            </div>
         </div>
     </nav>
 
@@ -47,7 +62,7 @@
         <div class="page-hero-inner">
             <span class="eyebrow">Customer portal</span>
             <h1>Your <em>print journey</em></h1>
-            <p class="page-hero-lead">Sign in to manage your details and orders, or track an order with the email and private reference number from your confirmation.</p>
+            <p class="page-hero-lead">Sign in to manage your details, follow your orders, and open your files.</p>
         </div>
     </header>
 
@@ -58,7 +73,7 @@
                     <div>
                         <span class="order-step-kicker">Customer account</span>
                         <h2 class="card-title" id="account-access-title">Your account</h2>
-                        <p class="field-hint">Manage your contact details and see orders placed while signed in. You can also track any order below using its reference number.</p>
+                        <p class="field-hint">Manage your contact details and see the orders placed from your account. You can also open one of your orders below by its reference number.</p>
                     </div>
                     <p id="account-message" class="field-hint" role="status" aria-live="polite" hidden></p>
                 </header>
@@ -84,31 +99,24 @@
                         <label for="profile-messenger">Messenger name<input id="profile-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
                         <button class="btn btn-dark" type="submit">Save profile</button>
                     </form>
-                    <section class="portal-notifications" id="account-notifications-section" aria-labelledby="notifications-title">
-                        <div class="orders-list-heading">
-                            <h3 class="card-title" id="notifications-title">Notifications <span class="notification-count" id="notification-count" hidden></span></h3>
-                            <button class="text-button" type="button" id="notifications-read-all" hidden>Mark all as read</button>
-                        </div>
-                        <ul class="notification-list" id="account-notifications" aria-live="polite"></ul>
-                    </section>
                     <div class="orders-list-heading"><h3 class="card-title">Orders from this account</h3></div>
                     <div id="account-orders" class="my-orders-list" aria-live="polite"></div>
                     <a class="btn btn-ghost-dark" href="/order">Place a new order</a>
                 </section>
             </section>
-            <section class="card my-orders-search" id="order-lookup">
-                <div><span class="order-step-kicker">Order history</span><h2 class="card-title">Find your requests</h2><p class="field-hint">Enter your email and a private reference number from a confirmation. The reference verifies access to your order history.</p></div>
+            <!-- Signed-in customers only (shown by account.js): the server opens an order only for the account that owns it. -->
+            <section class="card my-orders-search" id="order-lookup" hidden>
+                <div><span class="order-step-kicker">Order history</span><h2 class="card-title">Find one of your orders</h2><p class="field-hint">Enter the reference number from one of your confirmations. Only orders from your account can be opened.</p></div>
                 <form id="orders-lookup-form" novalidate>
                     <div class="orders-lookup-grid">
-                        <label for="lookup-email">Email address used to order<input id="lookup-email" name="email" type="email" class="input" autocomplete="email" required></label>
-                        <label for="lookup-ref">Reference number from a confirmation<input id="lookup-ref" name="reference" type="text" class="input" autocomplete="off" required></label>
-                        <button type="submit" class="btn btn-dark">Find my orders</button>
+                        <label for="lookup-ref">Reference number from a confirmation<input id="lookup-ref" name="reference" type="text" class="input" autocomplete="off" maxlength="40" required></label>
+                        <button type="submit" class="btn btn-dark">Open order</button>
                     </div>
                     <p class="field-error" id="lookup-error" role="alert"></p>
                 </form>
             </section>
             <section class="my-orders-list" id="orders-list" aria-live="polite">
-                <div class="card portal-empty" id="portal-empty"><span class="confirm-badge confirm-badge-muted" aria-hidden="true">i</span><h2>Orders will appear here</h2><p>Enter your email and a reference number from your confirmation to see status, quote, and payment updates.</p></div>
+                <div class="card portal-empty" id="portal-empty"><span class="confirm-badge confirm-badge-muted" aria-hidden="true">i</span><h2>Sign in to see your orders</h2><p>Your orders, quotations, payments, drafts, and files are available after you sign in to the account you ordered with.</p></div>
             </section>
             <article class="card order-detail" id="order-detail" hidden aria-live="polite">
                 <button class="text-button" type="button" id="back-to-orders">← Back to my orders</button>
@@ -143,6 +151,7 @@
     <script src="/assets/mockup.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/portal.js"></script>
+    <script src="/assets/chatbot.js" defer></script>
 </body>
 
 </html>

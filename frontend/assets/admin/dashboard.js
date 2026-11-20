@@ -30,6 +30,7 @@
         payments: "Payments & Transactions",
         reports: "Sales & Reports",
         notifications: "Notifications",
+        chatbot: "AI Chatbot",
         settings: "Settings",
     };
     const STATUSES = [
@@ -45,7 +46,21 @@
         ["completed", "Completed", ["Completed"]],
         ["cancelled", "Cancelled / rejected", ["Rejected", "Cancelled"]],
     ];
+    // Workflow stages used by the dashboard cards (server: report_services.DASHBOARD_STAGES).
+    const WORKFLOW_STAGES = [
+        ["to_review", "Orders to review (stage)"],
+        ["awaiting_customer", "Waiting for the customer (stage)"],
+        ["production", "In production (stage)"],
+        ["release", "Ready for pickup / delivery (stage)"],
+    ];
     const PAYMENT_STATUSES = ["Fully Paid", "Partially Paid", "Unpaid", "Not Quoted"];
+    const VERIFICATION_FILTERS = [
+        ["", "All verification statuses"],
+        ["verified", "Verified"],
+        ["pending", "Pending Verification"],
+        ["rejected", "Rejected"],
+        ["missing", "Reference Missing"],
+    ];
     const PAYMENT_OPTIONS = [["down_payment", "50% Down Payment"], ["cod", "Cash on Delivery (COD)"]];
     const CUSTOMER_PAYMENT_STATUSES = ["With balance", "Fully paid", "Awaiting quotation", "No transactions"];
     const ACTION_LABELS = {
@@ -70,7 +85,8 @@
         "Out for Delivery": "Printing is done and the order is on its way to the customer's delivery address.",
         "Completed": "Records today as the completion date. The order must be fully paid.",
     };
-    const NOTIFICATION_SEEN_KEY = "printshop.admin.notificationsSeenAt";
+    // Read state used to be kept in this browser; it is now stored on the server (moved once on load).
+    const LEGACY_NOTIFICATION_SEEN_KEY = "printshop.admin.notificationsSeenAt";
     const COMPACT_KEY = "printshop.admin.compactTables";
 
     const viewRoot = document.querySelector("#view-root");
@@ -81,15 +97,15 @@
 
     const filters = {
         orders: { search: "", status: "", service: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" },
-        customers: { search: "", activity: "", payment_status: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
-        payments: { search: "", method: "", service: "", payment_status: "", payment_option: "", date_from: "", date_to: "" },
+        customers: { view: "all", search: "", activity: "", payment_status: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
+        payments: { search: "", verification: "", method: "", service: "", payment_status: "", payment_option: "", date_from: "", date_to: "" },
         reports: {
             tab: "summary",
             summary: { preset: "month", date_from: "", date_to: "", group_by: "", service: "" },
             completed: { service: "", customer: "", request_from: "", request_to: "", completed_from: "", completed_to: "", payment_status: "", min_days: "", max_days: "" },
             service: { service: "", completed_from: "", completed_to: "", request_from: "", request_to: "" },
         },
-        notifications: { actor: "", limit: 30 },
+        notifications: { actor: "", status: "", category: "", search: "", date_from: "", date_to: "" },
     };
     // Called after an order action so the visible table/report shows the saved change.
     let refreshActiveView = () => {};
@@ -209,11 +225,21 @@
         return LABELS[route] ? route : "dashboard";
     }
 
-    async function navigate(view, addHistory = true) {
+    /**
+     * Open an admin view. `catalogTab` ("products" or "packages") opens that tab of Services & Products:
+     * the sidebar's "Package Management" entry is the Packages tab of that page, not a separate page.
+     */
+    async function navigate(view, addHistory = true, { catalogTab = "" } = {}) {
         const nextView = LABELS[view] ? view : "dashboard";
         const path = nextView === "dashboard" ? "/admin/dashboard" : `/admin/${nextView}`;
+        const hash = nextView === "services" && catalogTab === "packages" ? "#packages" : "";
         document.querySelector("#admin-sidebar")?.classList.remove("open");
+        closeNotificationPanel();
         if (nextView === activeView && window.location.pathname === path) {
+            if (nextView === "services" && catalogTab) {
+                window.PrintShopCatalogAdmin?.openTab(catalogTab);
+                return;
+            }
             renderView();
             return;
         }
@@ -229,8 +255,9 @@
             viewRoot.replaceChildren(...Array.from(incomingView.childNodes, (node) => document.importNode(node, true)));
             document.title = pageDocument.title;
             activeView = nextView;
-            if (addHistory) window.history.pushState({ view: nextView }, "", path);
+            if (addHistory) window.history.pushState({ view: nextView }, "", path + hash);
             renderView();
+            if (nextView === "services" && catalogTab) window.PrintShopCatalogAdmin?.openTab(catalogTab);
             viewRoot.focus({ preventScroll: true });
             window.scrollTo({ top: 0 });
         } catch (error) {
@@ -238,17 +265,23 @@
         }
     }
 
-    function renderView() {
-        document.querySelector("#current-section").textContent = LABELS[activeView];
-        window.PrintIcons?.hydrate(viewRoot);
+    /** Highlight the sidebar entry of the open view (and, on Services & Products, of the open tab). */
+    function markActiveNavigation(catalogTab = window.location.hash === "#packages" ? "packages" : "products") {
         document.querySelectorAll("[data-view]").forEach((link) => {
-            const active = link.dataset.view === activeView;
+            const target = link.dataset.catalogTarget;
+            const active = link.dataset.view === activeView && (!target || activeView !== "services" || target === catalogTab);
             link.classList.toggle("active", active);
-            if (link.matches(".sidebar-nav a, .sidebar-bottom > a")) {
+            if (link.matches(".sidebar-nav a")) {
                 if (active) link.setAttribute("aria-current", "page");
                 else link.removeAttribute("aria-current");
             }
         });
+    }
+
+    function renderView() {
+        document.querySelector("#current-section").textContent = LABELS[activeView];
+        window.PrintIcons?.hydrate(viewRoot);
+        markActiveNavigation();
         refreshActiveView = () => {};
         const renderers = {
             dashboard: renderDashboard,
@@ -258,6 +291,7 @@
             payments: renderPayments,
             reports: renderReports,
             notifications: renderNotifications,
+            chatbot: renderChatbot,
             settings: renderSettings,
         };
         renderers[activeView]?.();
@@ -267,8 +301,22 @@
         return viewRoot.querySelector("[data-view-body]");
     }
 
-    let lastCounts = null;
+    /** The AI Chatbot page lives in chatbot-admin.js and is built with this file's shared builders. */
+    function renderChatbot() {
+        const body = viewBody();
+        if (!body) return;
+        if (!window.PrintShopChatbotAdmin) {
+            body.replaceChildren(errorBlock("The chatbot admin script did not load. Reload the page."));
+            return;
+        }
+        window.PrintShopChatbotAdmin.render(body, {
+            panel, statCard, loadingBlock, errorBlock, field, searchInput, selectInput, detailList, refreshBadges,
+            setRefresh: (fn) => { refreshActiveView = fn; },
+        });
+    }
+
     let lastSignature = "";
+    let lastUnread = null;
 
     function setBadge(selector, value, title) {
         const badge = document.querySelector(selector);
@@ -285,61 +333,141 @@
     }
 
     /**
-     * Sidebar badges: requests to review, payments to collect, new customers, unread notifications.
-     * Polled every 30 seconds and after every action; when any record changed, the open page reloads its data.
+     * Sidebar badges and the header bell: requests to review, payments to collect, new customers, unread
+     * notifications (read state is stored on the server). Polled every 30 seconds and after every action;
+     * when any record changed, the open page reloads its data. A newly received customer notification is
+     * announced once with a short toast; the Notifications page and the bell list them.
      */
     async function refreshBadges() {
         try {
-            const [counts, activity] = await Promise.all([
-                api("/api/admin/counts"),
-                api(`/api/admin/activity${query({ actor: "customer", limit: 200 })}`),
-            ]);
-            lastCounts = counts;
+            const counts = await api("/api/admin/counts");
             const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
             setBadge("#pending-count", counts.orders, `${plural(counts.new_requests, "new request")} and ${plural(counts.to_review, "request")} to review or quote`);
-            setBadge("#payment-count", counts.payments, `${plural(counts.awaiting_down_payment, "order")} awaiting down payment, ${plural(counts.collect_before_release, "order")} ready for pickup with a balance`);
+            setBadge("#payment-count", counts.payments, `${plural(counts.payments_to_verify, "payment")} to verify, ${plural(counts.collect_before_release, "order")} ready for release with a balance`);
             setBadge("#customer-count", counts.customers, `${plural(counts.customers, "new customer")} in the last 7 days`);
-            const seen = localStorage.getItem(NOTIFICATION_SEEN_KEY) || "";
-            const unread = activity.events.filter((event) => (event.at || "") > seen).length;
-            setBadge("#notification-count", unread, `${plural(unread, "unread customer update")}`);
+            setBadge("#chatbot-count", counts.chatbot_inquiries || 0, `${plural(counts.chatbot_inquiries || 0, "chat inquiry")} to follow up`);
+            const unread = counts.unread_notifications || 0;
+            setBadge("#notification-count", unread, plural(unread, "unread notification"));
             document.querySelectorAll(".notification-dot").forEach((dot) => { dot.hidden = !unread; });
-            document.querySelectorAll("[data-attention]").forEach((element) => {
-                const value = counts[element.dataset.attention] || 0;
-                element.querySelector("strong").textContent = number(value);
-                element.classList.toggle("has-items", value > 0);
+            document.querySelectorAll('[data-action="toggle-notifications"]').forEach((button) => {
+                button.setAttribute("aria-label", unread ? `Notifications (${plural(unread, "unread notification")})` : "Notifications");
             });
+            if (lastUnread !== null && unread > lastUnread) announceNewNotifications();
+            lastUnread = unread;
             // Records changed elsewhere (a new order, a customer action): refresh the open table, unless a dialog is open.
             if (lastSignature && counts.signature !== lastSignature && !dialog.open && activeView !== "services") {
                 refreshActiveView();
             }
+            if (lastSignature && counts.signature !== lastSignature && notificationPanelOpen()) loadNotificationPanel();
             lastSignature = counts.signature;
         } catch {
             // Badges are a convenience; the pages themselves report loading errors.
         }
     }
 
-    function attentionRow() {
-        const items = [
-            ["new_requests", "New requests", () => { filters.orders = { ...filters.orders, status: "Pending Confirmation" }; navigate("orders"); }],
-            ["to_review", "To review / quote", () => { filters.orders = { ...filters.orders, status: "Under Review" }; navigate("orders"); }],
-            ["payments_to_verify", "Payments to verify", () => navigate("payments")],
-            ["awaiting_cod_confirmation", "Older COD orders to switch", () => { filters.orders = { ...filters.orders, status: "Awaiting COD Confirmation" }; navigate("orders"); }],
-            ["quotation_declined", "Quotations declined", () => { filters.orders = { ...filters.orders, status: "Quotation Declined" }; navigate("orders"); }],
-            ["awaiting_down_payment", "Awaiting down payment", () => { filters.orders = { ...filters.orders, status: "Awaiting Down Payment" }; navigate("orders"); }],
-            ["confirmed", "Newly confirmed orders", () => { filters.orders = { ...filters.orders, status: "Confirmed" }; navigate("orders"); }],
-            ["draft_preparation", "Drafts to prepare", () => { filters.orders = { ...filters.orders, status: "Draft Preparation" }; navigate("orders"); }],
-            ["ready_for_pickup", "Ready for pickup", () => { filters.orders = { ...filters.orders, status: "Ready for Pickup" }; navigate("orders"); }],
-            ["out_for_delivery", "Out for delivery", () => { filters.orders = { ...filters.orders, status: "Out for Delivery" }; navigate("orders"); }],
-            ["new_customers", "New customers (7 days)", () => navigate("customers")],
-        ];
-        return h("section", { className: "attention-grid", "aria-label": "Needs attention" }, ...items.map(([key, label, onclick]) => {
-            const value = lastCounts?.[key] || 0;
-            return h("button", { className: `attention-item${value ? " has-items" : ""}`, type: "button", dataset: { attention: key }, onclick },
-                h("span", { text: label }), h("strong", { text: number(value) }));
-        }));
+    /** One short toast for notifications that arrived since the last check (not for every item). */
+    async function announceNewNotifications() {
+        try {
+            const data = await api("/api/admin/notifications/recent");
+            const newest = data.items.find((item) => !item.read);
+            if (!newest) return;
+            const more = data.unread_count > 1 ? ` (+${data.unread_count - 1} more unread)` : "";
+            toast(`New notification: ${newest.title}${newest.reference ? ` · ${newest.reference}` : ""}${more}`, "info");
+        } catch {
+            // The badge already shows the unread count.
+        }
+    }
+
+    // ================================================================ header notification dropdown
+
+    const notificationPanel = () => document.querySelector("#notification-panel");
+    const notificationPanelOpen = () => Boolean(notificationPanel() && !notificationPanel().hidden);
+
+    function closeNotificationPanel() {
+        const panelElement = notificationPanel();
+        if (!panelElement || panelElement.hidden) return;
+        panelElement.hidden = true;
+        document.querySelector('[data-action="toggle-notifications"]')?.setAttribute("aria-expanded", "false");
+    }
+
+    function toggleNotificationPanel(button) {
+        const panelElement = notificationPanel();
+        if (!panelElement) return;
+        if (!panelElement.hidden) {
+            closeNotificationPanel();
+            return;
+        }
+        document.querySelectorAll(".profile-menu[open]").forEach((menu) => menu.removeAttribute("open"));
+        panelElement.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+        loadNotificationPanel();
+    }
+
+    async function markNotificationsRead(body) {
+        const result = await api("/api/admin/notifications/read", { method: "POST", body });
+        refreshBadges();
+        return result;
+    }
+
+    /** Open what a notification is about (its order or customer) and mark it read. */
+    function openNotification(event) {
+        closeNotificationPanel();
+        if (!event.read) markNotificationsRead({ ids: [event.id] }).then(() => refreshActiveView()).catch(() => {});
+        if (event.reference) openOrder(event.reference);
+        else if (event.customer_id) openCustomer(event.customer_id);
+    }
+
+    function notificationSymbol(event) {
+        return event.kind === "customer" ? "♙" : event.title.includes("ayment") ? "₱" : event.actor === "customer" ? "✉" : "▤";
+    }
+
+    async function loadNotificationPanel() {
+        const panelElement = notificationPanel();
+        if (!panelElement) return;
+        if (!panelElement.childElementCount) panelElement.replaceChildren(loadingBlock("Loading notifications…"));
+        let data;
+        try {
+            data = await api("/api/admin/notifications/recent");
+        } catch (error) {
+            panelElement.replaceChildren(h("p", { className: "notification-panel-empty", text: error.message }));
+            return;
+        }
+        const markAll = h("button", { className: "table-link", type: "button", text: "Mark all as read", disabled: !data.unread_count });
+        markAll.addEventListener("click", async () => {
+            try {
+                await markNotificationsRead({ all: true });
+                loadNotificationPanel();
+                refreshActiveView();
+            } catch (error) {
+                toast(error.message, "error");
+            }
+        });
+        panelElement.replaceChildren(
+            h("div", { className: "notification-panel-head" },
+                h("strong", { text: "Notifications" }),
+                h("span", { className: "table-secondary", text: data.unread_count ? `${number(data.unread_count)} unread` : "All caught up" }),
+                markAll),
+            data.items.length
+                ? h("ul", { className: "notification-panel-list" }, ...data.items.map((event) => h("li", {},
+                    h("button", { className: `notification-panel-item${event.read ? "" : " unread"}`, type: "button", onclick: () => openNotification(event) },
+                        h("span", { className: "notification-symbol", "aria-hidden": "true", text: notificationSymbol(event) }),
+                        h("span", { className: "notification-panel-text" },
+                            h("strong", { text: event.title }),
+                            h("span", { text: [event.reference, event.customer_name].filter(Boolean).join(" · ") })),
+                        h("time", { datetime: event.at, title: dateTime(event.at), text: UI.relativeTime(event.at) }),
+                        event.read ? null : h("span", { className: "visually-hidden", text: " (unread)" })))))
+                : h("p", { className: "notification-panel-empty", text: "No customer notifications yet." }),
+            h("a", { className: "notification-panel-all", href: "/admin/notifications", "data-view": "notifications", text: "View all notifications →" }),
+        );
     }
 
     // ================================================================ dashboard
+
+    /** Open the orders page filtered to one status or workflow stage. */
+    function showOrders(status, extra = {}) {
+        filters.orders = { ...filters.orders, status, payment_status: "", ...extra };
+        navigate("orders");
+    }
 
     async function renderDashboard() {
         const body = viewBody();
@@ -353,21 +481,27 @@
             return;
         }
         if (activeView !== "dashboard") return;
-        const goOrders = (status) => () => {
-            filters.orders = { ...filters.orders, status };
-            navigate("orders");
-        };
-        const cards = h("section", { className: "stats-grid stats-grid-8", "aria-label": "Business summary" },
-            statCard({ label: "Total customers", value: number(data.total_customers), foot: "Registered customer accounts", icon: "👥", onClick: () => navigate("customers") }),
-            statCard({ label: "Total orders", value: number(data.total_orders), foot: "All order requests", icon: "▤", onClick: goOrders("") }),
-            statCard({ label: "Pending orders", value: number(data.pending_orders), foot: "Awaiting review, quotation, or down payment", icon: "◷", onClick: goOrders("pending") }),
-            statCard({ label: "In progress", value: number(data.processing_orders), foot: "Drafting, approval, production, pickup", icon: "⚒", onClick: goOrders("processing") }),
-            statCard({ label: "Completed orders", value: number(data.completed_orders), foot: "Marked completed", icon: "✓", onClick: goOrders("completed") }),
-            statCard({ label: "Cancelled orders", value: number(data.cancelled_orders), foot: "Cancelled or rejected", icon: "✕", onClick: goOrders("cancelled") }),
-            statCard({ label: "Fully paid orders", value: number(data.fully_paid_orders), foot: "Payments cover the confirmed total", icon: "₱", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_status: "Fully Paid" }; navigate("orders"); } }),
-            statCard({ label: "Total confirmed revenue", value: money(data.total_revenue), foot: "Completed and fully paid orders only", icon: "₱", tone: "highlight", onClick: () => { filters.reports.tab = "summary"; filters.reports.summary.preset = "all"; navigate("reports"); } }),
+        const st = data.stages;
+        const plural = (count, word) => `${number(count)} ${word}${count === 1 ? "" : "s"}`;
+        // Order workflow: every order that is not cancelled or rejected is counted in exactly one card.
+        const orderCards = h("section", { className: "stats-grid stats-grid-4 dashboard-stages", "aria-label": "Orders by stage" },
+            statCard({ label: "New orders", value: number(st.new), foot: "Just submitted · not yet opened", icon: "⚑", tone: st.new ? "highlight" : "", onClick: () => showOrders("Pending Confirmation") }),
+            statCard({ label: "Orders to review", value: number(st.to_review), foot: "Review, quote, or re-quote", icon: "⌕", tone: st.to_review ? "highlight" : "", onClick: () => showOrders("to_review") }),
+            statCard({ label: "Pending orders", value: number(st.awaiting_customer), foot: "Waiting for the customer's acceptance or down payment", icon: "◷", onClick: () => showOrders("awaiting_customer") }),
+            statCard({ label: "Payments to verify", value: number(data.payments_to_verify), foot: data.payments_to_verify ? `${money(data.payments_to_verify_amount)} submitted by customers` : "No customer payments waiting", icon: "₱", tone: data.payments_to_verify ? "highlight" : "", onClick: () => { filters.payments = { ...filters.payments, verification: "pending" }; navigate("payments"); } }),
+            statCard({ label: "In production", value: number(st.production), foot: "Confirmed · drafting, approval, and printing", icon: "⚒", onClick: () => showOrders("production") }),
+            statCard({ label: "Ready for pickup / delivery", value: number(st.release), foot: "Printed and waiting to be released", icon: "⛟", onClick: () => showOrders("release") }),
+            statCard({ label: "Completed orders", value: number(st.completed), foot: "Completed and fully paid", icon: "✓", onClick: () => showOrders("completed") }),
+            statCard({ label: "All orders", value: number(data.total_orders), foot: `${plural(data.cancelled_orders, "cancelled or rejected order")}`, icon: "▤", onClick: () => showOrders("") }),
         );
 
+        const r = data.revenue;
+        const revenueFigures = h("div", { className: "revenue-figures" },
+            miniStat("Total confirmed revenue", money(r.total), "Completed and fully paid orders, each counted once"),
+            miniStat(`Revenue · ${r.month_label}`, money(r.this_month), "Orders completed and fully paid this month"),
+            miniStat("Payments received this month", money(r.received_this_month), `${plural(r.payments_this_month, "verified payment")} (cash flow, not revenue)`),
+            miniStat("Outstanding balance", money(r.outstanding_balance), "Still to be paid on agreed, active orders"),
+        );
         const trend = h("div", { className: "chart-box" });
         UI.columnChart(trend, data.revenue_trend.map((bucket) => ({
             label: bucket.label,
@@ -381,29 +515,13 @@
             emptyMessage: "No confirmed revenue in the last 12 months yet.",
         });
 
-        const statusChart = h("div", { className: "chart-box" });
-        UI.barChart(statusChart, STATUSES.map((status) => ({ label: status, value: data.status_counts[status] || 0 })).filter((item) => item.value), {
-            emptyMessage: "No orders have been submitted yet.",
-            detail: (item) => `${Math.round((item.value / Math.max(1, data.total_orders)) * 100)}% of all orders`,
-            onSelect: (item) => { filters.orders = { ...filters.orders, status: item.label }; navigate("orders"); },
-        });
-        const ordersChart = h("div", { className: "chart-box" });
-        UI.barChart(ordersChart, data.by_service.map((item) => ({ label: item.service, value: item.orders })), { emptyMessage: "No orders yet." });
-        const completedChart = h("div", { className: "chart-box" });
-        UI.barChart(completedChart, data.by_service.map((item) => ({ label: item.service, value: item.completed_orders })), { emptyMessage: "No completed orders yet." });
-        const revenueChart = h("div", { className: "chart-box" });
-        UI.barChart(revenueChart, data.by_service.map((item) => ({ label: item.service, value: item.revenue })), {
-            format: money,
-            emptyMessage: "No confirmed revenue yet.",
-            detail: (item) => (data.total_revenue ? `${((item.value / data.total_revenue) * 100).toFixed(1)}% of revenue` : ""),
-        });
-
         const recentTable = h("div");
         new UI.DataTable(recentTable, {
             columns: [
                 { label: "Order ID", className: "ref-cell", render: (row) => cellPair(row.reference, row.request_date ? date(row.request_date) : "") },
                 { label: "Customer", render: (row) => cellPair(row.customer_name, row.product) },
                 { label: "Total", align: "right", render: (row) => totalText(row) },
+                { label: "Payment", render: (row) => badge(row.payment_status) },
                 { label: "Status", render: (row) => badge(row.status) },
             ],
             rows: () => data.recent_orders,
@@ -412,35 +530,16 @@
             onRowClick: (row) => openOrder(row.reference),
             rowTitle: (row) => `Open order ${row.reference}`,
         }).load();
-        const completedTable = h("div");
-        new UI.DataTable(completedTable, {
-            columns: [
-                { label: "Transaction", className: "ref-cell", render: (row) => cellPair(row.reference, row.customer_name) },
-                { label: "Service", render: (row) => cellPair(row.service, row.product) },
-                { label: "Completed", render: (row) => cellPair(date(row.completion_date), days(row.completion_days)) },
-                { label: "Amount", align: "right", render: (row) => money(row.total_amount) },
-                { label: "Payment", render: (row) => badge(row.payment_status) },
-            ],
-            rows: () => data.recent_completed,
-            pageSize: 10,
-            emptyMessage: "No completed transactions yet.",
-            onRowClick: (row) => openOrder(row.reference),
-        }).load();
 
         body.replaceChildren(
-            panel("Needs attention", "Live counts · these update automatically when records change", attentionRow()),
-            cards,
-            h("div", { className: "dashboard-grid" },
-                panel("Revenue trend", "Confirmed revenue per month, last 12 months", trend),
-                panel("Order status distribution", `${number(data.total_orders)} orders · select a status to open it`, statusChart),
-                panel("Orders per service", "All order requests by printing service", ordersChart),
-                panel("Completed orders per service", "Completed transactions by printing service", completedChart),
-            ),
-            panel("Revenue by service", "Confirmed revenue (completed and fully paid)", revenueChart,
-                h("button", { className: "button button-small", type: "button", text: "Open reports", onclick: () => navigate("reports") })),
+            orderCards,
+            data.payments_missing_reference ? h("p", { className: "notice-card notice-warning dashboard-notice" },
+                `${plural(data.payments_missing_reference, "older payment")} ${data.payments_missing_reference === 1 ? "has" : "have"} no reference number. `,
+                h("button", { className: "table-link", type: "button", text: "Review in Payments & Transactions →", onclick: () => { filters.payments = { ...filters.payments, verification: "missing" }; navigate("payments"); } })) : null,
+            panel("Revenue summary", "Revenue counts only completed and fully paid orders", h("div", { className: "revenue-summary" }, revenueFigures, trend),
+                h("button", { className: "button button-small", type: "button", text: "Open Sales & Reports", onclick: () => navigate("reports") })),
             panel("Recent orders", "Newest requests · select a row for details", recentTable,
-                h("button", { className: "button button-small", type: "button", text: "All orders", onclick: () => navigate("orders") })),
-            panel("Recently completed transactions", "Select a row to view the transaction", completedTable),
+                h("button", { className: "button button-small", type: "button", text: "All orders", onclick: () => showOrders("") })),
         );
         refreshActiveView = renderDashboard;
     }
@@ -464,7 +563,7 @@
         const countLabel = h("span", { className: "table-secondary" });
         const tableHost = h("div");
         const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
-        const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
+        const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...WORKFLOW_STAGES, ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
         const paymentSelect = selectInput([["", "All payment statuses"], ...PAYMENT_STATUSES.map((status) => [status, status])], f.payment_status, (value) => apply({ payment_status: value }));
         const kindSelect = selectInput([["", "All order types"], ["package", "Package"], ["customize", "Customized order"]], f.kind, (value) => apply({ kind: value }));
         const optionSelect = selectInput([["", "All payment options"], ...PAYMENT_OPTIONS], f.payment_option, (value) => apply({ payment_option: value }));
@@ -747,15 +846,23 @@
             order.admin_notes ? h("section", { className: "fact-card" }, h("h3", { text: "Latest note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
         );
 
-        const payments = h("section", { className: "fact-card" }, h("h3", { text: `Payment history (${order.payments.length})` }),
+        const payments = h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: `Payment history (${order.payments.length})` }),
             order.payments.length ? h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
-                h("thead", {}, h("tr", {}, ...["Received", "Type", "Method", "Reference", "Amount"].map((text, index) => h("th", { scope: "col", className: index === 4 ? "align-right" : "", text })))),
-                h("tbody", {}, ...order.payments.map((payment) => h("tr", {},
-                    h("td", { text: dateTime(payment.received_at) }),
-                    h("td", { text: `${payment.kind || "Payment"}${payment.source === "customer submission" ? " (verified submission)" : ""}` }),
-                    h("td", { text: payment.method }),
-                    h("td", { text: payment.reference || "—" }), h("td", { className: "align-right", text: money(payment.amount) })))),
+                h("thead", {}, h("tr", {}, ...["Received", "Type", "Method", "Reference no.", "Verification", "Amount"].map((text, index) => h("th", { scope: "col", className: index === 5 ? "align-right" : "", text })))),
+                h("tbody", {}, ...order.payments.map((payment) => {
+                    const check = payment.verification_view || {};
+                    return h("tr", {},
+                        h("td", { text: dateTime(payment.received_at) }),
+                        h("td", { text: `${payment.kind || "Payment"}${payment.source === "customer submission" ? " (verified submission)" : ""}` }),
+                        h("td", { text: payment.method }),
+                        h("td", {}, payment.reference
+                            ? cellPair(payment.reference, check.reference_type_label)
+                            : addReferenceButton(order, payment, reload)),
+                        h("td", {}, badge(check.status || "—"), check.verified_by ? h("span", { className: "table-secondary", text: ` by ${check.verified_by}` }) : null),
+                        h("td", { className: "align-right", text: money(payment.amount) }));
+                })),
             )) : h("p", { className: "field-note", text: "No payments recorded yet." }),
+            h("p", { className: "field-note", text: `Total amount ${order.total_amount === null ? "not set yet" : money(order.total_amount)} · Paid (verified) ${money(summary.amount_paid)} · Remaining balance ${summary.balance === null ? "—" : money(summary.balance)} · ${summary.payment_status}` }),
             submissionHistory(order),
             order.payment_instructions ? h("p", { className: "field-note" }, h("strong", { text: "Payment instructions shared: " }), order.payment_instructions) : null,
         );
@@ -1190,18 +1297,36 @@
         return form;
     }
 
+    const CASH_METHODS = ["Cash", "Cash on Delivery"];
+
     function paymentForm(order, reload) {
         const summary = order.summary;
         const amount = h("input", { id: "payment-amount", type: "number", min: "0.01", step: "0.01", max: String(summary.balance), required: true });
         const cod = order.payment?.payment_option === "cod";
         const methods = order.payment_methods || ["GCash", "Maya", "Bank transfer", "Cash", "Cash on Delivery", "Other"];
-        const method = selectInput(methods.map((value) => [value, value]), cod ? "Cash on Delivery" : "GCash", () => {});
+        const method = selectInput(methods.map((value) => [value, value]), cod ? "Cash on Delivery" : "GCash", () => updateReferenceField());
         method.id = "payment-method";
-        const reference = h("input", { id: "payment-reference", maxlength: 120, placeholder: "Receipt or transaction number" });
+        const reference = h("input", { id: "payment-reference", maxlength: 120, autocomplete: "off" });
+        const referenceLabel = h("label", { for: "payment-reference" });
+        const referenceNote = h("p", { className: "field-note" });
+        const note = h("input", { id: "payment-note", maxlength: 300, placeholder: "e.g. Received by Ana at the shop counter" });
         const received = h("input", { id: "payment-received", type: "checkbox", required: true });
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Confirm payment" });
         const down = cod ? 0 : order.total_amount * 0.5;
         const fill = (value) => h("button", { className: "button button-small", type: "button", text: value === summary.balance ? `Full balance ${money(value)}` : `50% down ${money(value)}`, onclick: () => { amount.value = value.toFixed(2); } });
+
+        /** GCash, Maya, bank transfers, and other providers need their reference; cash may use an official receipt. */
+        function updateReferenceField() {
+            const cash = CASH_METHODS.includes(method.value);
+            reference.required = !cash;
+            reference.placeholder = cash ? "Official receipt number (optional)" : `${method.value} reference / transaction number`;
+            referenceLabel.textContent = cash ? "Official receipt number (optional)" : `${method.value} reference number (required)`;
+            referenceNote.textContent = cash
+                ? "No receipt number? Leave it blank: the system issues a unique cash receipt number, and your confirmation below is recorded as the verification."
+                : "Required so the payment can be traced and verified. Each reference can be recorded only once.";
+        }
+        updateReferenceField();
+
         const form = h("form", { className: "action-form", dataset: { focus: "payment" } },
             h("h4", { text: cod ? "Confirm a Cash on Delivery payment" : "Confirm a received payment" }),
             h("p", { className: "field-note", text: `${order.payment?.payment_option_label || "50% Down Payment"} · Confirmed total ${money(order.total_amount)} · Paid ${money(summary.amount_paid)} · Balance ${money(summary.balance)}. Record only money the shop has actually received.` }),
@@ -1209,8 +1334,9 @@
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: "payment-amount", text: "Amount received (PHP)" }), amount),
                 h("div", { className: "form-field" }, h("label", { for: "payment-method", text: "Payment method" }), method),
-                h("div", { className: "form-field full" }, h("label", { for: "payment-reference", text: "Payment reference (optional)" }), reference),
-                h("label", { className: "check-field full", for: "payment-received" }, received, " I confirm this payment has actually been received.")),
+                h("div", { className: "form-field full" }, referenceLabel, reference, referenceNote),
+                h("div", { className: "form-field full" }, h("label", { for: "payment-note", text: "Verification note (optional)" }), note),
+                h("label", { className: "check-field full", for: "payment-received" }, received, " I confirm this payment has actually been received and checked against the reference.")),
             h("div", { className: "dialog-actions" }, submit),
         );
         form.addEventListener("submit", async (event) => {
@@ -1218,17 +1344,58 @@
             if (!form.reportValidity()) return;
             const value = Number(amount.value);
             const remaining = Math.round((summary.balance - value) * 100) / 100;
+            const cash = CASH_METHODS.includes(method.value);
             const answer = await UI.confirm({
                 title: "Record this payment?",
                 message: "Payments cannot be edited after they are saved.",
                 confirmLabel: "Record payment",
-                details: [["Amount", money(value)], ["Method", method.value], ["Balance after payment", money(Math.max(0, remaining))]],
+                details: [
+                    ["Amount", money(value)],
+                    ["Method", method.value],
+                    ["Reference", reference.value.trim() || (cash ? "Cash receipt number issued by the system" : "—")],
+                    ["Balance after payment", money(Math.max(0, remaining))],
+                    ["Payment status after", remaining <= 0 ? "Fully Paid" : "Partially Paid"],
+                ],
             });
             if (!answer) return;
-            await submitAction(submit, order, "payments", { amount: value, method: method.value, reference: reference.value.trim(), received: true }, reload,
+            await submitAction(submit, order, "payments", { amount: value, method: method.value, reference: reference.value.trim(), verification_note: note.value.trim(), received: true }, reload,
                 remaining <= 0 ? "Payment recorded. The order is now fully paid." : "Payment recorded.");
         });
         return form;
+    }
+
+    /** Older payments saved without a reference: let the administrator add the receipt or transaction number. */
+    function addReferenceButton(order, payment, reload) {
+        const button = h("button", { className: "button button-small", type: "button", text: "Add reference" });
+        button.addEventListener("click", async () => {
+            const cash = CASH_METHODS.includes(payment.method);
+            const answer = await UI.confirm({
+                title: `Add the reference for payment #${payment.number}`,
+                message: cash
+                    ? "Enter the official receipt number, or leave it blank to have the system issue a cash receipt number. Existing references cannot be changed later."
+                    : `Enter the ${payment.method || "payment"} reference / transaction number exactly as shown in the shop's records. It cannot be changed later.`,
+                confirmLabel: "Save reference",
+                input: { label: cash ? "Official receipt number (optional)" : "Reference number", required: !cash, multiline: false, maxlength: 120, placeholder: cash ? "Leave blank to issue a cash receipt number" : "e.g. 1234 567 890123" },
+                details: [["Amount", money(payment.amount)], ["Method", payment.method || "—"], ["Received", dateTime(payment.received_at)]],
+            });
+            if (!answer) return;
+            await UI.busy(button, async () => {
+                try {
+                    await api(`/api/admin/orders/${encodeURIComponent(order.reference)}/payments/${payment.number}/reference`, {
+                        method: "POST",
+                        body: { reference: answer.value, confirmed: true, expected_version: order.version },
+                    });
+                    toast("Payment reference saved.", "success");
+                    await reload();
+                    refreshActiveView();
+                    refreshBadges();
+                } catch (error) {
+                    toast(error.message, "error");
+                    if (error.status === 409) await reload();
+                }
+            });
+        });
+        return h("span", { className: "cell-pair" }, h("span", { className: "table-secondary", text: "No reference recorded" }), button);
     }
 
     function draftForm(order, reload) {
@@ -1277,13 +1444,42 @@
         ["no_spend", "No confirmed spending"],
     ];
 
+    const CUSTOMER_VIEWS = [
+        ["all", "All customers", "Every registered customer account."],
+        ["paid", "Paid records", "Customers whose agreed orders are all fully paid (verified payments cover every confirmed total)."],
+        ["unpaid", "Unpaid records", "Customers with at least one agreed order that still has a balance (unpaid or partially paid)."],
+    ];
+
     function renderCustomers() {
         const body = viewBody();
         if (!body) return;
         const f = filters.customers;
+        if (!CUSTOMER_VIEWS.some(([value]) => value === f.view)) f.view = "all";
         const tableHost = h("div");
         const countLabel = h("span", { className: "table-secondary" });
         const summaryLine = h("p", { className: "field-note" });
+        const viewNote = h("p", { className: "field-note view-note" });
+        const tabs = h("div", { className: "segmented customer-views", role: "tablist", "aria-label": "Customer payment views" });
+        let viewCounts = {};
+        const paymentFilter = field("Payment status", selectInput([["", "Any payment status"], ...CUSTOMER_PAYMENT_STATUSES.map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value })));
+
+        function renderTabs() {
+            tabs.replaceChildren(...CUSTOMER_VIEWS.map(([value, label]) => h("button", {
+                className: `segmented-button${f.view === value ? " active" : ""}`,
+                type: "button",
+                role: "tab",
+                "aria-selected": String(f.view === value),
+                onclick: () => {
+                    if (f.view === value) return;
+                    // One view at a time: a customer is listed once, under the view that matches their payments.
+                    apply({ view: value, payment_status: "" });
+                },
+            }, label, h("span", { className: "segmented-count", text: viewCounts[value] === undefined ? "" : number(viewCounts[value]) }))));
+            viewNote.textContent = CUSTOMER_VIEWS.find(([value]) => value === f.view)[2];
+            // The payment status filter only applies to All customers; the other views are defined by payment status.
+            paymentFilter.hidden = f.view !== "all";
+        }
+
         const table = new UI.DataTable(tableHost, {
             columns: [
                 { label: "Customer ID", render: (row) => h("span", { className: "mono", text: row.display_id }) },
@@ -1302,37 +1498,193 @@
             initialQuery: { ...f },
             fetch: (params) => api(`/api/admin/customers${query(params)}`),
             onLoad: (result) => {
+                viewCounts = result.view_counts || {};
+                renderTabs();
                 countLabel.textContent = `${number(result.total)} customer${result.total === 1 ? "" : "s"}`;
                 const s = result.summary;
                 summaryLine.textContent = `${number(s.with_orders)} with orders · ${money(s.total_transaction_amount)} in transactions · ${money(s.total_paid)} paid · ${money(s.outstanding_balance)} outstanding · ${money(s.total_spent)} spent (completed and fully paid orders only).`;
             },
             emptyMessage: "No customer accounts have been registered yet.",
+            filteredEmptyMessage: "No customers match this view and the selected filters.",
             onRowClick: (row) => openCustomer(row.id),
             rowTitle: (row) => `Open ${row.name}'s profile`,
         });
-        const apply = (values) => {
+        function apply(values) {
             Object.assign(f, values);
+            renderTabs();
             table.setQuery({ ...f });
-        };
+        }
+        const printButton = h("button", { className: "button button-small", type: "button" },
+            h("span", { "aria-hidden": "true", "data-icon": "printer", "data-icon-size": "15", text: "⎙" }), " Print report");
+        printButton.addEventListener("click", () => openPrintOptions({ ...f, sort: table.sort.key, dir: table.sort.dir }));
+        renderTabs();
         body.replaceChildren(
+            tabs,
             h("div", { className: "filter-bar" },
                 searchInput("Search name, email, phone, or customer ID…", f.search, (value) => apply({ search: value })),
                 field("Order activity", selectInput(CUSTOMER_ACTIVITY, f.activity, (value) => apply({ activity: value }))),
-                field("Payment status", selectInput([["", "Any payment status"], ...CUSTOMER_PAYMENT_STATUSES.map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
+                paymentFilter,
                 field("Registered from", dateInput(f.registered_from, (value) => apply({ registered_from: value }))),
                 field("Registered to", dateInput(f.registered_to, (value) => apply({ registered_to: value }))),
                 field("Ordered from", dateInput(f.ordered_from, (value) => apply({ ordered_from: value }))),
                 field("Ordered to", dateInput(f.ordered_to, (value) => apply({ ordered_to: value }))),
                 h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
-                    Object.keys(f).forEach((key) => { f[key] = ""; });
+                    Object.keys(f).forEach((key) => { f[key] = key === "view" ? f.view : ""; });
                     renderCustomers();
                 } }),
             ),
-            panel(["Customers ", countLabel], "Total transactions = confirmed totals of orders that are not cancelled. Amount spent counts only completed and fully paid orders. Select a row for the full transaction history.", h("div", {}, summaryLine, tableHost),
+            panel(["Customers ", countLabel], "Total transactions = confirmed totals of orders that are not cancelled. Amount spent counts only completed and fully paid orders. Select a row for the full transaction history.", h("div", {}, viewNote, summaryLine, tableHost),
+                printButton,
                 UI.exportButtons("customers", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
+        window.PrintIcons?.hydrate(body);
         table.load();
         refreshActiveView = () => table.reload();
+    }
+
+    // ================================================================ printable customer report
+
+    const PAPER_SIZES = [["A4", "A4 (210 × 297 mm)"], ["letter", "Letter (8.5 × 11 in)"], ["legal", "Legal (8.5 × 14 in)"]];
+
+    /** Print options (paper size, orientation, history), then the printable report of the current view. */
+    function openPrintOptions(params) {
+        const paper = selectInput(PAPER_SIZES, localStorage.getItem("printshop.admin.paper") || "A4", () => {});
+        paper.id = "print-paper";
+        const orientation = selectInput([["portrait", "Portrait"], ["landscape", "Landscape"]], "landscape", () => {});
+        orientation.id = "print-orientation";
+        const history = h("input", { id: "print-history", type: "checkbox" });
+        const submit = h("button", { className: "button button-primary", type: "submit", text: "Print report" });
+        const viewLabel = CUSTOMER_VIEWS.find(([value]) => value === params.view)?.[1] || "All customers";
+        const form = h("form", { className: "print-options" },
+            h("h2", { className: "dialog-heading", text: "Print customer report" }),
+            h("p", { className: "dialog-subtitle", text: `${viewLabel}, with the search and filters currently applied, in the current sort order.` }),
+            h("div", { className: "form-grid" },
+                h("div", { className: "form-field" }, h("label", { for: "print-paper", text: "Paper size" }), paper),
+                h("div", { className: "form-field" }, h("label", { for: "print-orientation", text: "Orientation" }), orientation),
+                h("label", { className: "check-field full", for: "print-history" }, history, " Include each customer's order history and payments (longer report)")),
+            h("div", { className: "dialog-actions" }, h("button", { className: "button", type: "button", text: "Cancel", onclick: () => UI.closeModal() }), submit),
+        );
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            localStorage.setItem("printshop.admin.paper", paper.value);
+            await UI.busy(submit, async () => {
+                let data;
+                try {
+                    data = await api(`/api/admin/customers-report${query({ ...params, page_size: "all", include_history: history.checked ? "1" : "" })}`);
+                } catch (error) {
+                    toast(error.message, "error");
+                    return;
+                }
+                printDocument(customerReportHtml(data, { viewLabel, paper: paper.value, orientation: orientation.value, params }));
+                UI.closeModal();
+            }, "Preparing…");
+        });
+        UI.openModal(form);
+    }
+
+    /** Print one customer's report from their profile (keeps the profile open; paper size from the last print). */
+    async function printCustomer(customerId, button) {
+        await UI.busy(button, async () => {
+            try {
+                const data = await api(`/api/admin/customers-report${query({ customer_id: customerId })}`);
+                printDocument(customerReportHtml(data, { viewLabel: "This customer", paper: localStorage.getItem("printshop.admin.paper") || "A4", orientation: "portrait", params: {} }));
+            } catch (error) {
+                toast(error.message, "error");
+            }
+        }, "Preparing…");
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+    }
+
+    /** Print an HTML document from a hidden frame, so only the report (no admin navigation) is printed. */
+    function printDocument(html) {
+        document.querySelector("#print-frame")?.remove();
+        const frame = h("iframe", { id: "print-frame", title: "Printable report", "aria-hidden": "true", tabindex: "-1" });
+        frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+        document.body.append(frame);
+        const target = frame.contentWindow;
+        target.document.open();
+        target.document.write(html);
+        target.document.close();
+        const run = () => {
+            target.focus();
+            target.print();
+            window.setTimeout(() => frame.remove(), 60000);
+        };
+        if (target.document.readyState === "complete") window.setTimeout(run, 50);
+        else frame.addEventListener("load", run, { once: true });
+    }
+
+    function customerReportHtml(data, { viewLabel, paper, orientation, params }) {
+        const e = escapeHtml;
+        const filtersUsed = [
+            params.search ? `Search “${params.search}”` : "",
+            params.activity ? CUSTOMER_ACTIVITY.find(([value]) => value === params.activity)?.[1] : "",
+            params.payment_status ? `Payment status: ${params.payment_status}` : "",
+            params.registered_from || params.registered_to ? `Registered ${params.registered_from || "…"} to ${params.registered_to || "…"}` : "",
+            params.ordered_from || params.ordered_to ? `Ordered ${params.ordered_from || "…"} to ${params.ordered_to || "…"}` : "",
+        ].filter(Boolean);
+        const sm = data.summary;
+        const single = data.view === "single";
+        const customerBlock = (c) => {
+            const orders = c.orders ? `
+                <h3>Order history (${c.orders.length})</h3>
+                ${c.orders.length ? `<table><thead><tr><th>Order ID</th><th>Service / product</th><th>Requested</th><th>Status</th><th class="num">Total</th><th class="num">Paid</th><th class="num">Balance</th><th>Payment</th></tr></thead><tbody>
+                ${c.orders.map((o) => `<tr><td>${e(o.reference)}</td><td>${e(o.product)}<br><small>${e(o.service)}</small></td><td>${e(date(o.request_date))}</td><td>${e(o.status)}</td><td class="num">${o.total_amount === null ? "—" : e(money(o.total_amount))}</td><td class="num">${e(money(o.amount_paid))}</td><td class="num">${o.balance === null ? "—" : e(money(o.balance))}</td><td>${e(o.payment_status)}</td></tr>`).join("")}
+                </tbody></table>` : "<p class=\"muted\">No orders.</p>"}
+                <h3>Payments (${c.payments.length})</h3>
+                ${c.payments.length ? `<table><thead><tr><th>Date</th><th>Order ID</th><th>Method</th><th>Reference no.</th><th>Verification</th><th class="num">Amount</th></tr></thead><tbody>
+                ${c.payments.map((pay) => `<tr><td>${e(dateTime(pay.received_at))}</td><td>${e(pay.reference)}</td><td>${e(pay.method)}</td><td>${e(pay.payment_reference || "—")}<br><small>${e(pay.reference_type_label)}</small></td><td>${e(pay.verification_status)}</td><td class="num">${e(money(pay.amount))}</td></tr>`).join("")}
+                </tbody></table><p class="muted">Pending and rejected submissions are listed for reference and are not counted as paid.</p>` : "<p class=\"muted\">No payments.</p>"}` : "";
+            return `<section class="customer">
+                <h2>${e(c.name)} <small>${e(c.display_id)}</small></h2>
+                <dl>
+                    <dt>Email</dt><dd>${e(c.email)}</dd><dt>Contact number</dt><dd>${e(c.phone || "—")}</dd>
+                    <dt>Registered</dt><dd>${e(date(c.registered_date))}</dd><dt>Last order</dt><dd>${e(c.last_order_date ? date(c.last_order_date) : "No orders yet")}</dd>
+                    <dt>Orders</dt><dd>${e(number(c.total_orders))} (${e(number(c.completed_orders))} completed, ${e(number(c.pending_orders))} open, ${e(number(c.cancelled_orders))} cancelled)</dd>
+                    <dt>Payment status</dt><dd>${e(c.payment_status)}</dd>
+                    <dt>Total transactions</dt><dd>${e(money(c.total_transaction_amount))}</dd><dt>Total paid</dt><dd>${e(money(c.total_paid))}</dd>
+                    <dt>Outstanding balance</dt><dd>${e(money(c.outstanding_balance))}</dd><dt>Amount spent</dt><dd>${e(money(c.total_spent))}</dd>
+                </dl>${orders}</section>`;
+        };
+        const listTable = `<table class="customers"><thead><tr><th>Customer ID</th><th>Name</th><th>Email</th><th>Contact</th><th>Registered</th><th class="num">Orders</th><th class="num">Transactions</th><th class="num">Paid</th><th class="num">Balance</th><th class="num">Spent</th><th>Payment status</th></tr></thead><tbody>
+            ${data.customers.map((c) => `<tr><td>${e(c.display_id)}</td><td>${e(c.name)}</td><td>${e(c.email)}</td><td>${e(c.phone || "—")}</td><td>${e(date(c.registered_date))}</td><td class="num">${e(number(c.total_orders))}</td><td class="num">${e(money(c.total_transaction_amount))}</td><td class="num">${e(money(c.total_paid))}</td><td class="num">${e(money(c.outstanding_balance))}</td><td class="num">${e(money(c.total_spent))}</td><td>${e(c.payment_status)}</td></tr>`).join("") || `<tr><td colspan="11" class="muted">No customers match this view and filters.</td></tr>`}
+            </tbody><tfoot><tr><td colspan="5">Total (${e(number(sm.customers))} customers)</td><td class="num">${e(number(sm.total_orders))}</td><td class="num">${e(money(sm.total_transaction_amount))}</td><td class="num">${e(money(sm.total_paid))}</td><td class="num">${e(money(sm.outstanding_balance))}</td><td class="num">${e(money(sm.total_spent))}</td><td></td></tr></tfoot></table>`;
+        const title = single ? `Customer Report — ${data.customers[0]?.name || ""}` : `Customer Report — ${viewLabel}`;
+        return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${e(title)}</title><style>
+            @page { size: ${paper} ${orientation}; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; color: #111; font: 10.5pt/1.4 "Segoe UI", Arial, sans-serif; }
+            header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; border-bottom: 2px solid #111; padding-bottom: 6px; margin-bottom: 10px; }
+            header h1 { margin: 0; font-size: 16pt; }
+            header p { margin: 2px 0 0; color: #444; font-size: 9pt; }
+            .meta { text-align: right; }
+            .totals { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 10px; font-size: 9.5pt; }
+            .totals strong { display: block; font-size: 11pt; }
+            table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; font-size: 9pt; page-break-inside: auto; }
+            thead { display: table-header-group; }
+            tr { page-break-inside: avoid; }
+            th, td { padding: 4px 6px; border: 1px solid #bbb; text-align: left; vertical-align: top; }
+            th { background: #eee; font-weight: 700; }
+            tfoot td { font-weight: 700; background: #f5f5f5; }
+            .num { text-align: right; white-space: nowrap; }
+            small, .muted { color: #555; }
+            .customer { margin: 0 0 14px; page-break-inside: avoid; }
+            .customer + .customer { border-top: 1px solid #999; padding-top: 10px; }
+            .customer h2 { margin: 0 0 6px; font-size: 12.5pt; }
+            .customer h3 { margin: 8px 0 2px; font-size: 10.5pt; }
+            dl { display: grid; grid-template-columns: max-content 1fr max-content 1fr; gap: 2px 10px; margin: 0; font-size: 9.5pt; }
+            dt { color: #555; } dd { margin: 0; }
+            footer { margin-top: 10px; color: #555; font-size: 8.5pt; }
+        </style></head><body>
+            <header><div><h1>ImPRESSion PrintShop — ${e(title)}</h1><p>${e(filtersUsed.length ? filtersUsed.join(" · ") : single ? "Complete customer record" : "No filters applied")}</p></div>
+            <div class="meta"><p>Generated ${e(dateTime(data.generated_at))}</p><p>Prepared by ${e(adminEmail || "Administrator")}</p></div></header>
+            ${single ? "" : `<div class="totals"><span>Customers<strong>${e(number(sm.customers))}</strong></span><span>Total transactions<strong>${e(money(sm.total_transaction_amount))}</strong></span><span>Total paid<strong>${e(money(sm.total_paid))}</strong></span><span>Outstanding<strong>${e(money(sm.outstanding_balance))}</strong></span><span>Amount spent<strong>${e(money(sm.total_spent))}</strong></span></div>`}
+            ${single || data.include_history ? data.customers.map(customerBlock).join("") : listTable}
+            <footer>Total transactions = confirmed totals of orders that are not cancelled. Paid = verified payments only. Amount spent counts only completed and fully paid orders.</footer>
+        </body></html>`;
     }
 
     async function openCustomer(customerId, { back = null } = {}) {
@@ -1372,7 +1724,8 @@
                 { label: "Received", sortKey: "received_at", type: "date", render: (row) => dateTime(row.received_at) },
                 { label: "Order ID", sortKey: "reference", render: (row) => cellPair(row.reference, row.product) },
                 { label: "Method", sortKey: "method", render: (row) => row.method },
-                { label: "Reference", render: (row) => row.payment_reference || "—" },
+                { label: "Reference no.", render: (row) => cellPair(row.payment_reference || "No reference recorded", row.reference_type_label) },
+                { label: "Verification", sortKey: "verification_status", render: (row) => badge(row.verification_status) },
                 { label: "Amount", sortKey: "amount", align: "right", render: (row) => money(row.amount) },
             ],
             rows: () => [...data.payments],
@@ -1406,7 +1759,9 @@
                     h("p", { className: "eyebrow", text: `Customer ${customer.display_id}` }),
                     h("h2", { className: "dialog-heading", text: customer.name }),
                     h("p", { className: "table-secondary", text: `Registered ${dateTime(customer.created_at)}` })),
-                h("div", { className: "header-actions" }, UI.exportButtons("customer", () => ({ customer_id: customer.id }), { label: "Report" })),
+                h("div", { className: "header-actions" },
+                    h("button", { className: "button button-small", type: "button", text: "Print report", onclick: (event) => printCustomer(customer.id, event.currentTarget) }),
+                    UI.exportButtons("customer", () => ({ customer_id: customer.id }), { label: "Report" })),
             ),
             h("div", { className: "mini-stats" },
                 miniStat("Total orders", number(customer.total_orders)),
@@ -1480,14 +1835,25 @@
         let balances = [];
         const table = new UI.DataTable(tableHost, {
             columns: [
-                { label: "Date received", sortKey: "received", type: "date", render: (row) => dateTime(row.received_at) },
-                { label: "Order ID", sortKey: "reference", className: "ref-cell", render: (row) => cellPair(row.reference, `Payment #${row.payment_number}`) },
+                { label: "Date", sortKey: "received", type: "date", render: (row) => cellPair(dateTime(row.received_at), row.entry_type === "submission" ? "Submitted by customer" : "Received") },
+                { label: "Order ID", sortKey: "reference", className: "ref-cell", render: (row) => cellPair(row.reference, row.entry_type === "payment" ? `Payment #${row.payment_number}` : "Submission") },
                 { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
-                { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
-                { label: "Method", sortKey: "method", render: (row) => row.method },
-                { label: "Reference", render: (row) => row.payment_reference || "—" },
-                { label: "Amount", sortKey: "amount", align: "right", render: (row) => h("strong", { text: money(row.amount) }) },
-                { label: "Order payment", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.order_payment_status), h("span", { className: "table-secondary", text: row.payment_option_label })) },
+                { label: "Method", sortKey: "method", render: (row) => cellPair(row.method, row.product) },
+                { label: "Reference no.", sortKey: "payment_reference", render: (row) => row.payment_reference
+                    ? cellPair(row.payment_reference, row.reference_type_label)
+                    : h("span", { className: "cell-pair" }, h("span", { className: "table-primary missing-reference", text: "No reference" }), h("span", { className: "table-secondary", text: "Open to add it" })) },
+                { label: "Verification", sortKey: "verification", render: (row) => h("span", { className: "cell-pair", title: row.verification_detail },
+                    badge(row.verification_status),
+                    h("span", { className: "table-secondary", text: {
+                        "Reference Missing": "Older record · add its reference",
+                        "Pending Verification": "Not counted until verified",
+                        "Rejected": row.verified_by ? `Rejected by ${row.verified_by}` : "Not counted",
+                    }[row.verification_status] || (row.verified_by ? `By ${row.verified_by}` : "") })) },
+                { label: "Amount", sortKey: "amount", align: "right", render: (row) => h("span", { className: "cell-pair" },
+                    h(row.counts_as_paid ? "strong" : "span", { className: row.counts_as_paid ? "" : "not-counted", text: money(row.amount) }),
+                    row.counts_as_paid ? null : h("span", { className: "table-secondary", text: "Not counted as paid" })) },
+                { label: "Order balance", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.order_payment_status),
+                    h("span", { className: "table-secondary", title: row.order_total === null ? "" : `Paid ${money(row.order_paid)} of ${money(row.order_total)}`, text: row.order_total === null ? "Not quoted" : `Balance ${money(row.order_balance)}` })) },
             ],
             defaultSort: { key: "received", dir: "desc" },
             initialQuery: { ...f },
@@ -1495,16 +1861,17 @@
             onLoad: (result) => {
                 const s = result.summary;
                 balances = s.orders_with_balance;
+                const pendingAmount = s.payments_to_verify.reduce((sum, item) => sum + item.amount, 0);
                 cards.replaceChildren(
-                    statCard({ label: "Total payments received", value: money(s.total_received), foot: "All recorded payments", icon: "₱" }),
+                    statCard({ label: "Payments to verify", value: number(s.payments_to_verify.length), foot: s.payments_to_verify.length ? `${money(pendingAmount)} submitted · Pending Verification` : "No submissions waiting", icon: "⚑", tone: s.payments_to_verify.length ? "highlight" : "", onClick: () => setVerification("pending") }),
+                    statCard({ label: "Verified payments received", value: money(s.total_received), foot: "Only verified payments count as paid", icon: "₱", onClick: () => setVerification("verified") }),
                     statCard({ label: "Outstanding balance", value: money(s.outstanding_balance), foot: `${s.orders_with_balance.length} active order${s.orders_with_balance.length === 1 ? "" : "s"} with a balance`, icon: "◷" }),
-                    statCard({ label: "Payments to verify", value: number(s.payments_to_verify.length), foot: `${money(s.payments_to_verify.reduce((sum, item) => sum + item.amount, 0))} reported by customers`, icon: "⚑", tone: s.payments_to_verify.length ? "highlight" : "", onClick: s.payments_to_verify.length ? () => openOrder(s.payments_to_verify[0].reference, { focus: "verify" }) : null }),
-                    statCard({ label: "Awaiting down payment", value: number(s.awaiting_down_payment), foot: `${money(s.down_payments_due)} in 50% down payments due`, icon: "½", onClick: () => { filters.orders = { ...filters.orders, status: "Awaiting Down Payment" }; navigate("orders"); } }),
-                    statCard({ label: "Cash on Delivery", value: number(s.cod_orders), foot: `${money(s.cod_due)} to collect on delivery`, icon: "⛟", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_option: "cod" }; navigate("orders"); } }),
-                    statCard({ label: "Fully paid orders", value: number(s.fully_paid_orders), foot: "Payments cover the confirmed total", icon: "✓" }),
-                    statCard({ label: "Awaiting quotation", value: number(s.awaiting_quotation), foot: "No confirmed total yet", icon: "⌕" }),
+                    statCard({ label: "Partially paid orders", value: number(s.partially_paid_orders), foot: `${number(s.awaiting_down_payment)} awaiting the 50% down payment (${money(s.down_payments_due)})`, icon: "½", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_status: "Partially Paid" }; navigate("orders"); } }),
+                    statCard({ label: "Fully paid orders", value: number(s.fully_paid_orders), foot: "Verified payments cover the confirmed total", icon: "✓", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_status: "Fully Paid" }; navigate("orders"); } }),
+                    statCard({ label: "Payments missing a reference", value: number(s.missing_reference), foot: s.missing_reference ? "Older records · open each one to add its reference" : "Every payment has a reference", icon: "✕", tone: s.missing_reference ? "highlight" : "", onClick: () => setVerification("missing") }),
                 );
-                countLabel.textContent = `${number(s.filtered_count)} payment${s.filtered_count === 1 ? "" : "s"} · ${money(s.filtered_amount)}`;
+                const extra = s.filtered_entries - s.filtered_count;
+                countLabel.textContent = `${number(s.filtered_count)} verified payment${s.filtered_count === 1 ? "" : "s"} · ${money(s.filtered_amount)}${extra ? ` · ${number(extra)} submission${extra === 1 ? "" : "s"} not counted` : ""}`;
                 if (methodSelect.options.length <= 1 && result.methods.length) {
                     result.methods.forEach((method) => methodSelect.add(new Option(method, method)));
                     methodSelect.value = f.method;
@@ -1516,19 +1883,26 @@
                 }
             },
             emptyMessage: "No payments have been recorded yet.",
-            onRowClick: (row) => openOrder(row.reference, { focus: "payments" }),
+            onRowClick: (row) => openOrder(row.reference, { focus: row.verification_status === "Pending Verification" ? "verify" : "payments" }),
             rowTitle: (row) => `View transaction details for ${row.reference}`,
+            filteredEmptyMessage: "No payments match the selected filters.",
         });
         const apply = (values) => {
             Object.assign(f, values);
             table.setQuery({ ...f });
         };
+        const verificationSelect = selectInput(VERIFICATION_FILTERS, f.verification, (value) => apply({ verification: value }));
+        function setVerification(value) {
+            verificationSelect.value = value;
+            apply({ verification: value });
+        }
         const recordButton = h("button", { className: "button button-primary", type: "button", text: "＋ Record a payment", onclick: () => openBalancePicker(balances) });
         body.replaceChildren(
             h("div", { className: "page-actions-row" }, recordButton),
             cards,
             h("div", { className: "filter-bar" },
                 searchInput("Search order ID, customer, payment reference…", f.search, (value) => apply({ search: value })),
+                field("Verification", verificationSelect),
                 field("Method", methodSelect),
                 field("Service", serviceSelect),
                 field("Order payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.slice(0, 3).map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
@@ -1540,7 +1914,7 @@
                     renderPayments();
                 } }),
             ),
-            panel(["Payment transactions ", countLabel], "Payments are recorded from an order's details. Select a row to view the transaction and its order.", tableHost,
+            panel(["Payment transactions ", countLabel], "Recorded payments (Verified) and customer submissions (Pending Verification or Rejected). Only verified payments count toward an order's paid amount. Select a row to review, verify, or add a missing reference.", tableHost,
                 UI.exportButtons("payments", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
         table.load();
@@ -1968,57 +2342,128 @@
 
     // ================================================================ notifications
 
+    const NOTIFICATION_STATUS = [["", "All notifications"], ["unread", "Unread"], ["read", "Read"]];
+    const NOTIFICATION_SOURCES = [["", "Customer and admin activity"], ["customer", "Customer activity"], ["admin", "Admin actions"]];
+    const NOTIFICATION_CATEGORY_OPTIONS = [["", "All categories"], ["orders", "Orders"], ["payments", "Payments"], ["quotations", "Quotations & drafts"], ["customers", "Customer registrations"]];
+
+    /**
+     * The one notifications page: search and filters with server-side pagination. Filtering shows the
+     * matching notifications in the list (never as toasts). Opening a notification marks it read.
+     */
     function renderNotifications() {
         const body = viewBody();
         if (!body) return;
         const f = filters.notifications;
-        const list = h("section", { className: "notification-list", "aria-label": "Activity notifications" }, loadingBlock());
         const description = viewRoot.querySelector("[data-notifications-description]");
-        const seenAt = localStorage.getItem(NOTIFICATION_SEEN_KEY) || "";
-        const chips = h("div", { className: "segmented" }, ...[["", "All activity"], ["customer", "Customer activity"], ["admin", "Admin actions"]].map(([value, label]) => h("button", {
-            className: `segmented-button${f.actor === value ? " active" : ""}`, type: "button", onclick: () => { f.actor = value; f.limit = 30; renderNotifications(); },
-        }, label)));
-        const more = h("button", { className: "button", type: "button", text: "Show more", hidden: true, onclick: () => { f.limit += 30; load(); } });
-        const markAll = h("button", { className: "button", type: "button", text: "Mark all as read", onclick: () => {
-            localStorage.setItem(NOTIFICATION_SEEN_KEY, new Date().toISOString().replace(/\.\d+Z$/, "+00:00"));
-            list.querySelectorAll(".notification-item.unread").forEach((item) => item.classList.remove("unread"));
-            refreshBadges();
-            toast("All notifications marked as read.", "success");
-        } });
-        body.replaceChildren(h("div", { className: "notifications-toolbar" }, chips, markAll), list, h("div", { className: "center-row" }, more));
-        async function load() {
-            let data;
-            try {
-                data = await api(`/api/admin/activity${query({ actor: f.actor, limit: f.limit })}`);
-            } catch (error) {
-                list.replaceChildren(errorBlock(error.message, load));
-                return;
-            }
-            const unread = data.events.filter((event) => event.actor === "customer" && (event.at || "") > seenAt).length;
-            if (description) description.textContent = `${number(data.total)} events from real orders and registrations · ${number(unread)} new customer update${unread === 1 ? "" : "s"} since you last marked them read.`;
-            if (!data.events.length) {
-                list.replaceChildren(h("p", { className: "empty-state", text: "No activity yet." }));
-            } else {
-                list.replaceChildren(...data.events.map((event) => {
-                    const symbol = event.kind === "customer" ? "♙" : event.title.includes("Payment") ? "₱" : event.actor === "customer" ? "✉" : "▤";
-                    const item = h("button", {
-                        className: `notification-item${event.actor === "customer" && (event.at || "") > seenAt ? " unread" : ""}`,
-                        type: "button",
-                        onclick: () => (event.reference ? openOrder(event.reference) : event.customer_id ? openCustomer(event.customer_id) : null),
-                    },
-                    h("span", { className: "notification-symbol", "aria-hidden": "true", text: symbol }),
-                    h("div", {},
-                        h("h2", { text: event.title }),
-                        h("p", { text: event.body }),
-                        h("p", { className: "table-secondary", text: [event.reference, event.customer_name].filter(Boolean).join(" · ") })),
-                    h("time", { datetime: event.at, title: dateTime(event.at), text: UI.relativeTime(event.at) }));
-                    return item;
-                }));
-            }
-            more.hidden = data.events.length >= data.total;
+        const tableHost = h("div", { className: "notification-table" });
+        const countLabel = h("span", { className: "table-secondary" });
+        const statusTabs = h("div", { className: "segmented", role: "tablist", "aria-label": "Read status" });
+        let unreadTotal = 0;
+
+        function renderStatusTabs() {
+            statusTabs.replaceChildren(...NOTIFICATION_STATUS.map(([value, label]) => h("button", {
+                className: `segmented-button${f.status === value ? " active" : ""}`,
+                type: "button",
+                role: "tab",
+                "aria-selected": String(f.status === value),
+                onclick: () => apply({ status: value }),
+            }, label, value === "unread" ? h("span", { className: "segmented-count", text: number(unreadTotal) }) : null)));
         }
-        load();
-        refreshActiveView = load;
+
+        const table = new UI.DataTable(tableHost, {
+            columns: [
+                { label: "Notification", render: (row) => h("span", { className: `notification-row${row.read ? "" : " unread"}` },
+                    h("span", { className: "notification-symbol", "aria-hidden": "true", text: notificationSymbol(row) }),
+                    h("span", { className: "cell-pair" },
+                        h("span", { className: "table-primary" }, row.read ? null : h("span", { className: "unread-dot", title: "Unread" }), row.title, row.read ? null : h("span", { className: "visually-hidden", text: " (unread)" })),
+                        h("span", { className: "table-secondary notification-body", text: row.body }))) },
+                { label: "Order / customer", render: (row) => cellPair(row.reference || "—", row.customer_name) },
+                { label: "Source", render: (row) => badge(row.actor === "customer" ? "Customer" : "Admin") },
+                { label: "When", render: (row) => h("time", { datetime: row.at, title: dateTime(row.at), text: UI.relativeTime(row.at) }) },
+                { label: "", render: (row) => row.read ? h("span", { className: "table-secondary", text: "Read" }) : h("button", {
+                    className: "table-link", type: "button", text: "Mark read",
+                    onclick: async () => {
+                        try {
+                            await markNotificationsRead({ ids: [row.id] });
+                            table.reload();
+                        } catch (error) {
+                            toast(error.message, "error");
+                        }
+                    },
+                }) },
+            ],
+            initialQuery: { ...f },
+            pageSize: 25,
+            fetch: (params) => api(`/api/admin/notifications${query(params)}`),
+            onLoad: (result) => {
+                unreadTotal = result.unread_count;
+                renderStatusTabs();
+                markAll.disabled = !unreadTotal;
+                countLabel.textContent = `${number(result.total)} notification${result.total === 1 ? "" : "s"}`;
+                if (description) description.textContent = `Customer activity from real orders and registrations · ${number(unreadTotal)} unread. Administrator actions are listed for reference.`;
+            },
+            emptyMessage: "No notifications yet.",
+            filteredEmptyMessage: "No notifications match the selected filters.",
+            onRowClick: (row) => {
+                if (!row.read) markNotificationsRead({ ids: [row.id] }).then(() => table.reload()).catch(() => {});
+                if (row.reference) openOrder(row.reference);
+                else if (row.customer_id) openCustomer(row.customer_id);
+            },
+            rowTitle: (row) => (row.reference ? `Open order ${row.reference}` : "Open customer profile"),
+            caption: "Notifications",
+        });
+        function apply(values) {
+            Object.assign(f, values);
+            renderStatusTabs();
+            table.setQuery({ ...f });
+        }
+        const markAll = h("button", { className: "button", type: "button", text: "Mark all as read" });
+        markAll.addEventListener("click", () => UI.busy(markAll, async () => {
+            try {
+                await markNotificationsRead({ all: true });
+                toast("All notifications marked as read.", "success");
+                table.reload();
+            } catch (error) {
+                toast(error.message, "error");
+            }
+        }, "Saving…"));
+        renderStatusTabs();
+        body.replaceChildren(
+            h("div", { className: "notifications-toolbar" }, statusTabs, markAll),
+            h("div", { className: "filter-bar" },
+                searchInput("Search title, details, order ID, or customer…", f.search, (value) => apply({ search: value })),
+                field("Source", selectInput(NOTIFICATION_SOURCES, f.actor, (value) => apply({ actor: value }))),
+                field("Category", selectInput(NOTIFICATION_CATEGORY_OPTIONS, f.category, (value) => apply({ category: value }))),
+                field("From", dateInput(f.date_from, (value) => apply({ date_from: value }))),
+                field("To", dateInput(f.date_to, (value) => apply({ date_to: value }))),
+                h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
+                    Object.keys(f).forEach((key) => { f[key] = ""; });
+                    renderNotifications();
+                } }),
+            ),
+            panel(["All notifications ", countLabel], "Newest first · select a notification to open its order or customer", tableHost),
+        );
+        table.load();
+        refreshActiveView = () => table.reload();
+    }
+
+    // ================================================================ administrator profile
+
+    function openProfile() {
+        document.querySelectorAll(".profile-menu[open]").forEach((menu) => menu.removeAttribute("open"));
+        UI.openModal(h("div", { className: "profile-modal" },
+            h("header", { className: "order-modal-header" },
+                h("div", {},
+                    h("p", { className: "eyebrow", text: "Signed-in account" }),
+                    h("h2", { className: "dialog-heading", text: "Administrator profile" }))),
+            detailList([
+                ["Name", "Administrator"],
+                ["Email", adminEmail || "—"],
+                ["Role", "Shop administrator (full access to orders, customers, payments, reports, catalog, and settings)"],
+                ["Session", "Sessions end after 12 hours or when you log out."],
+                ["Password", h("span", {}, "Change it with ", h("a", { href: "/admin/forgot-password", text: "Forgot password" }), " (a verification code is emailed to this address). Changing it signs out every session.")],
+            ]),
+        ));
     }
 
     // ================================================================ settings
@@ -2036,31 +2481,197 @@
             toast(next ? "Compact tables turned on." : "Compact tables turned off.", "success");
         });
         const activity = h("div", { className: "activity-list" }, loadingBlock());
+        const backupHost = h("div", { className: "backup-panel" }, loadingBlock("Loading backup status…"));
         body.replaceChildren(
+            panel("Database backup & restore", "Download a copy of the shop's data, or restore one downloaded from this admin panel", backupHost),
             h("section", { className: "split-grid" },
-                panel("Administrator account", "Signed-in administrator", h("div", { className: "settings-list" },
-                    h("div", { className: "settings-row" }, h("div", {}, h("strong", { text: "Email" }), h("p", { "data-admin-email": "", text: adminEmail || "Loading…" }))),
-                    h("div", { className: "settings-row" }, h("div", {}, h("strong", { text: "Session" }), h("p", { text: "Sessions end after 12 hours or when you sign out." })),
-                        h("button", { className: "button button-danger-strong", type: "button", dataset: { action: "logout" }, text: "Sign out" })),
-                )),
                 panel("Display preferences", "Saved in this browser", h("div", { className: "settings-list" },
                     h("div", { className: "settings-row" }, h("div", {}, h("strong", { text: "Compact tables" }), h("p", { text: "Use tighter row spacing in management tables." })), toggle),
                 )),
+                panel("How figures are calculated", "Rules used by the dashboard, reports, customer totals, and exports", h("ul", { className: "rules-list" },
+                    h("li", { text: "Confirmed revenue includes only orders that are Completed and fully paid. Each order counts once, for its confirmed total, on the date it was completed." }),
+                    h("li", { text: "Only verified payments count as paid. Customer submissions stay Pending Verification until the administrator verifies them; rejected submissions never count." }),
+                    h("li", { text: "Every payment has a reference: the GCash/Maya/bank transaction number, the official receipt number, or a cash receipt number issued by the system." }),
+                    h("li", { text: "A customer's amount spent uses the revenue rule, so customer totals add up to revenue." }),
+                    h("li", { text: "Completion duration = completion date − request date, in calendar days (weekends included), on Philippine time." }),
+                    h("li", { text: "An order can be marked Completed only after its full amount is recorded as paid." }),
+                )),
             ),
-            panel("How figures are calculated", "Rules used by the dashboard, reports, customer totals, and exports", h("ul", { className: "rules-list" },
-                h("li", { text: "Confirmed revenue includes only orders that are Completed and fully paid. Each order counts once, for its confirmed total, on the date it was completed." }),
-                h("li", { text: "Pending payments, partially paid, unpaid, cancelled, and rejected orders are never counted as revenue." }),
-                h("li", { text: "A customer's amount spent uses the same rule, so customer totals add up to revenue." }),
-                h("li", { text: "Completion duration = completion date − request date, in calendar days (weekends included), using the stored timestamps on Philippine time." }),
-                h("li", { text: "An order can be marked Completed only after its full amount is recorded as paid." }),
-            )),
             panel("Recent administrator activity", "Actions recorded in order histories", activity),
         );
+        renderBackupPanel(backupHost);
         api(`/api/admin/activity${query({ actor: "admin", limit: 15 })}`).then((data) => {
             activity.replaceChildren(...(data.events.length ? data.events.map((event) => h("div", { className: "activity-item" },
                 h("span", { className: "activity-point" }),
                 h("div", {}, h("p", { text: `${event.reference}: ${event.body}` }), h("time", { text: dateTime(event.at) })))) : [h("p", { className: "empty-state", text: "No administrator actions recorded yet." })]));
         }).catch((error) => activity.replaceChildren(errorBlock(error.message)));
+    }
+
+    const fileSizeText = (bytes) => (bytes ? UI.fileSize(bytes) : "—");
+
+    async function renderBackupPanel(host) {
+        let info;
+        try {
+            info = await api("/api/admin/backup");
+        } catch (error) {
+            host.replaceChildren(errorBlock(error.message, () => renderBackupPanel(host)));
+            return;
+        }
+        const backupButton = h("button", { className: "button button-primary", type: "button" },
+            h("span", { "aria-hidden": "true", text: "⭳" }), " Backup database");
+        const statusLine = h("p", { className: "backup-status", role: "status", "aria-live": "polite" });
+        const fileInput = h("input", { id: "restore-file", type: "file", accept: ".json,application/json" });
+        const restoreButton = h("button", { className: "button button-danger-strong", type: "button", text: "Restore from backup…", disabled: true });
+        const fileNote = h("p", { className: "field-note", text: `Choose a .json backup file downloaded from this admin panel (up to ${info.max_upload_mb} MB).` });
+        let chosen = null;
+
+        const last = info.last_backup;
+        const lastRestore = info.last_restore;
+        statusLine.textContent = last
+            ? `Last backup: ${dateTime(last.at)} by ${last.by} · ${number(last.rows)} records · ${fileSizeText(last.size)}`
+            : "No backup has been created yet.";
+
+        backupButton.addEventListener("click", () => UI.busy(backupButton, async () => {
+            statusLine.textContent = "Creating the backup…";
+            let response;
+            try {
+                response = await fetch("/api/admin/backup", { method: "POST", credentials: "same-origin" });
+            } catch {
+                statusLine.textContent = "Backup failed: the server could not be reached.";
+                toast("The backup could not be created. Check the connection and try again.", "error");
+                return;
+            }
+            if (response.status === 401) {
+                window.location.assign("/admin/login");
+                return;
+            }
+            if (!response.ok) {
+                const result = await response.json().catch(() => ({}));
+                statusLine.textContent = `Backup failed: ${result.detail || `HTTP ${response.status}`}`;
+                toast(result.detail || "The backup could not be created.", "error");
+                renderHistory();
+                return;
+            }
+            const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") || "")?.[1] || "printshop-backup.json";
+            const blob = await response.blob();
+            const link = h("a", { href: URL.createObjectURL(blob), download: name });
+            document.body.append(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+            toast(`Backup created and downloaded (${name}).`, "success");
+            renderBackupPanel(host);
+        }, "Creating backup…"));
+
+        fileInput.addEventListener("change", async () => {
+            chosen = null;
+            restoreButton.disabled = true;
+            const file = fileInput.files?.[0];
+            if (!file) {
+                fileNote.textContent = `Choose a .json backup file downloaded from this admin panel (up to ${info.max_upload_mb} MB).`;
+                return;
+            }
+            const invalid = (message) => {
+                fileNote.textContent = message;
+                fileNote.classList.add("field-error");
+            };
+            fileNote.classList.remove("field-error");
+            if (!/\.json$/i.test(file.name)) return invalid("Choose a .json backup file.");
+            if (file.size > info.max_upload_mb * 1024 * 1024) return invalid(`This file is larger than ${info.max_upload_mb} MB.`);
+            let data;
+            let text;
+            try {
+                text = await file.text();
+                data = JSON.parse(text);
+            } catch {
+                return invalid("This file is not a valid backup (it is not JSON).");
+            }
+            if (data?.format !== "impression-printshop-backup" || typeof data.tables !== "object" || !data.counts) {
+                return invalid("This file is not an ImPRESSion PrintShop backup.");
+            }
+            chosen = { file, data, text };
+            const rows = Object.values(data.counts).reduce((sum, value) => sum + Number(value || 0), 0);
+            fileNote.textContent = `${file.name} · created ${dateTime(data.created_at)}${data.created_by ? ` by ${data.created_by}` : ""} · ${number(rows)} records. The server checks its signature and contents before restoring.`;
+            restoreButton.disabled = false;
+        });
+
+        restoreButton.addEventListener("click", async () => {
+            if (!chosen) return;
+            const counts = chosen.data.counts || {};
+            const answer = await UI.confirm({
+                title: "Restore this backup?",
+                message: "Restoring replaces ALL current customers, orders, payments, catalog, packages, and notifications with the data in this backup. Anything added or changed after the backup was created will be lost. Your administrator sign-in is not changed. Download a backup of the current data first if you may need it. Type RESTORE to continue.",
+                confirmLabel: "Restore backup",
+                tone: "danger",
+                input: { label: "Type RESTORE to confirm", required: true, multiline: false, maxlength: 20, placeholder: "RESTORE" },
+                details: [
+                    ["Backup created", dateTime(chosen.data.created_at)],
+                    ["Customers", number(counts.customer_accounts || 0)],
+                    ["Orders", number(counts.orders || 0)],
+                    ["Catalog products", number(counts.catalog_products || 0)],
+                ],
+            });
+            if (!answer) return;
+            if (answer.value !== "RESTORE") {
+                toast("The restore was cancelled: type RESTORE exactly to confirm.", "error");
+                return;
+            }
+            await UI.busy(restoreButton, async () => {
+                statusLine.textContent = "Validating and restoring the backup… Do not close this page.";
+                try {
+                    const result = await api("/api/admin/backup/restore", { method: "POST", body: { confirmation: "RESTORE", backup_text: chosen.text } });
+                    const total = Object.values(result.restored).reduce((sum, value) => sum + value, 0);
+                    toast(`Backup restored: ${number(total)} records.`, "success");
+                    refreshBadges();
+                    renderBackupPanel(host);
+                } catch (error) {
+                    statusLine.textContent = `Restore failed: ${error.message}`;
+                    toast(error.message, "error");
+                    renderHistory();
+                }
+            }, "Restoring…");
+        });
+
+        const historyHost = h("div");
+        async function renderHistory() {
+            let items = info.history;
+            try {
+                items = (await api("/api/admin/backup")).history;
+            } catch {
+                // Keep the history already shown.
+            }
+            historyHost.replaceChildren(items.length
+                ? h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
+                    h("thead", {}, h("tr", {}, ...["When", "Action", "Result", "By", "Details"].map((text) => h("th", { scope: "col", text })))),
+                    h("tbody", {}, ...items.map((item) => h("tr", {},
+                        h("td", { text: dateTime(item.at) }),
+                        h("td", { text: item.type === "backup" ? "Backup" : "Restore" }),
+                        h("td", {}, badge(item.status === "success" ? "Success" : "Failed")),
+                        h("td", { text: item.by || "—" }),
+                        h("td", { className: "wrap-cell", text: item.status !== "success" ? (item.error || "—")
+                            : item.type === "backup" ? `${item.file} · ${number(item.rows)} records · ${fileSizeText(item.size)}`
+                                : `${number(item.rows)} records from the backup of ${dateTime(item.backup_created_at)}` }))))))
+                : h("p", { className: "field-note", text: "No backups or restores yet." }));
+        }
+        renderHistory();
+
+        host.replaceChildren(
+            h("div", { className: "backup-grid" },
+                h("section", { className: "backup-card" },
+                    h("h3", { text: "Backup" }),
+                    h("p", { className: "field-note", text: `Saves customers, orders with payments and history, the catalog and packages, audit log, and notifications from the ${info.database} as a signed JSON file. Administrator credentials are never included.` }),
+                    backupButton,
+                    statusLine,
+                    info.signing_key_persistent ? null : h("p", { className: "notice-card notice-warning", text: "PRINTSHOP_SECRET_KEY is not set, so backups are signed with a temporary key and cannot be restored after the server restarts. Set the key in the server settings." })),
+                h("section", { className: "backup-card" },
+                    h("h3", { text: "Restore" }),
+                    h("p", { className: "field-note", text: lastRestore ? `Last restore: ${dateTime(lastRestore.at)} by ${lastRestore.by}.` : "Replaces the current data with a backup. Everything is checked first; if anything fails, nothing is changed." }),
+                    h("div", { className: "form-field" }, h("label", { for: "restore-file", text: "Backup file" }), fileInput),
+                    fileNote,
+                    restoreButton)),
+            h("h3", { className: "backup-history-title", text: "Backup & restore history" }),
+            historyHost,
+        );
     }
 
     // ================================================================ global events
@@ -2070,10 +2681,12 @@
         document.querySelectorAll(".profile-menu[open]").forEach((menu) => {
             if (!menu.contains(event.target) || event.target.closest(".profile-menu-list")) menu.removeAttribute("open");
         });
+        // The notification dropdown closes on any click outside it.
+        if (!event.target.closest("[data-notification-menu]")) closeNotificationPanel();
         const viewLink = event.target.closest("[data-view]");
         if (viewLink) {
             event.preventDefault();
-            await navigate(viewLink.dataset.view);
+            await navigate(viewLink.dataset.view, true, { catalogTab: viewLink.dataset.catalogTarget || "" });
             return;
         }
         const action = event.target.closest("[data-action]");
@@ -2100,6 +2713,12 @@
                 window.location.assign("/admin/login");
                 break;
             }
+            case "toggle-notifications":
+                toggleNotificationPanel(action);
+                break;
+            case "profile":
+                openProfile();
+                break;
             case "close-dialog":
                 UI.closeModal();
                 break;
@@ -2117,6 +2736,16 @@
         if (event.key !== "Escape") return;
         document.querySelector("#admin-sidebar")?.classList.remove("open");
         document.querySelectorAll(".profile-menu[open]").forEach((menu) => menu.removeAttribute("open"));
+        if (notificationPanelOpen()) {
+            closeNotificationPanel();
+            document.querySelector('[data-action="toggle-notifications"]')?.focus();
+        }
+    });
+    // Services & Products tabs: highlight "Package Management" in the sidebar while the Packages tab is open.
+    document.addEventListener("catalog-tab-change", (event) => {
+        if (activeView !== "services") return;
+        markActiveNavigation(event.detail.tab === "packages" ? "packages" : "products");
+        document.querySelector("#current-section").textContent = event.detail.tab === "packages" ? "Package Management" : LABELS.services;
     });
     dialog.addEventListener("close", () => {
         // The close event is dispatched asynchronously: if another editor was opened in the meantime, keep it.
@@ -2134,7 +2763,16 @@
     document.querySelector("#today-date").textContent = new Date().toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", timeZone: "Asia/Manila" });
     activeView = document.body.dataset.adminView || viewFromLocation();
     renderView();
-    refreshBadges();
+    // Read state used to live in this browser's storage; move it to the server once.
+    const legacySeen = localStorage.getItem(LEGACY_NOTIFICATION_SEEN_KEY);
+    if (legacySeen) {
+        api("/api/admin/notifications/read", { method: "POST", body: { before: legacySeen } })
+            .then(() => localStorage.removeItem(LEGACY_NOTIFICATION_SEEN_KEY))
+            .catch(() => {})
+            .finally(refreshBadges);
+    } else {
+        refreshBadges();
+    }
     window.setInterval(() => {
         if (document.visibilityState === "visible") refreshBadges();
     }, 30000);

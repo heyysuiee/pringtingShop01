@@ -510,15 +510,16 @@ def build_orders(params: Mapping[str, Any]) -> Report:
 
 def build_payments(params: Mapping[str, Any]) -> Report:
     rows, _, _ = reports.payment_rows(params)
+    verified = [row for row in rows if row["counts_as_paid"]]
     columns = [
-        Column("received_date", "Date received", "date"),
+        Column("received_date", "Date received / submitted", "date"),
         Column("reference", "Order ID", width=1.3),
         Column("customer_name", "Customer", width=1.3),
-        Column("service", "Service", width=1.2),
-        Column("method", "Method"),
-        Column("payment_reference", "Payment reference", width=1.3),
-        Column("amount", "Amount received", "money"),
-        Column("payment_option_label", "Payment option"),
+        Column("service", "Service", width=1.1),
+        Column("method", "Method", width=0.9),
+        Column("payment_reference", "Payment reference", width=1.4),
+        Column("amount", "Amount", "money"),
+        Column("verification_status", "Verification", width=1.0),
         Column("order_payment_status", "Order payment status"),
     ]
     return Report(
@@ -530,13 +531,18 @@ def build_payments(params: Mapping[str, Any]) -> Report:
             ("Method", reports.param_text(params, "method", 60)),
             ("Service", _service_label(params)),
             ("Order payment status", reports.param_text(params, "payment_status", 40)),
+            ("Verification", reports.VERIFICATION_FILTERS.get(reports.param_text(params, "verification", 20), "")),
             ("Payment date", _range_text(params, "date_from", "date_to")),
         ]),
-        [("Payments", len(rows), "int"), ("Amount received", reports.money(sum(row["amount"] for row in rows)), "money")],
+        [
+            ("Verified payments", len(verified), "int"),
+            ("Amount received (verified)", reports.money(sum(row["amount"] for row in verified)), "money"),
+            ("Submissions not counted as paid (pending or rejected)", len(rows) - len(verified), "int"),
+        ],
         [Section("Payments", columns, rows, {
-            "received_date": f"Total ({len(rows)} payments)",
-            "amount": reports.money(sum(row["amount"] for row in rows)),
-        }, "Payments")],
+            "received_date": f"Total verified ({len(verified)} payments)",
+            "amount": reports.money(sum(row["amount"] for row in verified)),
+        }, "Payments", "No payments match the selected filters. (Pending and rejected submissions are never included in the total.)")],
     )
 
 

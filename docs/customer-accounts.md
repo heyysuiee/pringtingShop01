@@ -7,7 +7,7 @@ Written for the shop administrator setting up the site and for developers mainta
 | Area | Status |
 | --- | --- |
 | Sign In page (`/sign-in`) with show/hide password, Remember me (30 days), and links to Forgot password and Create an Account | Implemented |
-| Separate registration page (`/create-account`) | Implemented |
+| Separate registration page (`/create-account`). Passwords need at least 8 characters, a letter, a number, and no spaces, and must match the confirmation; a live checklist shows each rule, and the server enforces the same rules (`schemas/user.py: password_problems`, also used by Forgot password) | Implemented |
 | Sign-in required before submitting an order; order page shows the sign-in gate otherwise | Implemented |
 | Pre-filled customer details for signed-in customers; profile editing | Implemented |
 | Forgot password (`/forgot-password`): emailed 6-digit code, 5-minute expiry, attempt limit, 60-second resend cooldown, new password + confirmation | Implemented; **needs SMTP** to send codes |

@@ -746,7 +746,8 @@
             return column;
         }));
         const labels = h("div", { className: "vchart-labels", "aria-hidden": "true" }, ...points.map((point, index) => h("span", {
-            text: index % labelEvery === 0 || index === points.length - 1 ? (point.short || point.label) : "",
+            // Counted from the newest column so the latest period is always labelled and labels never collide.
+            text: (points.length - 1 - index) % labelEvery === 0 ? (point.short || point.label) : "",
         })));
         const allZero = points.every((point) => !point.value);
         container.replaceChildren(h("div", { className: "vchart" },

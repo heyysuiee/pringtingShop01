@@ -13,6 +13,7 @@ from backend.app.schemas.order import (
     AdminOrderStatus,
     AdminPayment,
     AdminPaymentOption,
+    AdminPaymentReference,
     AdminQuotation,
     AdminSubmissionReview,
     CustomerOrderAction,
@@ -43,8 +44,10 @@ def submit_order(
 
 
 @router.get("/api/orders")
-def customer_orders(email: str, reference: str) -> dict[str, Any]:
-    return order_services.customer_orders(email, reference)
+def customer_orders(request: Request) -> dict[str, Any]:
+    """The signed-in customer's orders (same as /api/account/orders). An email and reference no longer grant access."""
+    claims = require_session(request, "customer")
+    return order_services.account_orders(claims["sub"])
 
 
 @router.get("/api/account/orders")
@@ -60,13 +63,16 @@ def account_order(reference: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/orders/{reference}")
-def customer_order(reference: str, email: str) -> dict[str, Any]:
-    return order_services.get_customer_order(reference, email)
+def customer_order(reference: str, request: Request) -> dict[str, Any]:
+    claims = require_session(request, "customer")
+    return order_services.account_order(claims["sub"], reference)
 
 
 @router.get("/api/orders/{reference}/files/{file_id}")
-def customer_order_file(reference: str, file_id: str, email: str) -> FileResponse:
-    return order_services.get_customer_order_file(reference, file_id, email)
+def customer_order_file(reference: str, file_id: str, request: Request) -> FileResponse:
+    # Only the signed-in customer who owns the order; any old "?email=" in a link is ignored.
+    claims = require_session(request, "customer")
+    return order_services.get_customer_order_file(claims["sub"], reference, file_id)
 
 
 @router.post("/api/orders/{reference}/approve")
@@ -237,6 +243,18 @@ def admin_record_payment(
 ) -> dict[str, Any]:
     admin = require_admin(request)
     return order_services.record_payment(reference, payload.model_dump(), actor=admin["sub"])
+
+
+@router.post("/api/admin/orders/{reference}/payments/{payment_number}/reference")
+def admin_add_payment_reference(
+    reference: str,
+    payment_number: int,
+    payload: AdminPaymentReference,
+    request: Request,
+) -> dict[str, Any]:
+    """Add the missing receipt or transaction number to an older payment recorded without one."""
+    admin = require_admin(request)
+    return order_services.add_payment_reference(reference, payment_number, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payment-option")

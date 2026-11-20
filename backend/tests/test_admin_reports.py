@@ -26,6 +26,7 @@ from backend.app.database.connection import connection_scope  # noqa: E402
 from backend.app.main import app  # noqa: E402
 from backend.app.repositories import customer_repository, order_repository  # noqa: E402
 from backend.app.services import export_services, order_services, report_services  # noqa: E402
+from backend.tests.support import present, stored_order  # noqa: E402
 
 
 WEBP_1X1 = base64.b64decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
@@ -94,7 +95,7 @@ class ReportCalculationTests(unittest.TestCase):
         customer = make_customer()
         # Nov 1 2026 09:00 Manila → Nov 5 2026 10:00 Manila (Nov 1 is a Sunday): 4 calendar days.
         reference = make_order(customer, created_at="2026-11-01T01:00:00+00:00", status="Completed", total=500, payments=[500], completed_at="2026-11-05T02:00:00+00:00")
-        row = report_services.order_row(order_repository.get_order(reference), report_services.ServiceIndex())
+        row = report_services.order_row(stored_order(reference), report_services.ServiceIndex())
         self.assertEqual(row["request_date"], "2026-11-01")
         self.assertEqual(row["completion_date"], "2026-11-05")
         self.assertEqual(row["completion_days"], 4)
@@ -103,14 +104,14 @@ class ReportCalculationTests(unittest.TestCase):
         customer = make_customer()
         # 2026-11-02 17:30 UTC is already Nov 3 in Manila.
         reference = make_order(customer, created_at="2026-11-02T17:30:00+00:00", status="Completed", total=100, payments=[100], completed_at="2026-11-03T03:00:00+00:00")
-        row = report_services.order_row(order_repository.get_order(reference), report_services.ServiceIndex())
+        row = report_services.order_row(stored_order(reference), report_services.ServiceIndex())
         self.assertEqual(row["request_date"], "2026-11-03")
         self.assertEqual(row["completion_days"], 0)
 
     def test_missing_completion_timestamp_gives_no_duration(self) -> None:
         customer = make_customer()
         reference = make_order(customer, created_at="2026-11-01T01:00:00+00:00", status="Completed", total=100, payments=[100], completed_at=None)
-        row = report_services.order_row(order_repository.get_order(reference), report_services.ServiceIndex())
+        row = report_services.order_row(stored_order(reference), report_services.ServiceIndex())
         self.assertIsNone(row["completion_days"])
 
     def test_revenue_counts_only_completed_and_fully_paid_orders_once(self) -> None:
@@ -133,16 +134,16 @@ class ReportCalculationTests(unittest.TestCase):
         dashboard = report_services.dashboard()
         spend = report_services.customer_list({"page_size": "all"})["summary"]["total_spent"]
         summary = report_services.business_summary({"preset": "all"})
-        self.assertAlmostEqual(dashboard["total_revenue"], summary["totals"]["confirmed_revenue"], places=2)
+        self.assertAlmostEqual(dashboard["revenue"]["total"], summary["totals"]["confirmed_revenue"], places=2)
         self.assertAlmostEqual(sum(item["revenue"] for item in summary["by_service"]), summary["totals"]["confirmed_revenue"], places=2)
         self.assertAlmostEqual(sum(bucket["revenue"] for bucket in summary["trend"]), summary["totals"]["confirmed_revenue"], places=2)
         # Orders without an account are not customer spend, so spend can only be equal or lower.
-        self.assertLessEqual(spend, dashboard["total_revenue"] + 0.001)
+        self.assertLessEqual(spend, dashboard["revenue"]["total"] + 0.001)
 
     def test_legacy_category_labels_map_to_services(self) -> None:
         customer = make_customer()
         reference = make_order(customer, created_at="2026-11-01T01:00:00+00:00", category_id=None, category="Sticker Printing")
-        row = report_services.order_row(order_repository.get_order(reference), report_services.ServiceIndex())
+        row = report_services.order_row(stored_order(reference), report_services.ServiceIndex())
         self.assertEqual(row["service_id"], "sticker")
 
     def test_service_report_never_mixes_services(self) -> None:
@@ -198,12 +199,12 @@ class OrderActionSafetyTests(unittest.TestCase):
         order_services.record_payment(reference, {"amount": 500, "method": "Cash", "received": True})
         completed = order_services.update_order_status(reference, "Completed")
         self.assertEqual(completed["status"], "Completed")
-        self.assertTrue(order_repository.get_order(reference)["completed_at"])
+        self.assertTrue(stored_order(reference).get("completed_at"))
 
     def test_stale_version_is_refused(self) -> None:
         customer = make_customer()
         reference = make_order(customer, created_at="2026-11-01T01:00:00+00:00")
-        version = order_repository.order_version(order_repository.get_order(reference))
+        version = order_repository.order_version(stored_order(reference))
         order_services.update_order_status(reference, "Under Review", {"expected_version": version})
         with self.assertRaises(HTTPException) as raised:
             order_services.update_order_status(reference, "Awaiting Quotation", {"expected_version": version})
@@ -225,7 +226,7 @@ class OrderActionSafetyTests(unittest.TestCase):
                 (json.dumps([{"at": "2026-11-01T01:00:00+00:00", "text": "x"}, {"at": "2026-11-04T05:00:00+00:00", "text": "Administrator updated the order status to Completed."}]), reference),
             )
         order_repository.initialize()
-        self.assertEqual(order_repository.get_order(reference)["completed_at"], "2026-11-04T05:00:00+00:00")
+        self.assertEqual(stored_order(reference).get("completed_at"), "2026-11-04T05:00:00+00:00")
 
     def test_webp_signature_is_validated(self) -> None:
         metadata, _ = order_services._decode_upload({"name": "logo.webp", "dataUrl": "data:image/webp;base64," + base64.b64encode(WEBP_1X1).decode()})
@@ -275,7 +276,7 @@ class AdminEndpointAccessTests(unittest.TestCase):
         rows, _ = report_services.completed_rows(params)
         report = export_services.build_completed(params)
         self.assertEqual([row["reference"] for row in report.sections[0].rows], [row["reference"] for row in rows])
-        self.assertEqual(report.sections[0].totals["total_amount"], round(sum(row["total_amount"] for row in rows), 2))
+        self.assertEqual(present(report.sections[0].totals)["total_amount"], round(sum(row["total_amount"] for row in rows), 2))
 
 
 if __name__ == "__main__":

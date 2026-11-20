@@ -32,6 +32,14 @@ class Settings:
     behind_vercel_proxy: bool = False
     # False when PRINTSHOP_SECRET_KEY is missing and a temporary random key was generated for this run.
     secret_key_persistent: bool = True
+    # Google Gemini, used by the customer support chatbot. The key stays on the server; without it the
+    # chatbot still answers from the database, but without the AI model.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
+    @property
+    def gemini_configured(self) -> bool:
+        return bool(self.gemini_api_key)
 
     @property
     def smtp_configured(self) -> bool:
@@ -133,4 +141,6 @@ settings = Settings(
     turso_database_url=os.environ.get("TURSO_DATABASE_URL", "").strip(),
     turso_auth_token=os.environ.get("TURSO_AUTH_TOKEN", "").strip(),
     behind_vercel_proxy=bool(os.environ.get("VERCEL")),
+    gemini_api_key=(os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip(),
+    gemini_model=os.environ.get("GEMINI_MODEL", "").strip() or "gemini-2.5-flash",
 )

@@ -104,7 +104,22 @@ class AdminPayment(BaseModel):
     amount: Any = None
     received: Any = None
     method: Any = None
+    # Required for GCash, Maya, bank transfer, and other providers. For cash: the official receipt number,
+    # or blank to have the system issue a cash receipt number.
     reference: Any = ""
+    # Optional note kept with the verification record (for example who received the cash).
+    verification_note: Any = ""
+    expected_version: Any = None
+
+
+class AdminPaymentReference(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    # The missing receipt or transaction number of an older payment.
+    reference: Any = ""
+    note: Any = ""
+    # The administrator confirms the reference was checked against the shop's records.
+    confirmed: Any = None
     expected_version: Any = None
 
 

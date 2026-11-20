@@ -79,6 +79,10 @@ class OrderRecord(TypedDict):
     status: str
     total_amount: float | None
     payment_instructions: str
+    # Verified money only: {"id", "amount", "method", "reference", "reference_type": "transaction" |
+    #  "official_receipt" | "system_cash_receipt", "received_at", "kind", "source", "recorded_by",
+    #  "verification": {"status", "method", "verified_by", "verified_at", "note"}}. Older payments may lack
+    #  reference_type and verification (and some lack a reference; they are flagged as Reference Missing).
     payments: list[dict[str, Any]]
     attachments: list[OrderAttachment]
     draft_attachment: OrderAttachment | None
