@@ -154,15 +154,41 @@
                     <p class="field-error" id="order-mode-error" role="alert"></p>
                 </section>
 
+                <!-- Customize Order with shop designs: choose a design and personalize it in one step (no design upload) -->
+                <section class="wizard-step" data-step="9" data-wizard-section="personalize" aria-labelledby="step9-title">
+                    <p class="order-step-kicker">03 · Customize your design</p>
+                    <h2 id="step9-title" class="step-title">Choose your design and add your details</h2>
+                    <p class="order-step-lead">Pick one of the shop's designs, then fill in only what should appear on
+                        it. The shop places your details on the design and sends you a draft to approve before
+                        printing. Have your own design? Choose “Use my own design” in the gallery.</p>
+                    <div id="design-section" class="design-gallery-section">
+                        <h3 class="invitation-subtitle">Choose your design</h3>
+                        <p class="field-hint">Select the design you like. Select a picture to see it larger.</p>
+                        <div class="design-filter" id="design-filter" role="group" aria-label="Filter designs by style" hidden></div>
+                        <div class="design-grid" id="design-list" aria-live="polite"></div>
+                        <p class="field-error" id="design-error" role="alert"></p>
+                    </div>
+                    <h3 class="invitation-subtitle design-details-title" id="design-details-title">Add your details</h3>
+                    <p class="field-hint" id="design-details-hint">Choose a design above to add your details.</p>
+                    <div class="design-personalize" id="design-personalize" hidden>
+                        <figure class="design-personalize-preview" id="design-preview" aria-live="polite"></figure>
+                        <div class="design-personalize-form">
+                            <div id="design-personalize-fields" aria-live="polite"></div>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- 03 · Details (all products except invitations) -->
                 <section class="wizard-step" data-step="8" data-wizard-section="details" aria-labelledby="step8-title">
                     <div id="general-customize">
+                        <p class="own-design-note" id="general-own-design-note" hidden></p>
                         <p class="order-step-kicker">03 · Make it yours</p>
                         <h2 class="step-title" id="step8-title"><span id="general-step-title">Customize your</span>
                             <span id="step2-general-product">product</span></h2>
                         <p class="order-step-lead" id="general-step-lead">Only the options for this product are shown.
                             Fields marked “optional” can be left blank.</p>
                         <div id="general-package-summary" class="selected-package-summary" hidden></div>
+                        <div id="general-design-summary" class="selected-design-summary" hidden></div>
                         <div class="field quantity-field" id="general-quantity-field">
                             <label for="quantity" class="field-label">Quantity <span class="min-badge"
                                     id="quantity-min-badge" hidden></span></label>
@@ -178,13 +204,14 @@
                         </div>
                         <div id="general-dynamic-fields" aria-live="polite"></div>
                         <div id="general-package-fields" aria-live="polite" hidden></div>
+                        <div id="general-design-fields" aria-live="polite" hidden></div>
                         <div class="field">
                             <label for="notes" class="field-label">Special instructions <span
                                     class="optional">(optional)</span></label>
                             <textarea id="notes" class="input" rows="3" maxlength="2000"
                                 placeholder="Anything else our team should know?"></textarea>
                         </div>
-                        <div class="field">
+                        <div class="field" id="general-artwork-field">
                             <label for="artwork" class="field-label">Other reference images or files <span
                                     class="optional">(optional · up to 3 files)</span></label>
                             <label class="upload-zone upload-zone-compact" for="artwork"><span class="upload-icon"
@@ -214,15 +241,19 @@
                     <h2 id="step3-title" class="step-title">Set the details</h2>
                     <p class="order-step-lead" id="configure-lead"></p>
 
+                    <p class="own-design-note" id="invitation-own-design-note" hidden></p>
                     <div id="selected-package-summary" class="selected-package-summary" hidden></div>
+                    <div id="invitation-design-summary" class="selected-design-summary" hidden></div>
 
                     <div id="customize-section" hidden>
                         <h3 class="invitation-subtitle">Basic specifications</h3>
                         <div id="invitation-basics-fields" aria-live="polite"></div>
-                        <h3 class="invitation-subtitle">Design customization</h3>
-                        <p class="field-hint">Tell us your design direction. Choose “Shop will design it for me” if you
-                            do not have a print-ready file yet.</p>
-                        <div id="invitation-design-fields" aria-live="polite"></div>
+                        <div id="invitation-design-block">
+                            <h3 class="invitation-subtitle">Your own design</h3>
+                            <p class="field-hint">Upload your design, then add any theme, colors, or notes the shop
+                                should follow.</p>
+                            <div id="invitation-design-fields" aria-live="polite"></div>
+                        </div>
                     </div>
 
                     <div id="invitation-options-block">
@@ -262,7 +293,7 @@
                     <p class="order-step-kicker">04 · Event details &amp; files</p>
                     <h2 id="step4-title" class="step-title">Tell us about the celebration</h2>
                     <p class="order-step-lead">Fill in the celebrant's name, event date, time, and location. These
-                        appear on your invitation and in the mockup preview; everything is reviewed by the shop before
+                        appear on your invitation ; everything is reviewed by the shop before
                         printing.</p>
                     <div id="invitation-event-fields" aria-live="polite"></div>
                     <h3 class="invitation-subtitle">Photos &amp; references</h3>
@@ -274,49 +305,6 @@
                                 class="optional">(optional)</span></label>
                         <textarea id="invitation-notes" class="input" rows="3" maxlength="2000"
                             placeholder="Anything else our team should know?"></textarea>
-                    </div>
-                </section>
-
-                <!-- Invitation mockup designer (Birthday, Wedding, and Christening invitations only) -->
-                <section class="wizard-step" data-step="7" data-wizard-section="mockup" aria-labelledby="step7-title">
-                    <p class="order-step-kicker">05 · Design preview</p>
-                    <h2 id="step7-title" class="step-title">Preview your invitation</h2>
-                    <p class="order-step-lead">Choose a template and colours, adjust the wording, and see your
-                        invitation with your event details before you order. The shop uses your mockup as the design
-                        brief and still sends a final draft for approval.</p>
-                    <label class="order-acknowledgement mockup-skip"><input id="mockup-skip" type="checkbox"><span>Skip
-                            the mockup — the shop will design from my details and uploads</span></label>
-                    <div class="mockup-designer" id="mockup-designer">
-                        <div class="mockup-controls">
-                            <fieldset class="field">
-                                <legend class="field-label">Template</legend>
-                                <div class="mockup-templates" id="mockup-templates" role="radiogroup"
-                                    aria-label="Invitation template"></div>
-                            </fieldset>
-                            <fieldset class="field">
-                                <legend class="field-label">Colours</legend>
-                                <div class="mockup-palettes" id="mockup-palettes" role="radiogroup"
-                                    aria-label="Colour option"></div>
-                            </fieldset>
-                            <div class="field">
-                                <label for="mockup-headline" class="field-label">Headline <span
-                                        class="optional">(optional)</span></label>
-                                <input id="mockup-headline" class="input" maxlength="80">
-                            </div>
-                            <div class="field">
-                                <label for="mockup-message" class="field-label">Message <span
-                                        class="optional">(optional)</span></label>
-                                <textarea id="mockup-message" class="input" rows="3" maxlength="300"></textarea>
-                            </div>
-                            <p class="field-hint">The names, date, time, location, and RSVP come from the event details
-                                you entered. <button type="button" class="text-button" id="mockup-edit-details">Edit
-                                    event details</button></p>
-                        </div>
-                        <figure class="mockup-stage">
-                            <button type="button" class="mockup-preview" id="mockup-preview"
-                                aria-label="Open a larger preview"></button>
-                            <figcaption class="field-hint" id="mockup-caption"></figcaption>
-                        </figure>
                     </div>
                 </section>
 
@@ -443,9 +431,9 @@
                                     provided]</strong> for better print quality.</li>
                             <li>Provide the celebrant’s name and any applicable event details.</li>
                             <li>Include the event date, time, and location when applicable.</li>
-                            <li>Package orders use the package's published price. Customized orders are priced by the
-                                administrator's quotation, which you accept or decline in the customer portal before
-                                any payment.</li>
+                            <li>Package orders use the package's published price. Customized and shop design orders are
+                                priced by the administrator's quotation, which you accept or decline in the customer
+                                portal before any payment.</li>
                             <li>Every order requires a 50% down payment of the confirmed amount; the remaining 50% is
                                 paid before release. Pay through GCash and upload the screenshot or receipt in the
                                 customer portal. Your order is confirmed only after the shop verifies the down payment.
@@ -523,7 +511,6 @@
 
     <script src="/assets/index.js"></script>
     <script src="/assets/dynamic-form.js"></script>
-    <script src="/assets/mockup.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/order.js"></script>
     <script src="/assets/chatbot.js" defer></script>

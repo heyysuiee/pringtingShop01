@@ -30,7 +30,7 @@ from backend.app.models.order import (
 )
 from backend.app.repositories import audit_repository, customer_repository, notification_repository, order_repository
 from backend.app.schemas.user import normalize_email, validate_phone
-from backend.app.services import auth_services, catalog_services, mockup_services, notification_services, package_services
+from backend.app.services import auth_services, catalog_services, design_services, notification_services, package_services
 from backend.app.utils.clock import now_iso
 from backend.app.utils.images import optimized_image
 
@@ -409,7 +409,7 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     customization = order.get("customization") or {}
     result["order_kind"] = customization.get("order_kind", "")
     result["package"] = customization.get("package")
-    result["mockup"] = customization.get("mockup")
+    result["design"] = customization.get("design")
     result["payment_option"] = payment_option(order)
     result["payment"] = payment_breakdown(order)
     result["fixed_price"] = is_fixed_price(order)
@@ -640,36 +640,44 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
     product = catalog_services.orderable_product(product_payload.get("id"))
     has_event_fields = catalog_services.product_has_event_section(product)
     package_id = customization_payload.get("package_id")
+    design_id = customization_payload.get("design_id")
+    if package_id not in (None, "") and design_id not in (None, ""):
+        raise HTTPException(status_code=422, detail="Choose either a package or a shop design, not both.")
     package = package_services.orderable_package(product, package_id) if package_id not in (None, "") else None
+    design = None
     if package is None:
-        # Packages are always orderable; a customized order needs the product's customization enabled.
+        # Packages are always orderable; customized and shop-design orders need the product's customization enabled.
         catalog_services.ensure_customizable(product)
+        if design_id not in (None, ""):
+            design = design_services.orderable_design(product, design_id)
+    design_details: list[dict[str, str]] = []
+    if design is not None:
+        # The customer chose one of the shop's designs: no design or reference files are accepted.
+        if payload.get("files") or payload.get("field_files"):
+            raise HTTPException(status_code=422, detail="Shop design orders use the shop's design. Remove the uploaded files to continue.")
+        design_details = design_services.personalization(design, customization_payload.get("design_details"))
     decoded_uploads = _decode_order_uploads(product, payload.get("files", []), payload.get("field_files"))
     field_file_names: dict[str, list[str]] = {}
     for metadata, _ in decoded_uploads:
         if metadata.get("field_key"):
             field_file_names.setdefault(metadata["field_key"], []).append(metadata["name"])
     quantity, selections, specifications, event_rows, pricing = catalog_services.evaluate_order(
-        product,
+        catalog_services.design_fields(product) if design is not None else product,
         customization_payload.get("quantity"),
         customization_payload.get("options"),
         field_file_names,
         package=package,
     )
-    mockup = mockup_services.clean_mockup(product, customization_payload.get("mockup"), selections)
-    if mockup:
-        specifications.append({
-            "key": "mockup",
-            "label": "Invitation mockup",
-            "value": f"{mockup['template_name']} template (colour option {mockup['palette'] + 1})",
-            "type": "mockup",
-        })
     notes = _text(customization_payload.get("notes", ""), "Special instructions", 2000)
 
-    if has_event_fields:
+    if design is not None:
+        # The design's personalization (names, date, venue, ...) is saved with the design snapshot.
+        has_event = False
+        event_details: dict[str, str] | list[dict[str, str]] = {}
+    elif has_event_fields:
         # Invitation event details (celebrant, baptism, wedding) are catalog fields in the "event" section.
         has_event = True
-        event_details: dict[str, str] | list[dict[str, str]] = event_rows
+        event_details = event_rows
     else:
         event_mode = product["event_mode"]
         has_event = event_mode == "required" or (event_mode == "optional" and payload.get("has_event") is True)
@@ -696,8 +704,11 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         "options": selections,
         "specifications": specifications,
         "notes": notes,
-        "order_kind": "package" if package else "customize",
+        "order_kind": "package" if package else ("design" if design is not None else "customize"),
     }
+    if design is not None:
+        # Kept as ordered (image included) even if the design is later edited, replaced, or deleted.
+        customization["design"] = design_services.order_snapshot(design, product, design_details)
     if package:
         customization["package"] = {
             "id": package["id"],
@@ -720,8 +731,6 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
             "additional_cost": pricing.get("additional_cost", 0.0),
             "computed_total": pricing.get("estimated_total"),
         }
-    if mockup:
-        customization["mockup"] = mockup
     now = now_iso()
     estimate = pricing.get("estimated_total")
     # A package with a complete published total is a fixed-price order: its total is the package price and the
@@ -734,6 +743,12 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
         history_text = (
             f"Customer submitted a {package['name']} package order. Package total PHP {estimate:,.2f} "
             f"(50% down payment PHP {round(estimate * DOWN_PAYMENT_RATE, 2):,.2f}); awaiting administrator approval."
+        )
+    elif design is not None:
+        history_text = (
+            f"Customer submitted a shop design order (design “{design['name']}”)"
+            + (f". Catalog estimate PHP {estimate:,.2f} (reference only)" if estimate is not None else "")
+            + "; awaiting the administrator's quotation. A 50% down payment is due after the quotation is accepted."
         )
     elif estimate is not None:
         history_text = (
@@ -799,6 +814,7 @@ def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str
             "package": {
                 "id": package["id"], "name": package["name"], "price": package["price"], "inclusions": package["inclusions"],
             } if package else None,
+            "design": {"id": design["id"], "name": design["name"], "is_sample": design["is_sample"]} if design is not None else None,
         },
     }
     try:

@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin
-from backend.app.services import catalog_services, package_services
+from backend.app.services import catalog_services, design_services, package_services
 
 
 router = APIRouter(tags=["catalog"])
@@ -50,6 +50,12 @@ def price_quote(request: Request, payload: dict[str, Any] = Body(...)) -> dict[s
 @router.get("/api/catalog/images/{filename}")
 def catalog_image(filename: str) -> FileResponse:
     return catalog_services.catalog_image(filename)
+
+
+@router.get("/api/designs/images/{filename}")
+def design_image(filename: str) -> Response:
+    """Uploaded shop-design images (stored in the database, so they survive on temporary-disk hosts)."""
+    return design_services.design_image(filename)
 
 
 # ---------------------------------------------------------------- admin catalog management
@@ -163,3 +169,37 @@ def admin_update_field(field_id: str, request: Request, payload: dict[str, Any] 
 def admin_delete_field(field_id: str, request: Request) -> dict[str, Any]:
     require_admin(request)
     return {"product": catalog_services.delete_field(field_id)}
+
+
+# ---------------------------------------------------------------- admin: shop-made designs (Designs tab)
+
+
+@router.get("/api/admin/designs")
+def admin_read_designs(request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return design_services.admin_designs()
+
+
+@router.post("/api/admin/designs", status_code=201)
+def admin_create_design(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    require_admin(request)
+    return design_services.create_design(payload)
+
+
+@router.delete("/api/admin/designs/samples")
+def admin_delete_sample_designs(request: Request) -> dict[str, Any]:
+    """Remove every TEMPORARY SAMPLE design (after the shop's real designs are uploaded)."""
+    require_admin(request)
+    return design_services.delete_sample_designs()
+
+
+@router.patch("/api/admin/designs/{design_id}")
+def admin_update_design(design_id: str, request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    require_admin(request)
+    return design_services.update_design(design_id, payload)
+
+
+@router.delete("/api/admin/designs/{design_id}")
+def admin_delete_design(design_id: str, request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return design_services.delete_design(design_id)

@@ -34,6 +34,7 @@
                 <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true" data-icon="chart-column">▥</span>Sales &amp; Reports</a>
                 <a href="/admin/services" data-view="services" data-catalog-target="products" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true" data-icon="shopping-bag">▧</span>Services &amp; Products</a>
                 <a href="/admin/services#packages" data-view="services" data-catalog-target="packages"><span class="nav-icon" aria-hidden="true" data-icon="package">▦</span>Package Management</a>
+                <a href="/admin/services#designs" data-view="services" data-catalog-target="designs"><span class="nav-icon" aria-hidden="true" data-icon="palette">❖</span>Design Management</a>
                 <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true" data-icon="bell">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
                 <a href="/admin/chatbot" data-view="chatbot"><span class="nav-icon" aria-hidden="true" data-icon="message-circle">✉</span>AI Chatbot<span class="nav-count" id="chatbot-count"></span></a>
                 <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true" data-icon="settings">⚙</span>Settings</a>
@@ -69,19 +70,21 @@
                     <header class="page-heading">
                         <div>
                             <h1>Services &amp; products</h1>
-                            <p>Manage the whole catalog in one place: categories, products and their prices, order-form options, and the ready-made packages with their inclusions and additional-piece prices.</p>
+                            <p>Manage the whole catalog in one place: categories, products and their prices, order-form options, the ready-made packages with their inclusions and additional-piece prices, and the shop-made designs customers choose from.</p>
                         </div>
                         <div class="page-heading-actions">
                             <button class="button" type="button" data-catalog-action="reload-catalog"><span data-icon="refresh-cw" data-icon-size="16" aria-hidden="true">↻</span> Reload</button>
                             <button class="button button-primary" type="button" data-catalog-action="add-product" data-tab-only="products">＋ Add product</button>
                             <button class="button button-primary" type="button" data-catalog-action="add-package" data-tab-only="packages" hidden>＋ Add package</button>
                             <button class="button button-primary" type="button" data-catalog-action="add-category" data-tab-only="categories" hidden>＋ Add category</button>
+                            <button class="button button-primary" type="button" data-design-action="add-design" data-tab-only="designs" hidden>＋ Upload design</button>
                         </div>
                     </header>
                     <div class="notice-card services-pricing-note"><strong>Live catalog:</strong> changes are saved to the database and appear on the customer order page immediately. Products stay on “Request a quote” until a price is entered. Existing orders keep the package details and prices they were placed with.</div>
                     <div class="tab-list catalog-tabs" role="tablist" aria-label="Services and products sections" data-catalog-tabs>
                         <button class="tab-button active" type="button" role="tab" id="catalog-tab-products" aria-controls="catalog-panel-products" aria-selected="true" data-catalog-tab="products">Products <span class="segmented-count" data-tab-count="products"></span></button>
                         <button class="tab-button" type="button" role="tab" id="catalog-tab-packages" aria-controls="catalog-panel-packages" aria-selected="false" tabindex="-1" data-catalog-tab="packages">Packages <span class="segmented-count" data-tab-count="packages"></span></button>
+                        <button class="tab-button" type="button" role="tab" id="catalog-tab-designs" aria-controls="catalog-panel-designs" aria-selected="false" tabindex="-1" data-catalog-tab="designs">Designs <span class="segmented-count" data-tab-count="designs"></span></button>
                         <button class="tab-button" type="button" role="tab" id="catalog-tab-categories" aria-controls="catalog-panel-categories" aria-selected="false" tabindex="-1" data-catalog-tab="categories">Categories <span class="segmented-count" data-tab-count="categories"></span></button>
                     </div>
 
@@ -112,6 +115,21 @@
                         </section>
                     </div>
 
+                    <div role="tabpanel" id="catalog-panel-designs" aria-labelledby="catalog-tab-designs" data-catalog-panel="designs" hidden>
+                        <div data-design-notice></div>
+                        <section class="stats-grid" data-design-stats aria-label="Design summary"></section>
+                        <div class="filter-bar">
+                            <label class="search-control filter-search"><span aria-hidden="true">⌕</span><input id="design-search" type="search" placeholder="Search designs, styles, products…" autocomplete="off"></label>
+                            <div class="filter-field"><label for="design-service-filter">Category</label><select id="design-service-filter"><option value="">All categories</option></select></div>
+                            <div class="filter-field"><label for="design-type-filter">Type</label><select id="design-type-filter"><option value="">All designs</option><option value="sample">Temporary samples</option><option value="shop">Shop designs</option></select></div>
+                            <div class="filter-field"><label for="design-status-filter">Status</label><select id="design-status-filter"><option value="">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+                        </div>
+                        <section class="panel">
+                            <div class="panel-heading"><div><h2>Shop designs <span class="table-secondary" data-design-count></span></h2><p>Designs customers choose with “Choose a Shop Design” on the order page; they only type their details (names, date, venue), never upload a file. Select a design to edit its name, description, service, products, personalization details, and image.</p></div></div>
+                            <div data-design-table></div>
+                        </section>
+                    </div>
+
                     <div role="tabpanel" id="catalog-panel-categories" aria-labelledby="catalog-tab-categories" data-catalog-panel="categories" hidden>
                         <section class="panel table-panel" data-catalog-services>
                             <div class="panel-heading"><div><h2>Service categories</h2><p>Hidden categories and their products are not offered on the order form. Select a row to edit.</p></div></div>
@@ -134,10 +152,10 @@
         </div>
     </dialog>
     <div class="toast-region" id="toast-region" aria-live="polite"></div>
-    <script src="/assets/mockup.js"></script>
     <script src="/assets/icons.js"></script>
     <script src="/assets/admin/admin-core.js"></script>
     <script src="/assets/admin/catalog-admin.js"></script>
+    <script src="/assets/admin/design-admin.js"></script>
     <script src="/assets/admin/chatbot-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>

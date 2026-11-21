@@ -260,7 +260,7 @@
 
     // ---------------------------------------------------------------- tabs (Products · Packages · Categories)
 
-    const TABS = ["products", "packages", "categories"];
+    const TABS = ["products", "packages", "designs", "categories"];
     let activeTab = "products";
 
     /** Show one tab. The tab is kept in the URL hash (#packages) so a reload or a shared link reopens it. */
@@ -457,6 +457,8 @@
         setTabCount("products", allProducts().length);
         setTabCount("categories", categories().length);
         setTabCount("packages", packageState.data ? packageState.data.packages.length : null);
+        // The Designs tab (design-admin.js) loads its own list.
+        window.PrintShopDesignAdmin?.render();
     }
 
     function orderPreviewUrl(product) {
@@ -1500,8 +1502,8 @@
                     break;
                 case "reload-catalog":
                     try {
-                        await refreshPackagesView();
-                        toast("Catalog and packages reloaded.");
+                        await Promise.all([refreshPackagesView(), window.PrintShopDesignAdmin?.reload()]);
+                        toast("Catalog, packages, and designs reloaded.");
                     } catch (error) {
                         rerenderActiveView();
                         toast(error instanceof Error ? error.message : "The catalog could not be reloaded.");
@@ -1527,5 +1529,11 @@
         if (document.querySelector("[data-catalog-tabs]")) selectTab(tab);
     }
 
-    window.PrintShopCatalogAdmin = { renderServices, openTab, reload: () => refreshPackagesView() };
+    window.PrintShopCatalogAdmin = {
+        renderServices,
+        openTab,
+        reload: () => refreshPackagesView(),
+        // Shared with design-admin.js (the Designs tab of this page).
+        helpers: { h, api, toast, openDialog, closeDialog, formField, selectOf, guarded, readImage, statusBadge, bindControl, setTabCount },
+    };
 })();

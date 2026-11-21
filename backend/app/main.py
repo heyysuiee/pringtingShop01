@@ -16,6 +16,7 @@ from backend.app.repositories import (
     catalog_repository,
     chatbot_repository,
     customer_repository,
+    design_repository,
     order_repository,
     package_repository,
 )
@@ -66,6 +67,7 @@ REDIRECTS = {
     "/sign-up": "/create-account",
     # Package Management and Pricing Management were merged into Services & Products.
     "/admin/packages": "/admin/services#packages",
+    "/admin/designs": "/admin/services#designs",
     "/admin/pricing": "/admin/services",
 }
 
@@ -85,6 +87,8 @@ async def lifespan(app: FastAPI):
     catalog_repository.initialize()
     # Packages reference catalog products, so this runs after the catalog is seeded/migrated.
     package_repository.initialize()
+    # Shop-made designs (seeded with TEMPORARY SAMPLE designs until the shop uploads its own).
+    design_repository.initialize()
     # Chatbot conversations, inquiries, and FAQs (links to customer accounts, so after customers).
     chatbot_repository.initialize()
     app.state.database_ready = True

@@ -29,7 +29,13 @@ SEED_MARKER = "catalog_seed_v1"
 FIELD_MIGRATION_MARKER = "invitation_fields_v3"
 # Removes discontinued products (Wall Stickers) and lists Product Labels first among stickers.
 CLEANUP_MARKER = "catalog_cleanup_v1"
-FRESH_MARKERS = (FIELD_MIGRATION_MARKER, CLEANUP_MARKER)
+# Turns the single-choice Invitation size into a dropdown of several sizes. Existing size options (and
+# their prices) are kept; only the missing sizes are added.
+SIZE_DROPDOWN_MARKER = "invitation_size_dropdown_v1"
+# Customized invitations use the customer's own design: the "Design customization" choice ("Shop will design
+# it for me", "Use a sample design as reference") is removed and the design file is asked for directly.
+OWN_DESIGN_MARKER = "invitation_own_design_v1"
+FRESH_MARKERS = (FIELD_MIGRATION_MARKER, CLEANUP_MARKER, SIZE_DROPDOWN_MARKER, OWN_DESIGN_MARKER)
 
 
 def new_id(prefix: str) -> str:
@@ -136,6 +142,8 @@ def initialize() -> None:
             connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (SEED_MARKER, now_iso()))
         _migrate_invitation_fields(connection)
         _cleanup_catalog(connection)
+        _migrate_invitation_size_dropdown(connection)
+        _migrate_invitation_own_design(connection)
 
 
 def _ensure_columns(connection: sqlite3.Connection) -> None:
@@ -215,6 +223,63 @@ def _cleanup_catalog(connection: sqlite3.Connection) -> None:
                 (index, product["id"], category["id"]),
             )
     connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (CLEANUP_MARKER, now_iso()))
+
+
+def _migrate_invitation_size_dropdown(connection: sqlite3.Connection) -> None:
+    """Show the Invitation size as a dropdown and add the seeded sizes it is missing, once."""
+    if _marker_set(connection, SIZE_DROPDOWN_MARKER):
+        return
+    for category in CATALOG_SEED:
+        if category["id"] != "invitation":
+            continue
+        for product in category["products"]:
+            seed_field = next((field for field in product["fields"] if field["field_key"] == "invitation_size"), None)
+            row = connection.execute(
+                "SELECT id FROM catalog_fields WHERE product_id = ? AND field_key = 'invitation_size'",
+                (product["id"],),
+            ).fetchone()
+            if seed_field is None or row is None:
+                continue
+            connection.execute(
+                "UPDATE catalog_fields SET field_type = 'select', help_text = ?, updated_at = ? WHERE id = ?",
+                (seed_field["help_text"], now_iso(), row["id"]),
+            )
+            existing = {
+                option["value"]
+                for option in connection.execute(
+                    "SELECT value FROM catalog_field_options WHERE field_id = ?", (row["id"],)
+                ).fetchall()
+            }
+            for index, option in enumerate(seed_field["options"]):
+                if option["value"] in existing:
+                    connection.execute(
+                        "UPDATE catalog_field_options SET sort_order = ? WHERE field_id = ? AND value = ?",
+                        (index, row["id"], option["value"]),
+                    )
+                else:
+                    _insert_option(connection, row["id"], {**option, "sort_order": index})
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (SIZE_DROPDOWN_MARKER, now_iso()))
+
+
+def _migrate_invitation_own_design(connection: sqlite3.Connection) -> None:
+    """Drop the invitation "Design customization" choice and ask for the design file directly, once."""
+    if _marker_set(connection, OWN_DESIGN_MARKER):
+        return
+    for category in CATALOG_SEED:
+        if category["id"] != "invitation":
+            continue
+        for product in category["products"]:
+            for row in connection.execute(
+                "SELECT id FROM catalog_fields WHERE product_id = ? AND field_key = 'design_source'", (product["id"],)
+            ).fetchall():
+                connection.execute("DELETE FROM catalog_field_options WHERE field_id = ?", (row["id"],))
+                connection.execute("DELETE FROM catalog_fields WHERE id = ?", (row["id"],))
+            connection.execute(
+                "UPDATE catalog_fields SET depends_on = '', depends_values = '[]', required = 1, help_text = ?, updated_at = ? "
+                "WHERE product_id = ? AND field_key = 'design_file' AND depends_on = 'design_source'",
+                ("Upload your own design (print-ready file or artwork). JPG, PNG, or PDF · up to 5 MB each.", now_iso(), product["id"]),
+            )
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (OWN_DESIGN_MARKER, now_iso()))
 
 
 def _seed(connection: sqlite3.Connection) -> None:

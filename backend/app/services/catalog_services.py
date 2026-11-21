@@ -78,6 +78,10 @@ def _with_packages(categories: list[Any]) -> list[Any]:
         for product in category["products"]:
             product["packages"] = grouped.get(product["id"], [])  # type: ignore[typeddict-unknown-key]
             product["package_field_keys"] = [field["field_key"] for field in package_fields(product)["fields"]]  # type: ignore[typeddict-unknown-key]
+    # Shop-made designs: the active designs each product offers and the product fields a design order asks for.
+    from backend.app.services import design_services
+
+    design_services.attach_designs(categories)
     return categories
 
 
@@ -316,6 +320,12 @@ def quote(payload: dict[str, Any]) -> dict[str, Any]:
         selections = _parse_selections(scoped, raw_options, strict=False)
         return _package_pricing(package, quantity_value, scoped, selections)
     ensure_customizable(product)
+    design_id = payload.get("design_id")
+    if design_id not in (None, ""):
+        from backend.app.services import design_services
+
+        design_services.orderable_design(product, design_id)
+        product = design_fields(product)
     selections = _parse_selections(product, raw_options, strict=False)
     return calculate_price(product, quantity_value, selections)
 
@@ -361,6 +371,32 @@ def package_fields(product: CatalogProduct) -> CatalogProduct:
         fields = [
             field for field in product["fields"]
             if field["section"] == "options" or field["field_type"] in PACKAGE_PERSONALIZATION_TYPES
+        ]
+    return {**product, "fields": fields}
+
+
+# Choices that only say who supplies the artwork. A shop-design order already has its artwork (the design).
+DESIGN_SOURCE_KEYS = frozenset({"design_source", "design_preference"})
+
+
+def design_fields(product: CatalogProduct) -> CatalogProduct:
+    """The part of a product's order form that a shop-design order still shows.
+
+    The customer chose one of the shop's designs, so the form keeps only the print specifications (size,
+    material, finish, envelope, quantity-related choices) and drops every artwork question: file uploads,
+    "who designs it", and free-text theme or wording fields. The design's own personalization fields
+    (names, date, venue, ...) replace them. Invitations keep their basic specifications and the paper
+    finish and envelope options; their event, design, and upload sections are replaced by the design.
+    """
+    if product_has_event_section(product):
+        fields = [field for field in product["fields"] if field["section"] in {"", "options"}]
+    else:
+        fields = [
+            field for field in product["fields"]
+            if field["section"] in {"", "options"}
+            and field["field_type"] != "file"
+            and field["field_key"] not in DESIGN_SOURCE_KEYS
+            and (field["field_type"] not in ("text", "textarea") or bool(field["depends_on"]))
         ]
     return {**product, "fields": fields}
 
@@ -780,25 +816,31 @@ def delete_category(category_id: str) -> dict[str, Any]:
 # ================================================================== admin: products
 
 
-def _save_catalog_image(upload: Any) -> str:
+def decode_catalog_image(upload: Any, label: str = "Product", max_bytes: int = CATALOG_IMAGE_MAX_BYTES) -> tuple[str, str, bytes]:
+    """(mime type, file extension, contents) of an uploaded JPG, PNG, or WebP image, checked by its signature."""
     if not isinstance(upload, dict):
-        raise _bad("Invalid product image.")
+        raise _bad(f"Invalid {label.lower()} image.")
     data_url = upload.get("dataUrl")
     if not isinstance(data_url, str) or not data_url.startswith("data:") or ";base64," not in data_url:
-        raise _bad("The product image could not be read.")
+        raise _bad(f"The {label.lower()} image could not be read.")
     mime_type = data_url[5:data_url.index(";")]
     allowed = CATALOG_IMAGE_TYPES.get(mime_type)
     if allowed is None:
-        raise _bad("Product images must be JPG, PNG, or WebP.")
+        raise _bad(f"{label} images must be JPG, PNG, or WebP.")
     extension, signatures = allowed
     try:
         contents = base64.b64decode(data_url.split(",", 1)[1], validate=True)
     except (binascii.Error, ValueError) as error:
-        raise _bad("The product image could not be decoded.") from error
-    if not contents or len(contents) > CATALOG_IMAGE_MAX_BYTES:
-        raise _bad("Product images must be no larger than 2 MB.", 413)
+        raise _bad(f"The {label.lower()} image could not be decoded.") from error
+    if not contents or len(contents) > max_bytes:
+        raise _bad(f"{label} images must be no larger than {max_bytes // (1024 * 1024)} MB.", 413)
     if not any(contents.startswith(signature) for signature in signatures) or (mime_type == "image/webp" and contents[8:12] != b"WEBP"):
-        raise _bad("The product image file is not a valid image.")
+        raise _bad(f"The {label.lower()} image file is not a valid image.")
+    return mime_type, extension, contents
+
+
+def _save_catalog_image(upload: Any) -> str:
+    _, extension, contents = decode_catalog_image(upload)
     CATALOG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{secrets.token_hex(16)}{extension}"
     try:

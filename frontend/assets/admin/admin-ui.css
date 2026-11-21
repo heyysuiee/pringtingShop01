@@ -1708,7 +1708,7 @@ button.notification-item:hover {
     overflow-wrap: anywhere;
 }
 
-/* ================================================================ Catalog photos, packages, payments, mockups */
+/* ================================================================ Catalog photos, packages, payments */
 
 /* Larger product/package thumbnails in tables; select one to open the zoom/fullscreen viewer. */
 .product-thumb-button {
@@ -1833,7 +1833,7 @@ button.notification-item:hover {
     min-width: 0;
 }
 
-/* Order details: payment breakdown and invitation mockup */
+/* Order details: payment breakdown */
 .payment-split {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -1856,30 +1856,6 @@ button.notification-item:hover {
 
 .payment-split strong {
     font-size: 15px;
-}
-
-.mockup-card .mockup-preview-admin {
-    width: min(260px, 100%);
-    padding: 0;
-    border: 0;
-    background: transparent;
-    cursor: zoom-in;
-}
-
-.mockup-card svg {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55);
-}
-
-.mockup-dialog svg {
-    display: block;
-    width: auto;
-    max-width: 100%;
-    height: min(78vh, 760px);
-    margin: 0 auto;
 }
 
 /* Dashboard: items needing attention */
@@ -2374,4 +2350,227 @@ button.notification-item:hover {
 
 .notification-table .data-table td:last-child {
     white-space: nowrap;
+}
+
+/* ---------- Design Management (Services & Products → Designs) and the order's selected design ---------- */
+
+.design-sample-flag {
+    display: inline-block;
+    padding: 3px 9px;
+    border: 1px solid rgba(245, 158, 11, 0.55);
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.14);
+    color: #f5c46b;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+
+.product-cell .design-admin-thumb {
+    width: 56px;
+    height: 70px;
+}
+
+.design-sample-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 13px;
+    border-color: rgba(245, 158, 11, 0.4);
+    background: rgba(245, 158, 11, 0.08);
+    font-size: 12px;
+}
+
+.design-field-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 8px;
+}
+
+.design-field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--glass-1);
+}
+
+.design-field-include,
+.design-field-required,
+.design-product-option,
+.design-sample-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.design-field-include span {
+    display: grid;
+}
+
+.design-field-include small,
+.design-field-required span {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.design-field-required input:disabled + span {
+    opacity: 0.45;
+}
+
+.design-product-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px 14px;
+}
+
+.design-image-field {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.design-image-preview {
+    display: grid;
+    height: 220px;
+    place-items: center;
+    padding: 8px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 12px;
+    background: var(--glass-2);
+    cursor: zoom-in;
+}
+
+.design-image-preview:disabled {
+    cursor: default;
+}
+
+.design-image-preview img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+}
+
+.design-order-layout {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+}
+
+.design-order-preview {
+    display: grid;
+    height: 190px;
+    place-items: center;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--glass-2);
+    cursor: zoom-in;
+}
+
+.design-order-preview img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+}
+
+.design-order-preview:hover,
+.design-order-preview:focus-visible {
+    border-color: var(--line-accent);
+}
+
+.design-order-card .design-sample-flag {
+    margin: 0 0 8px;
+}
+
+.design-order-subtitle {
+    margin: 14px 0 6px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+    .design-image-field,
+    .design-order-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .design-sample-notice {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+/* Checkboxes inside the design editor keep their normal size (form-field inputs are styled as text boxes). */
+.form-field .design-field-picker input[type="checkbox"],
+.form-field .design-product-picker input[type="checkbox"],
+.form-field.design-sample-toggle input[type="checkbox"] {
+    width: 16px;
+    min-width: 16px;
+    height: 16px;
+    min-height: 0;
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0;
+    accent-color: var(--accent-pink);
+}
+
+.design-image-preview img,
+.design-order-preview img {
+    max-height: 100%;
+    min-height: 0;
+}
+
+.design-image-preview {
+    overflow: hidden;
+}
+
+.design-image-preview img {
+    max-height: 202px;
+}
+
+.design-order-preview img {
+    max-height: 172px;
+}
+
+.design-sample-notice .button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.design-admin-description {
+    display: -webkit-box;
+    overflow: hidden;
+    max-width: 340px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.design-admin-status {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+[data-design-table] .catalog-row-actions {
+    flex-wrap: nowrap;
+}
+
+[data-design-table] .design-admin-description,
+[data-design-table] td .table-secondary {
+    max-width: 300px;
+    white-space: normal;
 }

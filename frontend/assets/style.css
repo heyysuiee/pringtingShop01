@@ -5097,7 +5097,7 @@ fieldset.dyn-field>legend {
     font-weight: 700;
     letter-spacing: 0.02em;
 }
-/* ---------- Ordering flow: packages for every product, galleries, payment options, mockup ---------- */
+/* ---------- Ordering flow: packages for every product, galleries, payment options ---------- */
 
 .stepper.stepper-dynamic {
     grid-template-columns: repeat(var(--steps, 5), minmax(0, 1fr));
@@ -5336,114 +5336,7 @@ span.photo-gallery-main {
     margin: 6px 0 0;
 }
 
-/* Invitation mockup designer */
-
-.mockup-skip {
-    margin: 0 0 16px;
-}
-
-.mockup-designer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
-    gap: 24px;
-    align-items: start;
-}
-
-.mockup-designer.is-disabled .mockup-controls,
-.mockup-designer.is-disabled .mockup-stage {
-    opacity: 0.45;
-}
-
-.mockup-templates {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-}
-
-.mockup-template {
-    display: grid;
-    gap: 6px;
-    padding: 8px;
-    border: 2px solid var(--line);
-    border-radius: 12px;
-    background: var(--glass-1);
-    color: var(--order-ink);
-    cursor: pointer;
-    text-align: center;
-}
-
-.mockup-template.selected {
-    border-color: var(--order-brown);
-    box-shadow: 0 0 0 2px var(--order-brown);
-}
-
-.mockup-template:disabled {
-    cursor: not-allowed;
-}
-
-.mockup-template-thumb svg {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.384);
-}
-
-.mockup-template-name {
-    font-size: 0.8rem;
-    font-weight: 700;
-}
-
-.mockup-palettes {
-    display: flex;
-    gap: 10px;
-}
-
-.mockup-swatch {
-    width: 42px;
-    height: 42px;
-    border: 2px solid var(--line);
-    border-radius: 50%;
-    cursor: pointer;
-}
-
-.mockup-swatch.selected {
-    border-color: var(--order-brown);
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06), 0 0 0 5px var(--order-brown);
-}
-
-.mockup-stage {
-    position: sticky;
-    top: 16px;
-    display: grid;
-    gap: 8px;
-    margin: 0;
-}
-
-.mockup-preview {
-    display: block;
-    width: 100%;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    cursor: zoom-in;
-}
-
-.mockup-preview svg,
-.summary-mockup svg {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
-}
-
-.summary-mockup {
-    width: min(220px, 60%);
-    margin-top: 10px;
-}
-
-/* Lightbox for product, package, and mockup images */
+/* Lightbox for product and package images */
 
 .customer-lightbox {
     width: min(960px, calc(100vw - 24px));
@@ -5530,16 +5423,8 @@ span.photo-gallery-main {
         display: none;
     }
 
-    .payment-option-grid,
-    .mockup-designer {
+    .payment-option-grid {
         grid-template-columns: minmax(0, 1fr);
-    }
-
-    .mockup-stage {
-        position: static;
-        width: 100%;
-        max-width: 360px;
-        margin: 0 auto;
     }
 
     .order-system .selected-product .selected-product-gallery {
@@ -5553,9 +5438,6 @@ span.photo-gallery-main {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
-    .mockup-templates {
-        gap: 6px;
-    }
 }
 
 /* Services page: sample details gallery and packages */
@@ -5606,20 +5488,7 @@ span.photo-gallery-main {
     border-bottom: 1px solid var(--line);
 }
 
-/* Customer portal: payment breakdown and mockup */
-
-.portal-mockup {
-    width: min(240px, 70%);
-    margin: 10px 0;
-}
-
-.portal-mockup svg {
-    display: block;
-    width: 100%;
-    height: auto;
-    border-radius: 8px;
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
-}
+/* Customer portal: payment breakdown */
 
 /* Delivery or store pickup, and the payment note for customized orders */
 
@@ -5851,4 +5720,481 @@ span.photo-gallery-main {
 
 .package-inclusion-description {
     opacity: 0.8;
+}
+
+/* ---------- Order detail: collapsible sections (Order progress, Request details, Activity) ---------- */
+
+.detail-toggle {
+    margin-top: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md, 14px);
+    background: var(--glass-1, transparent);
+    overflow: hidden;
+}
+
+.detail-toggle-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 0.2s ease;
+}
+
+.detail-toggle-summary::-webkit-details-marker {
+    display: none;
+}
+
+.detail-toggle-summary:hover {
+    background: var(--primary-soft);
+}
+
+.detail-toggle-summary:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+}
+
+.detail-toggle-summary .section-label,
+.portal-system .detail-toggle-summary .section-label {
+    margin: 0;
+}
+
+.detail-toggle-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.detail-toggle-hint::before {
+    content: "Show";
+}
+
+.detail-toggle-hint::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.2s ease;
+}
+
+.detail-toggle[open] .detail-toggle-hint::before {
+    content: "Hide";
+}
+
+.detail-toggle[open] .detail-toggle-hint::after {
+    transform: translateY(2px) rotate(-135deg);
+}
+
+.detail-toggle-body {
+    padding: 4px 18px 18px;
+    animation: detail-toggle-in 0.2s ease;
+}
+
+.detail-toggle-body > .summary,
+.detail-toggle-body > .timeline,
+.detail-toggle-body > .activity {
+    margin-top: 0;
+}
+
+@keyframes detail-toggle-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .detail-toggle-body { animation: none; }
+    .detail-toggle-hint::after { transition: none; }
+}
+
+@media (max-width: 600px) {
+    .detail-toggle-summary { padding: 12px 14px; }
+    .detail-toggle-body { padding: 4px 14px 14px; }
+}
+
+/* ---------- Shop-made designs: gallery, personalization preview, and review ---------- */
+/* Uses the order-page palette tokens (cream / brown / muted pink), which the active theme maps. */
+
+.order-mode-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.design-gallery-section {
+    margin-top: 6px;
+}
+
+.design-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 14px;
+}
+
+.design-filter-chip {
+    padding: 6px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--glass-1);
+    color: var(--order-ink);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.design-filter-chip:hover {
+    border-color: var(--order-brown);
+}
+
+.design-filter-chip.selected {
+    border-color: var(--order-brown);
+    background: var(--accent-soft);
+    color: var(--order-ink);
+}
+
+.design-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 10px;
+}
+
+.design-card {
+    display: flex;
+    overflow: hidden;
+    flex-direction: column;
+    border: 2px solid var(--line);
+    border-radius: 16px;
+    background: var(--glass-1);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.design-card:hover {
+    border-color: var(--line-strong);
+    transform: translateY(-2px);
+}
+
+.design-card.selected {
+    border-color: var(--order-brown);
+    box-shadow: 0 0 0 2px var(--order-brown), 0 10px 30px var(--accent-soft);
+}
+
+.design-card-media,
+.design-preview-media {
+    position: relative;
+    display: grid;
+    place-items: center;
+    padding: 12px;
+    border: 0;
+    background: var(--glass-2);
+    cursor: zoom-in;
+}
+
+.design-card-media {
+    aspect-ratio: 4 / 5;
+}
+
+.design-card-media img,
+.design-preview-media img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.design-card-zoom {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.design-card-media:hover .design-card-zoom,
+.design-card-media:focus-visible .design-card-zoom {
+    opacity: 1;
+}
+
+.design-card-check {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--order-brown);
+    color: var(--text-on-accent, #fff);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.design-card-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 16px 16px;
+}
+
+.design-card-name,
+.design-preview-name {
+    margin: 0;
+    color: var(--order-ink);
+    font-family: var(--serif, inherit);
+    font-size: 1.08rem;
+}
+
+.design-card-description {
+    flex: 1;
+    margin: 0;
+    color: var(--text-secondary, var(--muted));
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.design-card .design-select {
+    align-self: flex-start;
+}
+
+.design-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.design-tag {
+    padding: 2px 9px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--text-secondary, var(--muted));
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.design-tag-sample {
+    border-color: rgba(245, 158, 11, 0.5);
+    background: rgba(245, 158, 11, 0.12);
+    color: #f5c46b;
+}
+
+/* Personalize step: the chosen design next to the form, with the customer's details as a live preview. */
+.design-personalize {
+    display: grid;
+    grid-template-columns: minmax(220px, 340px) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+}
+
+.design-personalize-preview {
+    position: sticky;
+    top: 96px;
+    display: grid;
+    gap: 14px;
+    margin: 0;
+}
+
+.design-preview-card {
+    display: grid;
+    overflow: hidden;
+    border: 1px solid var(--line-strong);
+    border-radius: 16px;
+    background: var(--glass-1);
+}
+
+.design-preview-card .design-preview-media {
+    max-height: 420px;
+}
+
+.design-preview-copy {
+    display: grid;
+    gap: 8px;
+    justify-items: start;
+    padding: 14px 16px 16px;
+}
+
+.design-preview-copy .field-hint {
+    margin: 0;
+}
+
+.design-preview-card.compact {
+    grid-template-columns: 96px minmax(0, 1fr);
+    align-items: center;
+}
+
+.design-preview-card.compact .design-preview-media {
+    height: 120px;
+    padding: 8px;
+}
+
+.selected-design-summary {
+    margin-bottom: 18px;
+}
+
+.design-details-preview {
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 14px;
+    background: var(--accent-soft);
+}
+
+.design-details-preview > strong {
+    color: var(--order-ink);
+    font-size: 0.85rem;
+}
+
+.design-details-preview .field-hint {
+    margin: 0;
+}
+
+.design-details-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+}
+
+.design-details-list div {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+    gap: 10px;
+}
+
+.design-details-list dt {
+    color: var(--text-muted, var(--muted));
+    font-size: 0.8rem;
+}
+
+.design-details-list dd {
+    margin: 0;
+    color: var(--order-ink);
+    font-size: 0.86rem;
+    font-weight: 600;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+.summary-design .design-preview-card {
+    grid-template-columns: 180px minmax(0, 1fr);
+    align-items: center;
+    margin-top: 10px;
+}
+
+.summary-design .design-preview-media {
+    height: 220px;
+}
+
+@media (max-width: 760px) {
+    .design-personalize {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .design-personalize-preview {
+        position: static;
+    }
+
+    .design-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+    }
+
+    .summary-design .design-preview-card {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* Customer portal: the design an order was placed with */
+.portal-design {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+}
+
+.portal-design img {
+    width: 120px;
+    max-height: 160px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: var(--glass-2);
+    padding: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .design-card,
+    .design-card-zoom {
+        transition: none;
+    }
+
+    .design-card:hover {
+        transform: none;
+    }
+}
+
+.design-card .design-select {
+    white-space: nowrap;
+}
+
+/* "Use my own design" card in the gallery, and the note in the own-design form */
+.design-card-own {
+    border-style: dashed;
+}
+
+.design-own-media {
+    gap: 10px;
+    align-content: center;
+    color: var(--order-ink);
+    cursor: default;
+}
+
+.design-own-icon {
+    display: grid;
+    width: 56px;
+    height: 56px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--order-brown);
+    font-size: 1.6rem;
+}
+
+.own-design-note {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--glass-1);
+    color: var(--text-secondary, var(--muted));
+    font-size: 0.88rem;
+}
+
+@media (max-width: 760px) {
+    .design-card-body {
+        padding: 12px;
+    }
+
+    .design-card .design-select {
+        align-self: stretch;
+        padding-inline: 10px;
+        font-size: 0.82rem;
+    }
+
+    .design-card-name {
+        font-size: 0.98rem;
+    }
 }

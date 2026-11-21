@@ -6,13 +6,18 @@
  * (/api/catalog/quote) with the same rules it applies when the order is saved, for custom orders and
  * package orders alike.
  *
- * Every product starts with an ordering option: Select Package or Customize Order.
- *   Invitations:  Product → Ordering Option → Configure → Event & Files → Mockup → Contact & Payment → Review
+ * Every product starts with an ordering option: Select Package or Customize Order. Customize Order opens the
+ * shop's design gallery when the product has designs (internally the "design" mode: choose a design and add
+ * the details, no upload). The gallery also offers "Use my own design", which opens the product's own
+ * customize form with its uploads (the "customize" mode, also used by products without designs).
+ *   Invitations:  Product → Ordering Option → Configure → Event & Files → Contact & Payment → Review
  *   Other items:  Product → Ordering Option → Details → Contact & Payment → Review
+ * A shop design order replaces the artwork steps (uploads, design direction) with Personalize:
+ *   Invitations:  Product → Ordering Option (design gallery) → Personalize → Configure → Contact & Payment → Review
+ *   Other items:  Product → Ordering Option (design gallery) → Personalize → Print Details → Contact & Payment → Review
  */
 (() => {
     const DynamicForm = window.PrintShopDynamicForm;
-    const Mockup = window.InvitationMockup;
     const form = document.querySelector("#order-form");
     if (!form || !DynamicForm) return;
 
@@ -40,6 +45,13 @@
 
     const generalFormContainer = $("#general-dynamic-fields");
     const generalPackageContainer = $("#general-package-fields");
+    const generalDesignContainer = $("#general-design-fields");
+    const designSection = $("#design-section");
+    const designList = $("#design-list");
+    const designFilter = $("#design-filter");
+    const designError = $("#design-error");
+    const designPreview = $("#design-preview");
+    const personalizeContainer = $("#design-personalize-fields");
     const basicsContainer = $("#invitation-basics-fields");
     const optionsContainer = $("#invitation-options-fields");
     const designContainer = $("#invitation-design-fields");
@@ -77,7 +89,22 @@
             { step: 2, label: "Ordering Option" },
             { step: 3, label: "Configure" },
             { step: 4, label: "Event & Files" },
-            { step: 7, label: "Mockup" },
+            { step: 5, label: "Contact & Payment" },
+            { step: 6, label: "Review" },
+        ],
+        designGeneral: [
+            { step: 1, label: "Product" },
+            { step: 2, label: "Ordering Option" },
+            { step: 9, label: "Customize Design" },
+            { step: 8, label: "Print Details" },
+            { step: 5, label: "Contact & Payment" },
+            { step: 6, label: "Review" },
+        ],
+        designInvitation: [
+            { step: 1, label: "Product" },
+            { step: 2, label: "Ordering Option" },
+            { step: 9, label: "Customize Design" },
+            { step: 3, label: "Configure" },
             { step: 5, label: "Contact & Payment" },
             { step: 6, label: "Review" },
         ],
@@ -88,10 +115,14 @@
         categories: [],
         product: null,
         invitation: false,
-        kind: null, // mockup kind: birthday | wedding | christening
-        mode: "", // "package" | "customize"
+        mode: "", // "package" | "design" | "customize"
         packages: [],
         package: null,
+        designs: [], // the shop's designs offered for this product
+        ownDesign: false, // Customize Order with the customer's own design instead of a shop design
+        design: null,
+        designStyle: "", // gallery filter
+        personalizeForm: null, // the chosen design's personalization questions
         forms: {},
         referenceFiles: [],
         quote: null,
@@ -100,7 +131,6 @@
         sequence: SEQUENCES.general,
         activeStep: 1,
         idempotencyKey: newIdempotencyKey(),
-        mockup: { template: "", palette: 0, skip: false },
     };
 
     function newIdempotencyKey() {
@@ -170,7 +200,7 @@
         return Boolean(product && (product.fields || []).some((field) => field.section === "event"));
     }
 
-    // ---------------------------------------------------------------- lightbox (product and package photos, mockup)
+    // ---------------------------------------------------------------- lightbox (product and package photos)
 
     const lightbox = $("#customer-lightbox");
     const lightboxState = { items: [], index: 0 };
@@ -202,7 +232,7 @@
         $("#lightbox-next").hidden = items.length < 2;
         setLightboxZoom(false);
         const zoomButton = $("#lightbox-zoom");
-        if (zoomButton) zoomButton.hidden = Boolean(item.node); // zoom applies to photos, not the live mockup
+        if (zoomButton) zoomButton.hidden = Boolean(item.node); // zoom applies to photos, not the live preview
     }
 
     // Zoom: the photo scales up and follows the pointer, so any part of it can be inspected.
@@ -371,7 +401,6 @@
 
     function onFormChange() {
         scheduleQuote();
-        if (state.activeStep === 7) renderMockup();
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
@@ -388,12 +417,19 @@
             $("#invitation-options-block").hidden = !state.forms.options.fieldCount;
         } else {
             const packageKeys = new Set(product.package_field_keys || []);
+            const designKeys = new Set(product.design_field_keys || []);
             state.forms = {
                 general: DynamicForm.create(generalFormContainer, product, { onChange: onFormChange, idPrefix: "opt" }),
                 generalPackage: DynamicForm.create(generalPackageContainer, product, {
                     onChange: onFormChange,
                     idPrefix: "pkg",
                     fieldFilter: (field) => packageKeys.has(field.field_key),
+                }),
+                // A shop design order keeps only the print specifications (no artwork questions or uploads).
+                generalDesign: DynamicForm.create(generalDesignContainer, product, {
+                    onChange: onFormChange,
+                    idPrefix: "dsgopt",
+                    fieldFilter: (field) => designKeys.has(field.field_key),
                 }),
             };
         }
@@ -402,9 +438,11 @@
     function activeForms() {
         const forms = state.forms;
         if (!state.invitation) {
-            return [state.mode === "package" ? forms.generalPackage : forms.general].filter(Boolean);
+            const chosen = { package: forms.generalPackage, design: forms.generalDesign }[state.mode] || forms.general;
+            return [chosen].filter(Boolean);
         }
         if (state.mode === "package") return [forms.options, forms.event, forms.upload].filter(Boolean);
+        if (state.mode === "design") return [forms.basics, forms.options].filter(Boolean);
         return [forms.basics, forms.options, forms.design, forms.event, forms.upload].filter(Boolean);
     }
 
@@ -416,7 +454,7 @@
 
     function fileCount() {
         return activeForms().reduce((total, dynamicForm) => total + dynamicForm.fileCount(), 0)
-            + (state.invitation ? 0 : state.referenceFiles.length);
+            + (state.invitation || state.mode === "design" ? 0 : state.referenceFiles.length);
     }
 
     // ---------------------------------------------------------------- product selection
@@ -433,12 +471,14 @@
         );
         const packages = product.packages || [];
         const customizable = customizeAllowed(product);
+        const designCount = customizable ? (product.designs || []).length : 0;
         const packageText = `${packages.length} package${packages.length === 1 ? "" : "s"} available`;
         copy.append(el("p", "field-hint", packages.length
             ? (customizable ? `${packageText}, or customize your own order.` : `${packageText}. This item is ordered through its packages only.`)
             : (customizable
                 ? "Customize your own order; the shop has not published packages for this item yet."
                 : "This item is not available to order right now. Please choose another product or contact the shop.")));
+        if (designCount) copy.append(el("p", "field-hint", `${designCount} shop design${designCount === 1 ? "" : "s"} to choose from — just add your details.`));
         if (product.min_quantity > 1) copy.append(el("span", "min-badge", `Minimum order: ${product.min_quantity.toLocaleString()} pcs`));
         selectedProduct.append(gallery(productImages(product), product.name, "selected-product-gallery"), copy);
     }
@@ -458,9 +498,13 @@
         if (!product || product === state.product) return;
         state.product = product;
         state.invitation = isInvitationProduct(product);
-        state.kind = Mockup ? Mockup.kindOf(product) : null;
         state.packages = Array.isArray(product.packages) ? product.packages : [];
         state.package = null;
+        state.designs = customizeAllowed(product) && Array.isArray(product.designs) ? product.designs : [];
+        state.design = null;
+        state.designStyle = "";
+        state.ownDesign = false;
+        designError.textContent = "";
         state.quote = null;
         state.quoteSequence += 1;
         window.clearTimeout(state.quoteTimer);
@@ -492,6 +536,8 @@
             : "Choose one of the ready-made packages with a fixed price and inclusions. The shop confirms the final amount before payment is requested.";
         $("#customize-mode-note").textContent = !customizeAllowed(product)
             ? "Not available for this item. Please choose one of its packages."
+            : state.designs.length
+            ? `Choose one of the shop's ${state.designs.length} design${state.designs.length === 1 ? "" : "s"} and add your details, or send your own design.`
             : state.invitation
             ? "Set the printing, finish, envelope, quantity, design direction, and event details yourself."
             : largeFormat
@@ -502,15 +548,17 @@
             : "No packages are published for this item yet.";
 
         createForms(product);
+        destroyPersonalizeForm();
         state.referenceFiles = [];
         renderReferenceFiles();
-        resetMockup();
         renderPackages();
-        // With only one way to order (no packages, or customized orders disabled), choose it for the customer.
-        const initialMode = !customizeAllowed(product) ? (state.packages.length ? "package" : "") : (state.packages.length ? "" : "customize");
+        renderDesigns();
+        // With only one way to order, choose it for the customer.
+        const choices = [state.packages.length ? "package" : "", customizeAllowed(product) ? "customize" : ""].filter(Boolean);
+        const initialMode = choices.length === 1 ? choices[0] : "";
         setMode(initialMode, { silent: true });
         configureLegacyEvent();
-        setSequence(state.invitation ? "invitation" : "general");
+        setSequence(sequenceKind());
 
         if (!state.sequence.some((item) => item.step === state.activeStep)) showStep(1, false);
         else syncNextButton();
@@ -526,6 +574,8 @@
         url.searchParams.set("design", state.product.id);
         if (state.mode === "package" && state.package) url.searchParams.set("package", state.package.id);
         else url.searchParams.delete("package");
+        if (state.mode === "design" && state.design) url.searchParams.set("shop_design", state.design.id);
+        else url.searchParams.delete("shop_design");
         window.history.replaceState(null, "", url);
     }
 
@@ -651,7 +701,8 @@
 
     function updateModeButtons() {
         document.querySelectorAll("[data-order-mode]").forEach((button) => {
-            const active = button.dataset.orderMode === state.mode;
+            // The shop design flow is Customize Order for products that have designs.
+            const active = button.dataset.orderMode === (state.mode === "design" ? "customize" : state.mode);
             button.classList.toggle("selected", active);
             button.setAttribute("aria-pressed", String(active));
         });
@@ -670,38 +721,70 @@
         const next = $("#btn-next");
         if (!next || !state.product) return;
         const needsPackage = state.activeStep === 2 && state.mode === "package" && !state.package;
-        next.disabled = needsPackage;
-        next.title = needsPackage ? "Select a package to continue." : "";
+        const needsDesign = state.activeStep === 9 && state.mode === "design" && !state.design;
+        next.disabled = needsPackage || needsDesign;
+        next.title = needsPackage ? "Select a package to continue." : needsDesign ? "Select a design to continue." : "";
+    }
+
+    /** Which step sequence the chosen product and ordering option use. */
+    function sequenceKind() {
+        if (state.mode === "design") return state.invitation ? "designInvitation" : "designGeneral";
+        return state.invitation ? "invitation" : "general";
     }
 
     function setMode(mode, { silent = false } = {}) {
         if (mode === "package" && !state.packages.length) mode = customizeAllowed() ? "customize" : "";
+        if (mode === "design" && !state.designs.length) mode = customizeAllowed() ? "customize" : (state.packages.length ? "package" : "");
         if (mode === "customize" && !customizeAllowed()) mode = state.packages.length ? "package" : "";
+        // Customize Order starts with the shop's designs whenever the product has any, unless the customer
+        // chose to send their own design.
+        if (mode === "customize" && state.designs.length && !state.ownDesign) mode = "design";
         state.mode = mode;
         if (mode !== "package") state.package = null;
+        if (mode !== "design") {
+            state.design = null;
+            destroyPersonalizeForm();
+        }
         if (!silent) {
             modeError.textContent = "";
             if (mode === "package") packageError.textContent = "";
+            if (mode === "design") designError.textContent = "";
         }
+        const design = mode === "design";
         updateModeButtons();
         packageSection.hidden = mode !== "package";
         renderPackages();
-        customizeSection.hidden = mode !== "customize";
-        generalFormContainer.hidden = mode === "package";
+        renderDesigns();
+        customizeSection.hidden = mode !== "customize" && !design;
+        $("#invitation-design-block").hidden = design;
+        generalFormContainer.hidden = mode === "package" || design;
         const packageFormCount = state.forms.generalPackage?.fieldCount || 0;
         generalPackageContainer.hidden = mode !== "package" || !packageFormCount;
-        $("#general-step-title").textContent = mode === "package" ? "Package details for" : "Customize your";
+        generalDesignContainer.hidden = !design || !(state.forms.generalDesign?.fieldCount);
+        // A shop design order never takes design or reference files.
+        $("#general-artwork-field").hidden = design;
+        uploadInput.disabled = design;
+        $("#general-step-title").textContent = mode === "package" ? "Package details for" : design ? "Print details for" : "Customize your";
         $("#general-step-lead").textContent = mode === "package"
             ? (packageFormCount
                 ? "Your package fixes the specifications. Add the personalization details and the quantity you need."
                 : "Your package fixes the specifications. Set the quantity and add any special instructions.")
-            : "Only the options for this product are shown. Fields marked “optional” can be left blank.";
+            : design
+                ? "Your design is chosen. Choose the print specifications and the quantity; the shop confirms the final amount with a quotation."
+                : "Only the options for this product are shown. Fields marked “optional” can be left blank.";
         configureLead.textContent = mode === "package"
             ? (state.package
                 ? "Choose the paper finish and envelope, then set the total pieces. The package price is fixed; extra pieces use the package's add-on rate."
                 : "Choose a package to open the package order form.")
-            : "Set the printing, finish, envelope, quantity, and design direction. Required fields are marked; the shop confirms the final amount before payment.";
+            : design
+                ? "Your design and details are set. Choose the printing, paper finish, envelope, and total pieces; the shop confirms the final amount with a quotation."
+                : "Set the printing, finish, envelope, and quantity, and upload your design. Required fields are marked; the shop confirms the final amount before payment.";
+        configureLegacyEvent();
         renderSelectedPackageSummary();
+        renderSelectedDesign();
+        renderOwnDesignNotes();
+        setSequence(sequenceKind());
+        if (!silent && state.product) showStep(state.sequence.some((item) => item.step === state.activeStep) ? state.activeStep : 2, false);
         state.quote = null;
         configureQuantity({ reset: true });
         scheduleQuote();
@@ -791,11 +874,242 @@
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }
 
+    // ---------------------------------------------------------------- shop designs (gallery, selection, personalization)
+
+    function designItems(designs) {
+        return designs.map((design) => ({
+            src: design.image,
+            alt: `${design.name} — design preview`,
+            caption: `${design.name}${design.style ? ` · ${design.style}` : ""}${design.is_sample ? " · Sample design for illustration" : ""}`,
+        }));
+    }
+
+    function designBadges(design) {
+        const badges = el("span", "design-badges");
+        if (design.style) badges.append(el("span", "design-tag", design.style));
+        if (design.is_sample) {
+            const sample = el("span", "design-tag design-tag-sample", "Sample design");
+            sample.title = "A temporary sample shown until the shop adds its own designs.";
+            badges.append(sample);
+        }
+        return badges;
+    }
+
+    function visibleDesigns() {
+        return state.designs.filter((design) => !state.designStyle || design.style === state.designStyle);
+    }
+
+    function renderDesignFilter() {
+        const styles = [...new Set(state.designs.map((design) => design.style).filter(Boolean))];
+        designFilter.hidden = styles.length < 2;
+        if (styles.length < 2) {
+            designFilter.replaceChildren();
+            return;
+        }
+        designFilter.replaceChildren(...["", ...styles].map((style) => {
+            const button = el("button", `design-filter-chip${state.designStyle === style ? " selected" : ""}`, style || "All designs");
+            button.type = "button";
+            button.setAttribute("aria-pressed", String(state.designStyle === style));
+            button.addEventListener("click", () => {
+                state.designStyle = style;
+                renderDesigns();
+            });
+            return button;
+        }));
+    }
+
+    function renderDesigns() {
+        designList.replaceChildren();
+        renderDesignFilter();
+        if (!state.designs.length) {
+            designList.append(el("p", "package-empty", "The shop has not published designs for this item yet. Choose another ordering option."));
+            return;
+        }
+        const designs = visibleDesigns();
+        designs.forEach((design, index) => {
+            const selected = state.design?.id === design.id;
+            const card = el("article", `design-card${selected ? " selected" : ""}`);
+            const view = el("button", "design-card-media");
+            view.type = "button";
+            view.setAttribute("aria-label", `View a larger preview of ${design.name}`);
+            const image = el("img");
+            image.src = design.image;
+            image.alt = `${design.name} design preview`;
+            image.loading = "lazy";
+            image.decoding = "async";
+            view.append(image, el("span", "design-card-zoom", "View larger"));
+            if (selected) view.append(el("span", "design-card-check", "✓ Selected"));
+            view.addEventListener("click", () => openLightbox(designItems(designs), index));
+            const body = el("div", "design-card-body");
+            body.append(el("h4", "design-card-name", design.name), designBadges(design));
+            if (design.description) body.append(el("p", "design-card-description", design.description));
+            const choose = el("button", `btn ${selected ? "btn-dark" : "btn-ghost-dark"} btn-small design-select`, selected ? "Selected ✓" : "Select design");
+            choose.type = "button";
+            choose.setAttribute("aria-pressed", String(selected));
+            choose.addEventListener("click", () => selectDesign(design));
+            body.append(choose);
+            card.append(view, body);
+            designList.append(card);
+        });
+        // Last in the gallery: the customer can still send their own design.
+        designList.append(ownDesignCard());
+    }
+
+    /** The gallery's "Use my own design" choice: opens the product's customize form with its uploads. */
+    function ownDesignCard() {
+        const card = el("article", "design-card design-card-own");
+        const icon = el("div", "design-card-media design-own-media");
+        icon.append(el("span", "design-own-icon", "↥"), el("strong", "", "Your own design"));
+        const body = el("div", "design-card-body");
+        body.append(
+            el("h4", "design-card-name", "Use my own design"),
+            el("p", "design-card-description", "Upload your own design file instead of choosing one of the shop's designs."),
+        );
+        const choose = el("button", "btn btn-ghost-dark btn-small design-select", "Use my own design");
+        choose.type = "button";
+        choose.addEventListener("click", useOwnDesign);
+        body.append(choose);
+        card.append(icon, body);
+        return card;
+    }
+
+    function useOwnDesign() {
+        state.ownDesign = true;
+        setMode("customize", { silent: true });
+        // Open the first step of the product's customize form (design direction and uploads).
+        showStep(state.invitation ? 3 : 8);
+    }
+
+    function useShopDesigns() {
+        state.ownDesign = false;
+        setMode("design", { silent: true });
+        showStep(9);
+    }
+
+    /** In the own-design form: a way back to the shop's designs. */
+    function renderOwnDesignNotes() {
+        const show = state.mode === "customize" && state.ownDesign && state.designs.length > 0;
+        for (const host of [$("#general-own-design-note"), $("#invitation-own-design-note")]) {
+            if (!host) continue;
+            host.hidden = !show;
+            host.replaceChildren();
+            if (!show) continue;
+            const back = el("button", "text-button", `Choose one of the shop's ${state.designs.length} designs instead`);
+            back.type = "button";
+            back.addEventListener("click", useShopDesigns);
+            host.append(el("span", "", "You are sending your own design. "), back);
+        }
+    }
+
+    function destroyPersonalizeForm() {
+        state.personalizeForm?.destroy();
+        state.personalizeForm = null;
+    }
+
+    function selectDesign(design, { scroll = true } = {}) {
+        const changed = state.design?.id !== design.id;
+        state.design = design;
+        designError.textContent = "";
+        if (changed || !state.personalizeForm) {
+            // Keep what the customer already typed for questions the new design also asks.
+            const previous = state.personalizeForm?.values() || {};
+            destroyPersonalizeForm();
+            const fields = design.fields.map((field) => ({
+                ...field,
+                default_value: previous[field.field_key] !== undefined ? String(previous[field.field_key]) : field.default_value,
+            }));
+            state.personalizeForm = DynamicForm.create(personalizeContainer, { id: design.id, name: design.name, pricing_mode: "quote", base_price: null, fields }, {
+                onChange: onPersonalizeChange,
+                idPrefix: "dsg",
+            });
+        }
+        renderDesigns();
+        renderSelectedDesign();
+        state.quote = null;
+        scheduleQuote();
+        syncNextButton();
+        syncSelectionUrl();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+        // The details form opens right below the gallery.
+        if (scroll && changed && state.activeStep === 9) $("#design-details-title").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function onPersonalizeChange() {
+        renderDesignDetails();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    }
+
+    function designDetailRows() {
+        return state.personalizeForm ? state.personalizeForm.summary() : [];
+    }
+
+    /** The chosen design (select the picture to see it larger), with a Change design button. */
+    function designPreviewNode(design, { compact = false } = {}) {
+        const wrapper = el("div", `design-preview-card${compact ? " compact" : ""}`);
+        const view = el("button", "design-preview-media");
+        view.type = "button";
+        view.setAttribute("aria-label", `View a larger preview of ${design.name}`);
+        const image = el("img");
+        image.src = design.image;
+        image.alt = `${design.name} design preview`;
+        view.append(image);
+        view.addEventListener("click", () => openLightbox(designItems([design])));
+        const copy = el("div", "design-preview-copy");
+        copy.append(el("span", "order-step-kicker", "Selected design"), el("strong", "design-preview-name", design.name), designBadges(design));
+        if (!compact && design.description) copy.append(el("p", "field-hint", design.description));
+        const change = el("button", "btn btn-ghost-dark btn-small", "Change design");
+        change.type = "button";
+        change.addEventListener("click", () => {
+            showStep(9, false);
+            designSection.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        copy.append(change);
+        wrapper.append(view, copy);
+        return wrapper;
+    }
+
+    /** The customer's details listed next to the design: the preview of what goes on it. */
+    function renderDesignDetails() {
+        const host = designPreview.querySelector(".design-details-preview");
+        if (!host) return;
+        const rows = designDetailRows();
+        host.replaceChildren(el("strong", "", "Your details on this design"));
+        if (!rows.length) {
+            host.append(el("p", "field-hint", "Your details appear here as you type."));
+            return;
+        }
+        const list = el("dl", "design-details-list");
+        rows.forEach((row) => {
+            const item = el("div");
+            item.append(el("dt", "", row.label), el("dd", "", row.value));
+            list.append(item);
+        });
+        host.append(list, el("p", "field-hint", "The shop places these details on the design and sends a draft for your approval."));
+    }
+
+    function renderSelectedDesign() {
+        const design = state.mode === "design" ? state.design : null;
+        // The details form opens below the gallery once a design is chosen.
+        $("#design-personalize").hidden = !design;
+        $("#design-details-hint").hidden = Boolean(design);
+        designPreview.replaceChildren();
+        if (design) {
+            designPreview.append(designPreviewNode(design), el("div", "design-details-preview"));
+            renderDesignDetails();
+        }
+        for (const target of [$("#general-design-summary"), $("#invitation-design-summary")]) {
+            target.replaceChildren();
+            target.hidden = !design;
+            if (design) target.append(designPreviewNode(design, { compact: true }));
+        }
+    }
+
     // ---------------------------------------------------------------- general products: optional event details
 
     function configureLegacyEvent() {
         // Invitation event details are catalog fields in the "event" section.
-        const mode = state.invitation ? "none" : (state.product?.event_mode || "none");
+        // A shop design order collects its details (names, date, venue) in the Personalize step.
+        const mode = state.invitation || state.mode === "design" ? "none" : (state.product?.event_mode || "none");
         eventToggle.hidden = mode !== "optional";
         if (mode !== "optional") hasEvent.checked = false;
         const show = mode === "required" || (mode === "optional" && hasEvent.checked);
@@ -832,11 +1146,12 @@
         window.clearTimeout(state.quoteTimer);
         if (!state.product) return;
         const reference = estimateReference();
-        if (!state.mode || (state.mode === "package" && !state.package)) {
+        if (!state.mode || (state.mode === "package" && !state.package) || (state.mode === "design" && !state.design)) {
             state.quote = null;
             reference.total.textContent = "—";
             reference.lines.replaceChildren();
-            reference.status.textContent = state.mode === "package" ? "Select a package to see its total." : "Choose how you would like to order.";
+            reference.status.textContent = state.mode === "package" ? "Select a package to see its total."
+                : state.mode === "design" ? "Select a design to see the estimate." : "Choose how you would like to order.";
             renderPaymentBreakdown();
             return;
         }
@@ -853,6 +1168,7 @@
             options: collectValues(),
         };
         if (state.mode === "package" && state.package) body.package_id = state.package.id;
+        if (state.mode === "design" && state.design) body.design_id = state.design.id;
         try {
             const quote = await requestJson("/api/catalog/quote", {
                 method: "POST",
@@ -1021,127 +1337,6 @@
     }));
     syncFulfillment();
 
-    // ---------------------------------------------------------------- invitation mockup designer
-
-    function resetMockup() {
-        const designerStep = steps.find((section) => section.dataset.step === "7");
-        if (!state.kind || !Mockup) {
-            state.mockup = { template: "", palette: 0, skip: true };
-            if (designerStep) designerStep.dataset.available = "false";
-            return;
-        }
-        const first = Mockup.templates(state.kind)[0];
-        const defaults = Mockup.defaults(state.kind);
-        state.mockup = { template: first.id, palette: 0, skip: false };
-        $("#mockup-headline").value = defaults.headline || "";
-        $("#mockup-message").value = defaults.message || "";
-        $("#mockup-skip").checked = false;
-        if (designerStep) designerStep.dataset.available = "true";
-    }
-
-    function mockupDetails() {
-        const values = state.forms.event ? state.forms.event.values() : {};
-        const names = state.kind === "wedding"
-            ? [values.bride_name, values.groom_name].filter(Boolean).join(" & ")
-            : values.celebrant_name || "";
-        return {
-            names,
-            age: values.celebrant_age !== undefined ? String(values.celebrant_age) : "",
-            date: values.event_date || "",
-            time: values.event_time || "",
-            location: values.event_location || "",
-            rsvp: values.rsvp_contact || "",
-        };
-    }
-
-    function mockupData(template = state.mockup.template, palette = state.mockup.palette) {
-        return {
-            kind: state.kind,
-            template,
-            palette,
-            headline: $("#mockup-headline").value.trim(),
-            message: $("#mockup-message").value.trim(),
-            details: mockupDetails(),
-        };
-    }
-
-    function renderMockup() {
-        if (!state.kind || !Mockup) return;
-        const templates = Mockup.templates(state.kind);
-        const designer = $("#mockup-designer");
-        designer.classList.toggle("is-disabled", state.mockup.skip);
-        designer.querySelectorAll("input, textarea, button").forEach((control) => {
-            if (control.id !== "mockup-edit-details") control.disabled = state.mockup.skip;
-        });
-
-        const templateHost = $("#mockup-templates");
-        templateHost.replaceChildren(...templates.map((template) => {
-            const selected = template.id === state.mockup.template;
-            const button = el("button", `mockup-template${selected ? " selected" : ""}`);
-            button.type = "button";
-            button.setAttribute("role", "radio");
-            button.setAttribute("aria-checked", String(selected));
-            button.disabled = state.mockup.skip;
-            const thumb = el("span", "mockup-template-thumb");
-            thumb.append(Mockup.render(mockupData(template.id, selected ? state.mockup.palette : 0)));
-            button.append(thumb, el("span", "mockup-template-name", template.name));
-            button.addEventListener("click", () => {
-                state.mockup.template = template.id;
-                state.mockup.palette = 0;
-                renderMockup();
-            });
-            return button;
-        }));
-
-        const current = templates.find((template) => template.id === state.mockup.template) || templates[0];
-        const paletteHost = $("#mockup-palettes");
-        paletteHost.replaceChildren(...current.palettes.map((palette, index) => {
-            const selected = index === state.mockup.palette;
-            const swatch = el("button", `mockup-swatch${selected ? " selected" : ""}`);
-            swatch.type = "button";
-            swatch.setAttribute("role", "radio");
-            swatch.setAttribute("aria-checked", String(selected));
-            swatch.setAttribute("aria-label", `Colour option ${index + 1}`);
-            swatch.disabled = state.mockup.skip;
-            swatch.style.background = `linear-gradient(135deg, ${palette.bg} 0 50%, ${palette.accent} 50% 100%)`;
-            swatch.addEventListener("click", () => {
-                state.mockup.palette = index;
-                renderMockup();
-            });
-            return swatch;
-        }));
-
-        const preview = $("#mockup-preview");
-        preview.replaceChildren(Mockup.render(mockupData()));
-        const details = mockupDetails();
-        const missing = [["the celebrant's name", details.names], ["the event date", details.date], ["the event location", details.location]]
-            .filter(([, value]) => !value).map(([label]) => label);
-        $("#mockup-caption").textContent = state.mockup.skip
-            ? "Mockup skipped. The shop will design from your details and uploads."
-            : `${current.name} · colour option ${state.mockup.palette + 1}. ${missing.length ? `Add ${missing.join(", ")} in Event & Files to complete the card.` : "Select the card to view it larger."}`;
-    }
-
-    function mockupPayload() {
-        if (!state.kind || state.mockup.skip || !state.mockup.template) return null;
-        return {
-            template: state.mockup.template,
-            palette: state.mockup.palette,
-            headline: $("#mockup-headline").value.trim(),
-            message: $("#mockup-message").value.trim(),
-        };
-    }
-
-    $("#mockup-skip")?.addEventListener("change", (event) => {
-        state.mockup.skip = event.target.checked;
-        renderMockup();
-    });
-    ["#mockup-headline", "#mockup-message"].forEach((selector) => $(selector)?.addEventListener("input", renderMockup));
-    $("#mockup-preview")?.addEventListener("click", () => {
-        if (!state.kind) return;
-        openLightbox([{ node: () => Mockup.render(mockupData()), caption: "Invitation mockup preview — the shop sends a final draft for your approval." }]);
-    });
-    $("#mockup-edit-details")?.addEventListener("click", () => showStep(4));
-
     // ---------------------------------------------------------------- general reference files (non-invitation)
 
     function formatBytes(bytes) {
@@ -1218,7 +1413,7 @@
         const product = state.product;
         if (!product) return;
         const quantity = quantityValue();
-        const kind = state.mode === "package" ? "Package" : (state.invitation ? "Customized invitation" : "Customized order");
+        const kind = state.mode === "package" ? "Package" : state.mode === "design" ? "Customize Order (shop design)" : (state.invitation ? "Customized invitation" : "Customized order");
         appendGroup("Product", [
             ["Category", product.category_label],
             ["Product", product.name],
@@ -1243,7 +1438,22 @@
             ]);
         }
 
-        if (state.invitation) {
+        if (state.mode === "design" && state.design) {
+            const design = state.design;
+            const preview = el("div", "summary-design");
+            preview.append(designPreviewNode(design));
+            appendGroup("Selected design", [
+                ["Design", design.name],
+                ["Style", design.style],
+                ["Note", design.is_sample ? "Sample design shown for illustration; the shop confirms the final artwork in your draft." : ""],
+            ], preview);
+            appendGroup("Your design details", designDetailRows().map((row) => [row.label, row.value]));
+        }
+
+        if (state.invitation && state.mode === "design") {
+            appendGroup("Basic specifications", (state.forms.basics?.summary() || []).map((row) => [row.label, row.value]));
+            appendGroup("Paper finish & envelope", (state.forms.options?.summary() || []).map((row) => [row.label, row.value]));
+        } else if (state.invitation) {
             if (state.mode === "customize") {
                 appendGroup("Basic specifications", (state.forms.basics?.summary() || []).map((row) => [row.label, row.value]));
                 appendGroup("Design customization", (state.forms.design?.summary() || []).map((row) => [row.label, row.value]));
@@ -1251,20 +1461,11 @@
             appendGroup("Paper finish & envelope", (state.forms.options?.summary() || []).map((row) => [row.label, row.value]));
             appendGroup("Event details", (state.forms.event?.summary() || []).map((row) => [row.label, row.value]));
             appendGroup("Photos & references", (state.forms.upload?.summary() || []).map((row) => [row.label, row.value]));
-            const mockup = mockupPayload();
-            if (mockup) {
-                const template = Mockup.templates(state.kind).find((item) => item.id === mockup.template);
-                const preview = el("div", "summary-mockup");
-                preview.append(Mockup.render(mockupData()));
-                appendGroup("Invitation mockup", [["Template", `${template?.name || mockup.template} · colour option ${mockup.palette + 1}`]], preview);
-            } else if (state.kind) {
-                appendGroup("Invitation mockup", [["Mockup", "Skipped — the shop will design from your details"]]);
-            }
         } else {
-            const dynamicForm = state.mode === "package" ? state.forms.generalPackage : state.forms.general;
+            const dynamicForm = activeForms()[0];
             const specs = dynamicForm?.summary() || [];
             if (state.quote?.area_sqft) specs.push({ label: "Print area", value: `${state.quote.area_sqft} sq ft per piece` });
-            appendGroup(state.mode === "package" ? "Personalization" : "Your options", specs.map((row) => [row.label, row.value]));
+            appendGroup(state.mode === "package" ? "Personalization" : state.mode === "design" ? "Print specifications" : "Your options", specs.map((row) => [row.label, row.value]));
             if (!eventFields.hidden) {
                 const event = eventData();
                 appendGroup("Event details", [
@@ -1284,14 +1485,14 @@
             ["Contact number", $("#phone").value.trim()],
             ["Messenger", $("#messenger").value.trim()],
         ]);
-        if (!state.invitation) {
+        if (!state.invitation && state.mode !== "design") {
             appendGroup("Other reference files", [["Files", state.referenceFiles.map((file) => file.name).join(", ") || "None attached"]]);
         }
 
         const pricing = [];
         const quote = state.quote;
         if (!quote) {
-            pricing.push(["Estimate", state.mode === "package" && !state.package ? "Select a package" : "Calculating…"]);
+            pricing.push(["Estimate", state.mode === "package" && !state.package ? "Select a package" : state.mode === "design" && !state.design ? "Select a design" : "Calculating…"]);
         } else if (quote.requires_quote) {
             pricing.push(["Estimated total", "Quotation from the shop"], ["Why", quote.quote_reasons.join(" ")]);
         } else if (quote.estimated_total === null) {
@@ -1335,12 +1536,20 @@
             }
             return true;
         }
+        if (stepNumber === 9) {
+            if (!state.design) {
+                designError.textContent = "Choose a design to continue.";
+                designSection.scrollIntoView({ behavior: "smooth", block: "start" });
+                return false;
+            }
+            return Boolean(state.personalizeForm?.validate());
+        }
         if (stepNumber === 8) {
             if (!generalQuantity.checkValidity()) {
                 generalQuantity.reportValidity();
                 return false;
             }
-            const dynamicForm = state.mode === "package" ? state.forms.generalPackage : state.forms.general;
+            const dynamicForm = activeForms()[0];
             if (!dynamicForm?.validate()) return false;
             if (fileCount() > MAX_ORDER_FILES) {
                 setError(`Attach up to ${MAX_ORDER_FILES} files in total. Email any extra originals to the shop.`);
@@ -1353,10 +1562,10 @@
                 invitationQuantity.reportValidity();
                 return false;
             }
-            if (state.mode === "customize") {
+            if (state.mode === "customize" || state.mode === "design") {
                 if (!state.forms.basics?.validate()) return false;
-                if (!state.forms.design?.validate()) return false;
             }
+            if (state.mode === "customize" && !state.forms.design?.validate()) return false;
             if (!state.forms.options?.validate()) return false;
             return true;
         }
@@ -1385,8 +1594,7 @@
     }
 
     function setSequence(kind) {
-        // The mockup designer exists only for Birthday, Wedding, and Christening invitations.
-        state.sequence = SEQUENCES[kind].filter((item) => item.step !== 7 || state.kind);
+        state.sequence = SEQUENCES[kind];
         stepper.classList.add("stepper-dynamic");
         stepper.style.setProperty("--steps", String(state.sequence.length));
         stepper.replaceChildren(...state.sequence.map((item, index) => {
@@ -1409,6 +1617,11 @@
             stepNumber = 2;
             packageError.textContent = "Select a package to continue.";
         }
+        // Steps after Customize Design need a chosen design.
+        if (state.mode === "design" && !state.design && stepNumber !== 9 && state.sequence.findIndex((item) => item.step === stepNumber) > state.sequence.findIndex((item) => item.step === 9)) {
+            stepNumber = 9;
+            designError.textContent = "Choose a design to continue.";
+        }
         const index = state.sequence.findIndex((item) => item.step === stepNumber);
         if (index === -1) return;
         state.activeStep = stepNumber;
@@ -1425,7 +1638,6 @@
         $("#btn-next").hidden = index === last;
         $("#btn-submit").hidden = index !== last;
         syncNextButton();
-        if (stepNumber === 7) renderMockup();
         if (stepNumber === 5) renderPaymentBreakdown();
         if (stepNumber === REVIEW_STEP) renderSummary();
         if (scroll) {
@@ -1443,6 +1655,7 @@
             showStep(2);
             return;
         }
+
         showStep(target.step);
     }
 
@@ -1485,8 +1698,11 @@
                 notes: activeNotes().value.trim(),
             };
             if (state.mode === "package" && state.package) customization.package_id = state.package.id;
-            const mockup = mockupPayload();
-            if (mockup) customization.mockup = mockup;
+            const designOrder = state.mode === "design" && Boolean(state.design);
+            if (designOrder) {
+                customization.design_id = state.design.id;
+                customization.design_details = state.personalizeForm ? state.personalizeForm.values() : {};
+            }
             const payload = {
                 customer: {
                     name: $("#name").value.trim(),
@@ -1499,11 +1715,12 @@
                 // Customized orders choose the payment option after accepting the quotation.
                 payment_option: "down_payment",
                 fulfillment: fulfillmentPayload(),
-                has_event: state.invitation ? true : !eventFields.hidden,
-                event: state.invitation || eventFields.hidden ? {} : eventData(),
+                has_event: designOrder ? false : (state.invitation ? true : !eventFields.hidden),
+                event: designOrder || state.invitation || eventFields.hidden ? {} : eventData(),
                 acknowledged: $("#acknowledge").checked,
-                files: state.invitation ? [] : await encodeFiles(state.referenceFiles),
-                field_files: fieldFiles,
+                // A shop design order never sends design or reference files.
+                files: designOrder || state.invitation ? [] : await encodeFiles(state.referenceFiles),
+                field_files: designOrder ? {} : fieldFiles,
             };
             const result = await requestJson("/api/orders", {
                 method: "POST",
@@ -1527,7 +1744,7 @@
         const estimate = order.pricing?.estimated_total;
         const payment = order.payment || {};
         const details = $("#confirm-details");
-        const packageName = order.order_kind === "package" ? order.package?.name : "";
+        const packageName = order.order_kind === "package" ? order.package?.name : (order.order_kind === "design" ? `${order.design?.name || "Shop"} design` : "");
         const fulfillment = order.fulfillment || {};
         const lines = [
             el("p", "", `${order.product.name}${packageName ? ` · ${packageName}` : ""} · ${order.customization.quantity.toLocaleString()} pc(s) · ${order.status}`),
@@ -1581,6 +1798,8 @@
     document.querySelectorAll("[data-order-mode]").forEach((button) => {
         button.addEventListener("click", () => {
             if (button.disabled) return;
+            // Customize Order opens the shop's designs first; "Use my own design" is chosen in the gallery.
+            if (button.dataset.orderMode === "customize") state.ownDesign = false;
             setMode(button.dataset.orderMode);
         });
     });
@@ -1672,6 +1891,8 @@
         // Only facts worth a glance; the package count and "customize" option are shown under the row.
         const tags = [];
         if (!customizeAllowed(product)) tags.push("Packages only");
+        const designCount = customizeAllowed(product) ? (product.designs || []).length : 0;
+        if (designCount) tags.push(`${designCount} shop design${designCount === 1 ? "" : "s"}`);
         if (product.min_quantity > 1) tags.push(`Min. ${product.min_quantity.toLocaleString()} pcs`);
         if (tags.length) {
             const tagList = el("p", "service-row-tags");
@@ -1828,9 +2049,13 @@
         const productId = parameters.get("design");
         if (!productId || state.product?.id !== productId) return;
         const pkg = state.packages.find((item) => item.id === parameters.get("package"));
+        const design = state.designs.find((item) => item.id === parameters.get("shop_design"));
         if (pkg) {
             setMode("package", { silent: true });
             selectPackage(pkg);
+        } else if (design) {
+            setMode("design", { silent: true });
+            selectDesign(design);
         }
         // The product is already chosen, so open its ordering options.
         showStep(2, false);

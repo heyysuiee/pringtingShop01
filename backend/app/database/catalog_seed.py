@@ -149,8 +149,17 @@ IMG = "/frontend/image"
 
 ORIENTATION = choice("orientation", "Orientation", ["Portrait", "Landscape"], kind="radio", default="portrait")
 
-# Invitations use one paper size. The administrator can rename it from the field editor.
+# Invitation paper sizes, offered as a dropdown. 5 x 7 in is the standard size and is preselected. The
+# administrator can rename, price, or remove sizes from the field editor.
 INVITATION_SIZE_LABEL = "5 x 7 in"
+INVITATION_SIZES: list[OptionSpec] = [
+    "4 x 6 in",
+    INVITATION_SIZE_LABEL,
+    "5 x 5 in (square)",
+    "6 x 8 in",
+    "A5 (5.8 x 8.3 in)",
+    opt("Custom size", quote=True),
+]
 INVITATION_MIN_QUANTITY = 20
 
 
@@ -180,10 +189,9 @@ def invitation_fields(
         choice(
             "invitation_size",
             "Invitation size",
-            [INVITATION_SIZE_LABEL],
-            kind="radio",
+            INVITATION_SIZES,
             default=slug(INVITATION_SIZE_LABEL),
-            help_text="Every invitation is printed in this one standard size.",
+            help_text="5 x 7 in is our standard size. A custom size is quoted by the shop.",
         ),
         choice("printing_type", "Printing type", printing),
         ORIENTATION,
@@ -215,21 +223,15 @@ def invitation_fields(
             depends_values=["colored-envelope"],
         ),
     ]
+    # A customized invitation uses the customer's own design (the shop's designs are chosen in the design
+    # gallery instead), so the design file is asked for directly.
     design = [
-        choice(
-            "design_source",
-            "Design customization",
-            ["I will upload my own design", "Shop will design it for me", "Use a sample design as reference"],
-            kind="radio",
-        ),
         upload(
             "design_file",
             "Your design file",
             required=True,
             max_files=2,
-            help_text="Upload your print-ready design. JPG, PNG, or PDF · up to 5 MB each.",
-            depends_on="design_source",
-            depends_values=["i-will-upload-my-own-design"],
+            help_text="Upload your own design (print-ready file or artwork). JPG, PNG, or PDF · up to 5 MB each.",
         ),
         text("design_theme", "Theme", placeholder="e.g. Floral garden, geometric, minimalist"),
         text("color_combination", "Color combination", placeholder="e.g. Sage green, cream, and gold"),
@@ -255,7 +257,7 @@ def invitation_fields(
 
 
 # Structured event details. Every category asks for the celebrant, event date, event time, and event
-# location (same keys, so summaries and the mockup designer read them the same way); each category
+# location (same keys, so summaries and the order form read them the same way); each category
 # then adds the details that belong to it.
 RSVP = text("rsvp_contact", "RSVP contact", placeholder="e.g. Anna · 0917 000 0000")
 

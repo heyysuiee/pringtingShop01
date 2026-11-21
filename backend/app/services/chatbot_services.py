@@ -408,7 +408,13 @@ def _order_item(order: Mapping[str, Any]) -> str:
     customization = order.get("customization") or {}
     product = (order.get("product") or {}).get("name") or "Order"
     package = (customization.get("package") or {}).get("name")
-    kind = f'package "{package}"' if package else ("customized order" if customization.get("order_kind") == "customize" else "")
+    design = (customization.get("design") or {}).get("name")
+    if package:
+        kind = f'package "{package}"'
+    elif design:
+        kind = f'shop design "{design}"'
+    else:
+        kind = "customized order" if customization.get("order_kind") == "customize" else ""
     quantity = customization.get("quantity")
     parts = [product, kind, f"{int(quantity):,} pcs" if isinstance(quantity, int) else ""]
     return " — ".join(part for part in parts if part)

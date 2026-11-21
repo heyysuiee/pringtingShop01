@@ -217,7 +217,9 @@
     // ================================================================ navigation
 
     // Former admin pages now part of another view (Package and Pricing Management → Services & Products).
-    const VIEW_ALIASES = { packages: "services", pricing: "services" };
+    const VIEW_ALIASES = { packages: "services", pricing: "services", designs: "services" };
+    // Services & Products tabs that have their own sidebar entry (Package Management, Design Management).
+    const CATALOG_SIDEBAR_TABS = { packages: "Package Management", designs: "Design Management" };
 
     function viewFromLocation() {
         const segment = window.location.pathname.split("/").filter(Boolean).pop();
@@ -232,7 +234,7 @@
     async function navigate(view, addHistory = true, { catalogTab = "" } = {}) {
         const nextView = LABELS[view] ? view : "dashboard";
         const path = nextView === "dashboard" ? "/admin/dashboard" : `/admin/${nextView}`;
-        const hash = nextView === "services" && catalogTab === "packages" ? "#packages" : "";
+        const hash = nextView === "services" && CATALOG_SIDEBAR_TABS[catalogTab] ? `#${catalogTab}` : "";
         document.querySelector("#admin-sidebar")?.classList.remove("open");
         closeNotificationPanel();
         if (nextView === activeView && window.location.pathname === path) {
@@ -266,7 +268,7 @@
     }
 
     /** Highlight the sidebar entry of the open view (and, on Services & Products, of the open tab). */
-    function markActiveNavigation(catalogTab = window.location.hash === "#packages" ? "packages" : "products") {
+    function markActiveNavigation(catalogTab = CATALOG_SIDEBAR_TABS[window.location.hash.slice(1)] ? window.location.hash.slice(1) : "products") {
         document.querySelectorAll("[data-view]").forEach((link) => {
             const target = link.dataset.catalogTarget;
             const active = link.dataset.view === activeView && (!target || activeView !== "services" || target === catalogTab);
@@ -565,7 +567,7 @@
         const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
         const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...WORKFLOW_STAGES, ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
         const paymentSelect = selectInput([["", "All payment statuses"], ...PAYMENT_STATUSES.map((status) => [status, status])], f.payment_status, (value) => apply({ payment_status: value }));
-        const kindSelect = selectInput([["", "All order types"], ["package", "Package"], ["customize", "Customized order"]], f.kind, (value) => apply({ kind: value }));
+        const kindSelect = selectInput([["", "All order types"], ["package", "Package"], ["design", "Customized · shop design"], ["customize", "Customized order"]], f.kind, (value) => apply({ kind: value }));
         const optionSelect = selectInput([["", "All payment options"], ...PAYMENT_OPTIONS], f.payment_option, (value) => apply({ payment_option: value }));
         const fromInput = dateInput(f.date_from, (value) => apply({ date_from: value }));
         const toInput = dateInput(f.date_to, (value) => apply({ date_to: value }));
@@ -600,7 +602,7 @@
                 { label: "Service / product", sortKey: "service", render: (row) => h("span", { className: "cell-pair" },
                     h("span", { className: "table-primary", text: row.product }),
                     h("span", { className: "table-secondary", text: row.service }),
-                    row.order_kind ? h("span", { className: "table-chip", text: row.order_kind === "package" ? `📦 ${row.package_name || "Package"}` : "✎ Customized" }) : null) },
+                    row.order_kind ? h("span", { className: "table-chip", text: orderKindChip(row) }) : null) },
                 { label: "Date requested", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
                 { label: "Amount", sortKey: "total", align: "right", render: (row) => totalText(row) },
                 { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
@@ -670,8 +672,26 @@
         if (focus) container.querySelector(`[data-focus="${focus}"]`)?.scrollIntoView({ block: "start" });
     }
 
+    function orderKindChip(row) {
+        if (row.order_kind === "package") return `📦 ${row.package_name || "Package"}`;
+        if (row.order_kind === "design") return `🎨 ${row.design_name || "Shop design"}`;
+        return "✎ Customized";
+    }
+
+    function orderKindLabel(order) {
+        return { package: "Package", design: "Customized order (shop design)" }[order.order_kind] || "Customized order";
+    }
+
     function orderImages(order) {
         const images = [];
+        if (order.design?.image) {
+            images.push({
+                src: order.design.image,
+                name: `${order.design.name} — shop design`,
+                caption: `Shop design the customer selected${order.design.is_sample ? " (temporary sample)" : ""}`,
+                kind: "Selected design",
+            });
+        }
         if (order.product?.image) {
             images.push({ src: order.product.image, name: `${order.product.name} — catalog sample`, caption: "Product sample the customer selected from the catalog", kind: "Catalog sample" });
         }
@@ -796,6 +816,33 @@
         );
     }
 
+    /** The shop design the customer chose and the details they gave to personalize it (saved as ordered). */
+    function designCard(order) {
+        const design = order.design;
+        if (!design) return null;
+        const images = [{ src: design.image, name: design.name, caption: `${design.name} · shop design selected for ${order.reference}`, kind: "Selected design" }];
+        const preview = h("button", { className: "design-order-preview", type: "button", title: "Open large preview with zoom and fullscreen", "aria-label": `Open ${design.name} in the large preview`, onclick: () => UI.openViewer(images, 0) },
+            h("img", { src: design.image, alt: `${design.name} design preview`, loading: "lazy", decoding: "async" }));
+        const details = Array.isArray(design.details) ? design.details : [];
+        return h("section", { className: "fact-card design-order-card", dataset: { focus: "design" } },
+            h("h3", { text: "Selected shop design (as ordered)" }),
+            h("div", { className: "design-order-layout" },
+                preview,
+                h("div", {},
+                    design.is_sample ? h("p", { className: "design-sample-flag", text: "TEMPORARY SAMPLE design" }) : null,
+                    detailList([
+                        ["Design", design.name],
+                        ["Design ID", design.id],
+                        ["Service", design.category_label],
+                        design.style ? ["Style", design.style] : null,
+                        design.description ? ["Description", design.description] : null,
+                    ]))),
+            h("h4", { className: "design-order-subtitle", text: "Customer personalization" }),
+            details.length ? detailList(details.map((row) => [row.label, row.value])) : h("p", { className: "field-note", text: "No details provided." }),
+            h("p", { className: "field-note", text: "Saved when the order was placed. Editing, replacing, or deleting the design later does not change this order." }),
+        );
+    }
+
     function orderModalContent(order, { back, focus }) {
         const summary = order.summary;
         const reload = () => openOrder(order.reference, { back, focus });
@@ -821,8 +868,9 @@
                 ["Order ID", order.reference],
                 ["Service", summary.service],
                 ["Product", summary.product],
-                order.order_kind ? ["Order type", order.order_kind === "package" ? "Package" : "Customized order"] : null,
+                order.order_kind ? ["Order type", orderKindLabel(order)] : null,
                 order.package?.name ? ["Package", order.package.name] : null,
+                order.design?.name ? ["Design", order.design.name] : null,
                 ["Quantity", number(order.customization?.quantity)],
                 ["Request date", dateTime(order.created_at)],
                 ["Completion date", summary.completed_at ? dateTime(summary.completed_at) : "Not completed"],
@@ -838,10 +886,10 @@
         const details = h("div", { className: "order-detail-sections" },
             specs.length ? h("section", { className: "fact-card" }, h("h3", { text: "Customer specifications" }), detailList(specs)) : null,
             packageCard(order),
+            designCard(order),
             h("section", { className: "fact-card" }, h("h3", { text: "Special instructions" }),
                 h("p", { className: "prewrap", text: order.customization?.notes || order.customization?.instructions || "None provided." })),
             events.length ? h("section", { className: "fact-card" }, h("h3", { text: "Event details" }), detailList(events)) : null,
-            mockupCard(order),
             pricingCard(order.pricing, order),
             order.admin_notes ? h("section", { className: "fact-card" }, h("h3", { text: "Latest note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
         );
@@ -1035,33 +1083,6 @@
                     h("td", {}, item.proof ? h("a", { href: item.proof.url, target: "_blank", rel: "noopener", text: item.proof.name }) : "—"),
                     h("td", {}, badge(label[item.status] || item.status), item.review_note ? h("span", { className: "table-secondary", text: ` ${item.review_note}` }) : null),
                     h("td", { className: "align-right", text: money(item.amount) })))))));
-    }
-
-    function mockupCard(order) {
-        const mockup = order.mockup;
-        if (!mockup || !window.InvitationMockup) return null;
-        const preview = h("button", { className: "mockup-preview-admin", type: "button", title: "Open a larger preview" }, window.InvitationMockup.render(mockup));
-        preview.addEventListener("click", () => {
-            const viewer = h("dialog", { className: "admin-dialog mockup-dialog" },
-                h("div", { className: "dialog-frame" },
-                    h("button", { className: "dialog-close", type: "button", "aria-label": "Close", text: "×", onclick: () => viewer.close() }),
-                    h("h2", { className: "dialog-heading", text: `${mockup.template_name} — ${order.reference}` }),
-                    window.InvitationMockup.render(mockup)));
-            viewer.addEventListener("close", () => viewer.remove());
-            document.body.append(viewer);
-            viewer.showModal();
-        });
-        const details = mockup.details || {};
-        return h("section", { className: "fact-card mockup-card" },
-            h("h3", { text: "Invitation mockup (customer design)" }),
-            preview,
-            detailList([
-                ["Template", `${mockup.template_name} · colour option ${Number(mockup.palette) + 1}`],
-                ["Headline", mockup.headline || "Default"],
-                ["Message", mockup.message || "Default"],
-                ["Names on card", details.names],
-            ]),
-            h("p", { className: "field-note", text: "Use this as the design brief; the customer still approves the final draft." }));
     }
 
     function paymentOptionForm(order, reload) {
@@ -2744,8 +2765,8 @@
     // Services & Products tabs: highlight "Package Management" in the sidebar while the Packages tab is open.
     document.addEventListener("catalog-tab-change", (event) => {
         if (activeView !== "services") return;
-        markActiveNavigation(event.detail.tab === "packages" ? "packages" : "products");
-        document.querySelector("#current-section").textContent = event.detail.tab === "packages" ? "Package Management" : LABELS.services;
+        markActiveNavigation(CATALOG_SIDEBAR_TABS[event.detail.tab] ? event.detail.tab : "products");
+        document.querySelector("#current-section").textContent = CATALOG_SIDEBAR_TABS[event.detail.tab] || LABELS.services;
     });
     dialog.addEventListener("close", () => {
         // The close event is dispatched asynchronously: if another editor was opened in the meantime, keep it.

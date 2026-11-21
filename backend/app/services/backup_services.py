@@ -46,6 +46,8 @@ BACKUP_TABLES = (
     "catalog_fields",
     "catalog_field_options",
     "invitation_packages",
+    "shop_designs",
+    "shop_design_images",
     "orders",
     "order_audit_log",
     "customer_notifications",
@@ -56,6 +58,7 @@ JSON_COLUMNS = {
                "pricing", "fulfillment", "quotation", "payment_submissions", "quotation_history"),
     "order_audit_log": ("details",),
     "invitation_packages": ("inclusions", "images"),
+    "shop_designs": ("product_ids", "fields"),
 }
 # app_meta keys that belong to this installation (notification read state, backup history): never
 # written into a backup and never replaced by a restore.

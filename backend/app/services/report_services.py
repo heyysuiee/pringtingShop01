@@ -261,6 +261,7 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "product_image": (order.get("product") or {}).get("image", ""),
         "order_kind": customization.get("order_kind", ""),
         "package_name": package.get("name", ""),
+        "design_name": (customization.get("design") or {}).get("name", "") if isinstance(customization.get("design"), dict) else "",
         "description": description(order),
         "quantity": (order.get("customization") or {}).get("quantity"),
         "created_at": order["created_at"],
@@ -417,7 +418,7 @@ def order_rows(params: Mapping[str, Any], orders: list[OrderRecord] | None = Non
     pay = param_text(params, "payment_status", 40)
     kind = param_text(params, "kind", 20)
     option = param_text(params, "payment_option", 20)
-    if kind and kind not in {"package", "customize"}:
+    if kind and kind not in {"package", "customize", "design"}:
         raise bad_request("Select a valid order type.")
     if option and option not in PAYMENT_OPTIONS:
         raise bad_request("Select a valid payment option.")

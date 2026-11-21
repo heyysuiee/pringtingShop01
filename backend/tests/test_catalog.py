@@ -59,7 +59,6 @@ BIRTHDAY_CUSTOM_OPTIONS = {
     "orientation": "portrait",
     "folding_type": "bi-fold",
     "envelope_option": "plain-white-envelope",
-    "design_source": "shop-will-design-it-for-me",
     **BIRTHDAY_EVENT_OPTIONS,
 }
 CHRISTENING_NO_EVENT_OPTIONS = {
@@ -69,8 +68,11 @@ CHRISTENING_NO_EVENT_OPTIONS = {
     "orientation": "portrait",
     "folding_type": "flat-card-no-fold",
     "envelope_option": "plain-white-envelope",
-    "design_source": "shop-will-design-it-for-me",
 }
+
+
+# A customized invitation is ordered with the customer's own design file.
+OWN_DESIGN_FILE = {"design_file": [{"name": "my-design.png", "dataUrl": PNG}]}
 
 
 def idempotency_key() -> str:
@@ -115,8 +117,6 @@ class CatalogTestCase(unittest.TestCase):
         package_id = extra.pop("package_id", None)
         if package_id:
             customization["package_id"] = package_id
-        if "mockup" in extra:
-            customization["mockup"] = extra.pop("mockup")
         payload = {
             "payment_option": extra.pop("payment_option", None),
             "customer": {"name": "Catalog Customer", "email": email, "phone": "+63 917 123 4567", "messenger": ""},
@@ -126,7 +126,8 @@ class CatalogTestCase(unittest.TestCase):
             "has_event": extra.pop("has_event", False),
             "acknowledged": True,
             "files": extra.pop("files", []),
-            "field_files": extra.pop("field_files", {}),
+            # A customized invitation carries the customer's own design file.
+            "field_files": extra.pop("field_files", OWN_DESIGN_FILE if product_id.endswith("-invitation") and not package_id else {}),
         }
         return shopper.post("/api/orders", json=payload, headers={"Idempotency-Key": idempotency_key()})
 
@@ -182,13 +183,16 @@ class SeedTests(CatalogTestCase):
         self.assertNotIn("wall-stickers-decals", ids)
         self.assertEqual(ids[0], "product-label-stickers")
 
-    def test_invitation_form_has_one_size_two_finishes_and_no_paper_type(self) -> None:
+    def test_invitation_form_has_size_dropdown_two_finishes_and_no_paper_type(self) -> None:
         for product_id in ("birthday-invitation", "wedding-invitation", "christening-invitation"):
             product = catalog_services.admin_product(product_id)
             fields = {field["field_key"]: field for field in product["fields"]}
             self.assertNotIn("paper_type", fields, product_id)
             self.assertNotIn("invitation_wording", fields, product_id)
-            self.assertEqual(len(fields["invitation_size"]["options"]), 1, product_id)
+            size = fields["invitation_size"]
+            self.assertEqual(size["field_type"], "select", product_id)
+            self.assertGreater(len(size["options"]), 1, product_id)
+            self.assertEqual(size["default_value"], "5-x-7-in", product_id)
             self.assertEqual([option["label"] for option in fields["paper_finish"]["options"]], ["Glossy", "Matte"])
             self.assertEqual(fields["paper_finish"]["section"], "options")
             self.assertEqual(fields["envelope_option"]["section"], "options")
@@ -757,31 +761,6 @@ class PaymentOptionTests(CatalogTestCase):
         self.assertEqual(switched.status_code, 422, switched.text)
         same = admin.post(f"/api/admin/orders/{reference}/payment-option", json={"payment_option": "down_payment", "expected_version": quoted["version"]})
         self.assertEqual(same.status_code, 409, same.text)
-
-
-class MockupTests(CatalogTestCase):
-    def test_invitation_mockup_is_saved_with_the_event_details(self) -> None:
-        shopper, account = self.customer()
-        response = self.order(
-            shopper, account["email"], "wedding-invitation", 20, WEDDING_EVENT_OPTIONS, package_id="wedding-set-b",
-            mockup={"template": "botanical", "palette": 1, "headline": "Together with our families", "message": "Join us"},
-        )
-        self.assertEqual(response.status_code, 201, response.text)
-        mockup = response.json()["mockup"]
-        self.assertEqual((mockup["kind"], mockup["template"], mockup["palette"]), ("wedding", "botanical", 1))
-        self.assertEqual(mockup["details"]["names"], "Maria Santos & Juan Dela Cruz")
-        self.assertEqual(mockup["details"]["location"], "Manila Cathedral")
-        labels = {spec["label"]: spec["value"] for spec in response.json()["customization"]["specifications"]}
-        self.assertIn("Botanical Greenery", labels["Invitation mockup"])
-
-    def test_mockup_is_only_for_invitations_and_known_templates(self) -> None:
-        shopper, account = self.customer()
-        wrong_template = self.order(shopper, account["email"], "birthday-invitation", 20, BIRTHDAY_CUSTOM_OPTIONS, mockup={"template": "botanical"})
-        self.assertEqual(wrong_template.status_code, 422)
-        mug = self.order(shopper, account["email"], "white-mug", 1, MUG_OPTIONS, mockup={"template": "confetti"})
-        self.assertEqual(mug.status_code, 422)
-        too_long = self.order(shopper, account["email"], "birthday-invitation", 20, BIRTHDAY_CUSTOM_OPTIONS, mockup={"template": "confetti", "headline": "x" * 81})
-        self.assertEqual(too_long.status_code, 422)
 
 
 class AdminInsightTests(CatalogTestCase):

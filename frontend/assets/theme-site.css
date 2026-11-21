@@ -1254,15 +1254,6 @@ textarea:disabled {
     backdrop-filter: blur(8px);
 }
 
-/* ---------- Mockup designer ---------- */
-
-.mockup-stage {
-    border-color: var(--line);
-    background:
-        radial-gradient(circle at 50% 30%, rgba(147, 51, 234, 0.12), transparent 70%),
-        rgba(16, 17, 22, 0.96);
-}
-
 /* ---------- Sign in, create account, forgot password (auth.css) ---------- */
 
 .auth-main {

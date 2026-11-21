@@ -402,6 +402,10 @@
     }
 
     function renderDetail(order) {
+        // Collapse the toggle sections when a different order is opened; keep them as they are on a refresh.
+        if (!currentOrder || currentOrder.reference !== order.reference) {
+            detail.querySelectorAll(".detail-toggle").forEach((section) => { section.open = false; });
+        }
         currentOrder = order;
         detailError.textContent = "";
         list.hidden = true;
@@ -417,7 +421,26 @@
 
         const summary = document.querySelector("#detail-summary");
         summary.replaceChildren();
-        if (order.order_kind) appendSummaryRow(summary, "Order type", order.order_kind === "package" ? `Package${order.package?.name ? `: ${order.package.name}` : ""}` : "Customized order");
+        const orderType = { package: `Package${order.package?.name ? `: ${order.package.name}` : ""}`, design: "Customized order (shop design)" }[order.order_kind] || "Customized order";
+        if (order.order_kind) appendSummaryRow(summary, "Order type", orderType);
+        // The shop design chosen for the order (saved as ordered) and the details the customer gave for it.
+        if (order.design) {
+            const design = order.design;
+            const row = make("div", "summary-row");
+            const holder = make("dd", "portal-design");
+            const image = make("img");
+            image.src = design.image;
+            image.alt = `${design.name} design preview`;
+            image.loading = "lazy";
+            const copy = make("div");
+            copy.append(make("strong", "", design.name));
+            if (design.style) copy.append(make("p", "field-hint", design.style));
+            if (design.is_sample) copy.append(make("p", "field-hint", "Sample design shown for illustration; the shop confirms the final artwork in your draft."));
+            holder.append(image, copy);
+            row.append(make("dt", "", "Selected design"), holder);
+            summary.append(row);
+            (design.details || []).forEach((item) => appendSummaryRow(summary, item.label, item.value));
+        }
         // The package price and inclusions saved when the order was placed (later package edits do not change them).
         if (order.package) {
             const pkg = order.package;
@@ -466,13 +489,6 @@
         const fulfillment = order.fulfillment || {};
         appendSummaryRow(summary, "Delivery or pickup", fulfillment.label || "Store Pickup");
         (fulfillment.address || []).forEach((row) => appendSummaryRow(summary, row.label, row.value));
-        if (order.mockup && window.InvitationMockup) {
-            const wrapper = make("div", "summary-row");
-            const holder = make("dd", "portal-mockup");
-            holder.append(window.InvitationMockup.render(order.mockup));
-            wrapper.append(make("dt", "", `Invitation mockup · ${order.mockup.template_name}`), holder);
-            summary.append(wrapper);
-        }
         renderAttachments(summary, order.attachments, "Uploaded files");
 
         const draft = document.querySelector("#customer-draft");
