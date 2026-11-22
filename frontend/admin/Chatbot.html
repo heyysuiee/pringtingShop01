@@ -16,6 +16,8 @@
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/admin/theme-admin.css">
     <link rel="stylesheet" href="/assets/admin/chatbot-admin.css">
+    <link rel="stylesheet" href="/assets/admin/operations-admin.css">
+    <link rel="stylesheet" href="/assets/admin/admin-nav.css">
 </head>
 <body class="admin-page" data-admin-view="chatbot">
     <a class="skip-link" href="#view-root">Skip to content</a>
@@ -27,17 +29,40 @@
             </a>
             <div class="sidebar-label">WORKSPACE</div>
             <nav class="sidebar-nav" aria-label="Admin navigation">
-                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true" data-icon="layout-dashboard">⌂</span>Dashboard</a>
-                <a href="/admin/orders" data-view="orders"><span class="nav-icon" aria-hidden="true" data-icon="clipboard-list">▤</span>Order Management<span class="nav-count" id="pending-count"></span></a>
-                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true" data-icon="users">♙</span>Customer Management<span class="nav-count" id="customer-count"></span></a>
-                <a href="/admin/payments" data-view="payments"><span class="nav-icon" aria-hidden="true" data-icon="wallet">▣</span>Payments &amp; Transactions<span class="nav-count" id="payment-count"></span></a>
-                <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true" data-icon="chart-column">▥</span>Sales &amp; Reports</a>
-                <a href="/admin/services" data-view="services" data-catalog-target="products"><span class="nav-icon" aria-hidden="true" data-icon="shopping-bag">▧</span>Services &amp; Products</a>
-                <a href="/admin/services#packages" data-view="services" data-catalog-target="packages"><span class="nav-icon" aria-hidden="true" data-icon="package">▦</span>Package Management</a>
-                <a href="/admin/services#designs" data-view="services" data-catalog-target="designs"><span class="nav-icon" aria-hidden="true" data-icon="palette">❖</span>Design Management</a>
-                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true" data-icon="bell">♧</span>Notifications<span class="nav-count" id="notification-count"></span></a>
-                <a href="/admin/chatbot" data-view="chatbot" class="active" aria-current="page"><span class="nav-icon" aria-hidden="true" data-icon="message-circle">✉</span>AI Chatbot<span class="nav-count" id="chatbot-count"></span></a>
-                <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true" data-icon="settings">⚙</span>Settings</a>
+                <a href="/admin/dashboard" data-view="dashboard"><span class="nav-icon" aria-hidden="true" data-icon="layout-dashboard">⌂</span><span class="nav-label">Dashboard</span></a>
+                <div class="nav-group" data-nav-group="orders">
+                    <button class="nav-group-toggle" type="button" aria-expanded="false" aria-controls="nav-group-orders" data-action="toggle-nav-group"><span class="nav-icon" aria-hidden="true" data-icon="clipboard-list">▤</span><span class="nav-label">Order Management</span><span class="nav-count nav-group-count" data-group-count></span><span class="nav-chevron" aria-hidden="true" data-icon="chevron-down" data-icon-size="16">▾</span></button>
+                    <div class="nav-submenu" id="nav-group-orders" hidden>
+                        <a href="/admin/orders" data-view="orders"><span class="nav-label">All Orders</span><span class="nav-count" id="pending-count"></span></a>
+                        <a href="/admin/production" data-view="production"><span class="nav-label">Production Monitoring</span><span class="nav-count" id="production-count"></span></a>
+                        <a href="/admin/fulfillment" data-view="fulfillment"><span class="nav-label">Fulfillment &amp; Delivery</span><span class="nav-count" id="fulfillment-count"></span></a>
+                        <a href="/admin/payments" data-view="payments"><span class="nav-label">Payments &amp; Verification</span><span class="nav-count" id="payment-count"></span></a>
+                        <a href="/admin/refunds" data-view="refunds"><span class="nav-label">Cancellations &amp; Refunds</span><span class="nav-count" id="refund-count"></span></a>
+                    </div>
+                </div>
+                <div class="nav-group" data-nav-group="catalog">
+                    <button class="nav-group-toggle" type="button" aria-expanded="false" aria-controls="nav-group-catalog" data-action="toggle-nav-group"><span class="nav-icon" aria-hidden="true" data-icon="shopping-bag">▧</span><span class="nav-label">Catalog Management</span><span class="nav-count nav-group-count" data-group-count></span><span class="nav-chevron" aria-hidden="true" data-icon="chevron-down" data-icon-size="16">▾</span></button>
+                    <div class="nav-submenu" id="nav-group-catalog" hidden>
+                        <a href="/admin/services" data-view="services" data-catalog-target="products"><span class="nav-label">Products &amp; Services</span></a>
+                        <a href="/admin/services#categories" data-view="services" data-catalog-target="categories"><span class="nav-label">Service Categories</span></a>
+                        <a href="/admin/services#packages" data-view="services" data-catalog-target="packages"><span class="nav-label">Packages</span></a>
+                        <a href="/admin/services#designs" data-view="services" data-catalog-target="designs"><span class="nav-label">Designs</span></a>
+                        <a href="/admin/services#sizes" data-view="services" data-catalog-target="sizes"><span class="nav-label">Size Pricing</span></a>
+                    </div>
+                </div>
+                <a href="/admin/customers" data-view="customers"><span class="nav-icon" aria-hidden="true" data-icon="users">♙</span><span class="nav-label">Customer Management</span><span class="nav-count" id="customer-count"></span></a>
+                <a href="/admin/reports" data-view="reports"><span class="nav-icon" aria-hidden="true" data-icon="chart-column">▥</span><span class="nav-label">Sales &amp; Reports</span></a>
+                <div class="nav-group has-active" data-nav-group="chatbot">
+                    <button class="nav-group-toggle" type="button" aria-expanded="true" aria-controls="nav-group-chatbot" data-action="toggle-nav-group"><span class="nav-icon" aria-hidden="true" data-icon="message-circle">✉</span><span class="nav-label">AI Chatbot</span><span class="nav-count nav-group-count" data-group-count></span><span class="nav-chevron" aria-hidden="true" data-icon="chevron-down" data-icon-size="16">▾</span></button>
+                    <div class="nav-submenu" id="nav-group-chatbot">
+                        <a href="/admin/chatbot" data-view="chatbot" data-chatbot-target="overview" class="active" aria-current="page"><span class="nav-label">Overview</span></a>
+                        <a href="/admin/chatbot#conversations" data-view="chatbot" data-chatbot-target="conversations"><span class="nav-label">Conversations</span></a>
+                        <a href="/admin/chatbot#inquiries" data-view="chatbot" data-chatbot-target="inquiries"><span class="nav-label">Inquiries</span><span class="nav-count" id="chatbot-count"></span></a>
+                        <a href="/admin/chatbot#faqs" data-view="chatbot" data-chatbot-target="faqs"><span class="nav-label">Knowledge Base</span></a>
+                        <a href="/admin/chatbot#settings" data-view="chatbot" data-chatbot-target="settings"><span class="nav-label">Configuration</span></a>
+                    </div>
+                </div>
+                <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true" data-icon="settings">⚙</span><span class="nav-label">Settings</span></a>
             </nav>
             <div class="sidebar-bottom">
                 <div class="sidebar-user">
@@ -49,10 +74,10 @@
         <div class="workspace">
             <header class="topbar">
                 <button class="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="admin-sidebar" data-action="menu"><span data-icon="menu" aria-hidden="true">☰</span></button>
-                <div class="breadcrumb"><span>Admin</span><span aria-hidden="true">/</span><strong id="current-section">AI Chatbot</strong></div>
+                <nav class="breadcrumb" aria-label="Breadcrumb"><span>Admin</span><span aria-hidden="true">/</span><span class="breadcrumb-group" id="current-group">AI Chatbot</span><span class="breadcrumb-sep" aria-hidden="true">/</span><strong id="current-section">Overview</strong></nav>
                 <div class="topbar-actions">
                     <div class="notification-menu" data-notification-menu>
-                        <button class="icon-button" type="button" aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false" aria-controls="notification-panel" data-action="toggle-notifications"><span data-icon="bell" aria-hidden="true">♧</span><span class="notification-dot" hidden></span></button>
+                        <button class="icon-button" type="button" aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false" aria-controls="notification-panel" data-action="toggle-notifications"><span data-icon="bell" aria-hidden="true">♧</span><span class="nav-count bell-count" id="notification-count"></span></button>
                         <div class="notification-panel" id="notification-panel" role="dialog" aria-label="Recent notifications" hidden></div>
                     </div>
                     <div class="topbar-date" id="today-date"></div>
@@ -90,6 +115,7 @@
     <script src="/assets/admin/catalog-admin.js"></script>
     <script src="/assets/admin/design-admin.js"></script>
     <script src="/assets/admin/chatbot-admin.js"></script>
+    <script src="/assets/admin/operations-admin.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>
 </html>

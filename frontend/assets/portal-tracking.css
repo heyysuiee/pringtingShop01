@@ -1,0 +1,82 @@
+/* Customer portal: order tracking timeline, e-wallet payment cards, pickup code, requests (portal.js, portal-tracking.js). */
+
+.tracking-timeline .timeline-step { flex-wrap: wrap; }
+.tracking-timeline .timeline-time { display: block; width: 100%; font-size: 0.75rem; opacity: 0.72; margin-top: 0.15rem; }
+.timeline-step.is-pending .timeline-label { opacity: 0.6; }
+.timeline-step.is-failed .timeline-dot { background: #c0392b; border-color: #c0392b; color: #fff; }
+.timeline-step.is-failed .timeline-label { color: #c0392b; font-weight: 700; }
+
+.wallet-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.6rem; margin: 0.75rem 0; }
+.wallet-card {
+    display: grid;
+    gap: 0.2rem;
+    text-align: left;
+    padding: 0.75rem 0.9rem;
+    border-radius: 12px;
+    border: 2px solid rgba(127, 127, 127, 0.3);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.wallet-card:hover { border-color: rgba(127, 127, 127, 0.6); }
+.wallet-card.is-selected { border-color: currentColor; box-shadow: 0 0 0 3px rgba(127, 127, 127, 0.15); }
+.wallet-card:focus-visible { outline: 3px solid rgba(80, 120, 255, 0.6); outline-offset: 2px; }
+.wallet-details { display: grid; gap: 0.5rem; margin-bottom: 0.75rem; }
+.wallet-qr { width: min(220px, 100%); aspect-ratio: 1; object-fit: contain; background: #fff; border-radius: 12px; border: 1px solid rgba(127, 127, 127, 0.25); padding: 6px; }
+.btn-copy { padding: 0.15rem 0.6rem; font-size: 0.78rem; min-height: 0; margin-left: 0.35rem; }
+
+.pickup-code {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.85rem 1rem;
+    border-radius: 14px;
+    border: 2px dashed currentColor;
+    margin: 0.5rem 0 0.85rem;
+}
+.pickup-code strong { font-size: 1.8rem; letter-spacing: 0.25em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pickup-code small { opacity: 0.75; }
+
+.tracking-number { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.5rem 0; }
+.tracking-number a { text-decoration: underline; }
+.notice-error { border-color: #c0392b; }
+
+.request-toggle { border: 1px solid rgba(127, 127, 127, 0.3); border-radius: 12px; padding: 0.6rem 0.9rem; margin-top: 0.75rem; }
+.request-toggle > summary { cursor: pointer; font-weight: 700; }
+.request-form { display: grid; gap: 0.65rem; margin-top: 0.75rem; }
+.request-form label { display: grid; gap: 0.3rem; }
+.request-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.6rem; }
+.request-form .check-row, .check-row { display: flex !important; align-items: flex-start; gap: 0.5rem; font-size: 0.9rem; }
+.check-row input { margin-top: 0.2rem; width: auto; flex: none; }
+
+.draft-revision { display: grid; gap: 0.3rem; margin: 0.75rem 0; }
+
+@media (max-width: 600px) {
+    .wallet-cards { grid-template-columns: 1fr 1fr; }
+    .pickup-code strong { font-size: 1.4rem; }
+}
+
+.check-row input[type="checkbox"].input { width: 18px; height: 18px; min-height: 0; padding: 0; }
+@media (max-width: 600px) {
+    .tracking-timeline .timeline-time { font-size: 0.7rem; }
+    .tracking-number { word-break: break-all; }
+}
+
+/* Phones: the tracking timeline (up to 19 steps) is a vertical list instead of a sideways-scrolling grid. */
+@media (max-width: 640px) {
+    .portal-system ol.tracking-timeline {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+        overflow-x: visible;
+    }
+    .portal-system ol.tracking-timeline .timeline-step {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        column-gap: 10px;
+        align-items: center;
+        text-align: left;
+    }
+    .portal-system ol.tracking-timeline .timeline-step::before { display: none; }
+    .portal-system ol.tracking-timeline .timeline-label { font-size: 0.85rem; }
+    .portal-system ol.tracking-timeline .timeline-time { grid-column: 2; margin-top: 0; }
+}

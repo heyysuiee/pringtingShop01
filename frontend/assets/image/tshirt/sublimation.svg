@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-labelledby="title desc">
+  <title id="title">Sublimation Printing</title>
+  <desc id="desc">Illustration of a white polyester T-shirt with a full-color all-over sublimation print.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6eee8"/>
+      <stop offset="1" stop-color="#ead9cf"/>
+    </linearGradient>
+    <linearGradient id="print" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c98b8b"/>
+      <stop offset="0.5" stop-color="#d9b48f"/>
+      <stop offset="1" stop-color="#8f6b5f"/>
+    </linearGradient>
+    <clipPath id="shirt-shape">
+      <path d="M290 120 L350 100 Q400 135 450 100 L510 120 L610 185 L565 265 L520 240 L520 500 L280 500 L280 240 L235 265 L190 185 Z"/>
+    </clipPath>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg)"/>
+  <circle cx="150" cy="120" r="70" fill="#d9a7a0" opacity="0.3"/>
+  <circle cx="680" cy="470" r="90" fill="#c98b8b" opacity="0.16"/>
+  <g clip-path="url(#shirt-shape)">
+    <rect x="180" y="90" width="440" height="420" fill="url(#print)"/>
+    <path d="M180 260 Q300 200 400 260 T620 250 L620 520 L180 520 Z" fill="#a8746b" opacity="0.55"/>
+    <path d="M180 360 Q300 300 400 360 T620 350 L620 520 L180 520 Z" fill="#6b4a43" opacity="0.45"/>
+    <circle cx="460" cy="200" r="40" fill="#f6eee8" opacity="0.5"/>
+    <circle cx="330" cy="300" r="24" fill="#f6eee8" opacity="0.35"/>
+  </g>
+  <path d="M350 100 Q400 135 450 100 Q440 150 400 152 Q360 150 350 100 Z" fill="#f6eee8"/>
+  <path d="M290 120 L350 100 Q400 135 450 100 L510 120 L610 185 L565 265 L520 240 L520 500 L280 500 L280 240 L235 265 L190 185 Z" fill="none" stroke="#6b4a43" stroke-width="4" stroke-linejoin="round"/>
+  <rect x="0" y="530" width="800" height="70" fill="#4f3b37"/>
+  <text x="40" y="575" font-family="Plus Jakarta Sans, Arial, sans-serif" font-size="28" font-weight="800" fill="#f6eee8">SUBLIMATION PRINTING</text>
+  <text x="760" y="575" text-anchor="end" font-family="Plus Jakarta Sans, Arial, sans-serif" font-size="18" fill="#ead9cf">Polyester · full or partial print</text>
+</svg>

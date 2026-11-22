@@ -1,0 +1,244 @@
+/* ==========================================================================
+   Admin navigation — sidebar groups, top-bar breadcrumb, notification bell badge.
+   Loaded last on every admin page, so it builds on the sidebar rules of dashboard.css,
+   admin-ui.css, and theme-admin.css.
+   ========================================================================== */
+
+/* ---------- Sidebar: seven primary entries, three of them expandable groups ---------- */
+
+.sidebar-nav {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-content: start;
+    gap: 3px;
+    margin-right: -6px;
+    padding-right: 6px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+
+.sidebar-bottom {
+    padding-top: 12px;
+}
+
+.nav-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Group header: looks like a primary link, opens and closes its submenu. */
+.nav-group-toggle {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: 42px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 11px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: left;
+    transition: background var(--dur, 160ms) var(--ease, ease), color var(--dur, 160ms) var(--ease, ease);
+}
+
+.nav-group-toggle .nav-icon {
+    display: inline-grid;
+    width: 19px;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--text-muted);
+    transition: color var(--dur, 160ms) var(--ease, ease);
+}
+
+.nav-group-toggle:hover {
+    background: var(--glass-2);
+    color: var(--text-primary);
+}
+
+.nav-group-toggle:hover .nav-icon {
+    color: var(--text-primary);
+}
+
+.nav-group-toggle:focus-visible,
+.sidebar-nav a:focus-visible {
+    outline: 2px solid var(--accent-pink-light, #FF7AC0);
+    outline-offset: -2px;
+}
+
+/* The group holding the open page: its header is highlighted, the page itself carries the active bar. */
+.nav-group.has-active > .nav-group-toggle {
+    color: var(--text-primary);
+}
+
+.nav-group.has-active > .nav-group-toggle .nav-icon {
+    color: var(--accent-pink-light, #FF7AC0);
+}
+
+.nav-chevron {
+    display: inline-grid;
+    flex: 0 0 auto;
+    margin-left: auto;
+    place-items: center;
+    color: var(--text-muted);
+    transition: transform var(--dur, 160ms) var(--ease, ease);
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-chevron {
+    transform: rotate(180deg);
+}
+
+/* A collapsed group shows the total of its pages' badges; an open group shows them per page. */
+.nav-group-toggle .nav-group-count {
+    margin-left: auto;
+}
+
+.nav-group-toggle .nav-group-count:not(:empty) + .nav-chevron {
+    margin-left: 0;
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-group-count {
+    display: none;
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-group-count + .nav-chevron {
+    margin-left: auto;
+}
+
+/* Submenu: indented under the group label, with a thin guide line. */
+.nav-submenu {
+    position: relative;
+    display: grid;
+    gap: 2px;
+    margin: 2px 0 6px;
+}
+
+.nav-submenu[hidden] {
+    display: none;
+}
+
+.nav-submenu::before {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 20px;
+    width: 1px;
+    background: var(--line);
+    content: "";
+}
+
+.sidebar-nav .nav-submenu a {
+    width: auto;
+    min-height: 34px;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 0 10px 0 42px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.sidebar-nav .nav-submenu a.active {
+    font-weight: 600;
+}
+
+/* The active bar sits on the guide line. */
+.sidebar-nav .nav-submenu a.active::before {
+    inset: 8px auto 8px 19px;
+}
+
+.sidebar-nav .nav-submenu .nav-count {
+    margin-left: auto;
+}
+
+/* Tablet (681–980px) shows the sidebar at 232px with slightly larger text. */
+@media (min-width: 681px) and (max-width: 980px) {
+    .nav-group-toggle {
+        font-size: 13px;
+    }
+
+    .sidebar-nav .nav-submenu a {
+        font-size: 12.5px;
+    }
+}
+
+/* ---------- Top bar: Admin / Group / Page ---------- */
+
+.breadcrumb {
+    min-width: 0;
+}
+
+.breadcrumb > * {
+    white-space: nowrap;
+}
+
+.breadcrumb-group {
+    color: var(--text-muted);
+}
+
+.breadcrumb-group[hidden],
+.breadcrumb-sep[hidden] {
+    display: none;
+}
+
+.breadcrumb strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 680px) {
+    /* Phones: only the page name, so the bell and profile keep their room. */
+    .breadcrumb > span:not(.breadcrumb-group):first-child,
+    .breadcrumb > span:first-child + span,
+    .breadcrumb-group,
+    .breadcrumb-sep {
+        display: none;
+    }
+}
+
+/* ---------- Notification bell: unread count badge ---------- */
+
+.icon-button .bell-count {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    display: inline-grid;
+    min-width: 18px;
+    height: 18px;
+    margin: 0;
+    padding: 0 5px;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--grad-brand-strong, #FF3E9D);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 0 0 2px rgba(10, 11, 16, 0.9);
+    pointer-events: none;
+}
+
+.icon-button .bell-count:empty {
+    display: none;
+}
+
+/* On the full notification history page (opened from the bell), the bell shows as current. */
+.icon-button.is-active {
+    border-color: rgba(255, 62, 157, 0.45);
+    color: var(--accent-pink-light, #FF7AC0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-chevron,
+    .nav-group-toggle,
+    .nav-group-toggle .nav-icon {
+        transition: none;
+    }
+}

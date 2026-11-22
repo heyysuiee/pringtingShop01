@@ -45,6 +45,8 @@ BACKUP_TABLES = (
     "catalog_products",
     "catalog_fields",
     "catalog_field_options",
+    "standard_sizes",
+    "payment_methods",
     "invitation_packages",
     "shop_designs",
     "shop_design_images",
@@ -52,10 +54,15 @@ BACKUP_TABLES = (
     "order_audit_log",
     "customer_notifications",
 )
+# Tables added after backups were first made. A backup without them is still restored; this installation's
+# rows of such a table are kept (those that still belong to a restored category).
+OPTIONAL_TABLES = ("standard_sizes", "payment_methods")
 # Columns holding JSON text that the application decodes; checked before a restore.
 JSON_COLUMNS = {
     "orders": ("customer", "product", "customization", "event_details", "payments", "attachments", "history",
-               "pricing", "fulfillment", "quotation", "payment_submissions", "quotation_history"),
+               "pricing", "fulfillment", "quotation", "payment_submissions", "quotation_history",
+               "production", "drafts", "cancellation_requests", "refunds"),
+    "payment_methods": ("qr_file",),
     "order_audit_log": ("details",),
     "invitation_packages": ("inclusions", "images"),
     "shop_designs": ("product_ids", "fields"),
@@ -225,8 +232,9 @@ def validate_backup(document: Any) -> dict[str, Any]:
     created_at = document.get("created_at")
     if not isinstance(tables, dict) or not isinstance(created_at, str):
         raise _invalid("the file is incomplete.")
-    if set(tables) != set(BACKUP_TABLES):
-        missing = sorted(set(BACKUP_TABLES) - set(tables))
+    required_tables = set(BACKUP_TABLES) - set(OPTIONAL_TABLES)
+    if not required_tables <= set(tables) <= set(BACKUP_TABLES):
+        missing = sorted(required_tables - set(tables))
         extra = sorted(set(tables) - set(BACKUP_TABLES))
         raise _invalid(f"unexpected tables (missing: {', '.join(missing) or 'none'}; unknown: {', '.join(extra) or 'none'}).")
     checksum = document.get("checksum")
@@ -240,6 +248,20 @@ def validate_backup(document: Any) -> dict[str, Any]:
         )
     with connection_scope() as connection:
         schemas = {table: _table_columns(connection, table) for table in BACKUP_TABLES}
+        missing_optional = [table for table in OPTIONAL_TABLES if table not in tables]
+        if missing_optional:
+            tables = dict(tables)
+            categories = tables.get("catalog_categories") or {}
+            category_ids: set[Any] = set()
+            if isinstance(categories, dict) and isinstance(categories.get("columns"), list) and "id" in categories["columns"]:
+                position = categories["columns"].index("id")
+                category_ids = {row[position] for row in categories.get("rows", []) if isinstance(row, list) and len(row) > position}
+            for table in missing_optional:
+                columns = [column["name"] for column in schemas[table]]
+                rows = [[_encode_value(value) for value in tuple(row)] for row in connection.execute(f"SELECT {', '.join(columns)} FROM {table} ORDER BY rowid").fetchall()]
+                if "category_id" in columns:
+                    rows = [row for row in rows if row[columns.index("category_id")] in category_ids]
+                tables[table] = {"columns": columns, "rows": rows}
     for table in BACKUP_TABLES:
         data = tables[table]
         if not isinstance(data, dict) or not isinstance(data.get("columns"), list) or not isinstance(data.get("rows"), list):

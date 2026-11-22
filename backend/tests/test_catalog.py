@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import tempfile
 import unittest
 import uuid
@@ -167,14 +168,14 @@ class CatalogTestCase(unittest.TestCase):
 
 
 class SeedTests(CatalogTestCase):
-    def test_all_six_categories_and_products_are_seeded(self) -> None:
+    def test_all_seven_categories_and_products_are_seeded(self) -> None:
         catalog = self.client.get("/api/catalog").json()
         by_id = {category["id"]: category for category in catalog["categories"]}
         expected = {category["id"]: len(category["products"]) for category in CATALOG_SEED}
         for category_id, count in expected.items():
             self.assertIn(category_id, by_id)
             self.assertGreaterEqual(len(by_id[category_id]["products"]), count)
-        self.assertEqual(expected, {"invitation": 3, "souvenir": 8, "sticker": 3, "sintra-board": 6, "party-needs": 4, "large-format": 11})
+        self.assertEqual(expected, {"invitation": 3, "souvenir": 8, "sticker": 3, "sintra-board": 6, "party-needs": 4, "large-format": 11, "tshirt-printing": 2})
 
     def test_wall_stickers_are_removed_and_product_labels_come_first(self) -> None:
         catalog = self.client.get("/api/catalog").json()
@@ -192,7 +193,8 @@ class SeedTests(CatalogTestCase):
             size = fields["invitation_size"]
             self.assertEqual(size["field_type"], "select", product_id)
             self.assertGreater(len(size["options"]), 1, product_id)
-            self.assertEqual(size["default_value"], "5-x-7-in", product_id)
+            # Each invitation type has its own standard size: Birthday and Christening 4 x 6 in, Wedding 5 x 7 in.
+            self.assertEqual(size["default_value"], "5-x-7-in" if product_id == "wedding-invitation" else "4-x-6-in", product_id)
             self.assertEqual([option["label"] for option in fields["paper_finish"]["options"]], ["Glossy", "Matte"])
             self.assertEqual(fields["paper_finish"]["section"], "options")
             self.assertEqual(fields["envelope_option"]["section"], "options")
@@ -242,6 +244,9 @@ class PricingTests(CatalogTestCase):
         self.assertTrue(result["requires_quote"])
 
     def test_area_pricing_uses_admin_prices_and_unit_conversion(self) -> None:
+        # Tarpaulins use the standard size price list; a product can still be priced per square foot.
+        catalog_services.update_product("entrance-signs", {"pricing_mode": "area"})
+        self.addCleanup(catalog_services.update_product, "entrance-signs", {"pricing_mode": "size", "base_price": None})
         product = catalog_services.admin_product("entrance-signs")
         material = next(field for field in product["fields"] if field["field_key"] == "material")
         hemming = next(field for field in product["fields"] if field["field_key"] == "hemming")
@@ -910,7 +915,8 @@ class CustomizedOrderAvailabilityTests(CatalogTestCase):
 class ServicesProductsConsolidationTests(CatalogTestCase):
     """Package Management and Pricing Management were merged into the one Services & Products module."""
 
-    ADMIN_PAGES = ("dashboard", "orders", "customers", "payments", "reports", "services", "notifications", "settings")
+    ADMIN_PAGES = ("dashboard", "orders", "production", "fulfillment", "payments", "refunds", "services", "customers",
+                   "reports", "notifications", "chatbot", "settings")
 
     def test_services_page_holds_products_packages_and_categories(self) -> None:
         page = self.admin().get("/admin/services")
@@ -942,14 +948,30 @@ class ServicesProductsConsolidationTests(CatalogTestCase):
             self.assertNotIn('href="/admin/packages"', page.text, view)
             self.assertNotIn('href="/admin/pricing"', page.text, view)
             self.assertIn('href="/admin/services" data-view="services"', page.text, view)
-            # One entry each for Settings, Notifications, and Log out (no duplicates in the header or profile menu).
+            # One entry each for Settings and Log out (no duplicates in the header or profile menu).
             self.assertEqual(page.text.count('href="/admin/settings"'), 1, view)
-            self.assertEqual(page.text.count('href="/admin/notifications"'), 1, view)
             self.assertEqual(page.text.count('data-action="logout"'), 1, view)
-            # Every sidebar link points at a page that is served.
-            for link in ("/admin/dashboard", "/admin/orders", "/admin/customers", "/admin/payments", "/admin/reports",
-                         "/admin/services", "/admin/notifications", "/admin/settings"):
-                self.assertIn(f'href="{link}"', page.text, (view, link))
+            sidebar = page.text[page.text.index('<nav class="sidebar-nav"'):]
+            sidebar = sidebar[:sidebar.index("</nav>")]
+            # Notifications are reached from the top-bar bell (with its unread badge), not from the sidebar.
+            self.assertNotIn("/admin/notifications", sidebar, view)
+            self.assertIn('data-action="toggle-notifications"', page.text, view)
+            self.assertIn('id="notification-count"', page.text, view)
+            # Seven primary entries (four links, three expandable groups), each with one icon; submenu entries have none.
+            self.assertEqual(sidebar.count('class="nav-icon"'), 7, view)
+            for label in ("Dashboard", "Order Management", "Catalog Management", "Customer Management", "Sales &amp; Reports",
+                          "AI Chatbot", "Settings"):
+                self.assertEqual(sidebar.count(f'<span class="nav-label">{label}</span>'), 1, (view, label))
+            self.assertEqual(sidebar.count('data-action="toggle-nav-group"'), 3, view)
+            # Exactly one sidebar entry is the current page.
+            self.assertEqual(sidebar.count('aria-current="page"'), 0 if view == "notifications" else 1, view)
+            # Every sidebar link points at a page that is served (the hash only picks a tab of that page).
+            links = sorted(set(re.findall(r'href="(/admin/[^"#]*)', sidebar)))
+            self.assertEqual(links, sorted(f"/admin/{name}" for name in self.ADMIN_PAGES if name != "notifications"), view)
+            for link in links:
+                self.assertEqual(admin.get(link).status_code, 200, (view, link))
+        # The notification history page is still served (linked from the bell's dropdown).
+        self.assertEqual(admin.get("/admin/notifications").status_code, 200)
 
     def test_package_and_option_price_apis_used_by_services_products_still_work(self) -> None:
         admin = self.admin()

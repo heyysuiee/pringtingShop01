@@ -16,10 +16,13 @@
  * only the field keys listed in ``product.package_field_keys``).
  *
  * Fields and options come from /api/catalog, so administrator changes appear here without code changes.
+ * ``product.upload_limit_bytes`` is the largest file the server accepts for the product (Tarpaulin files may be
+ * larger than other products'); the limit is shown on every upload field and checked before uploading.
+ * A size-priced product's "Standard size" field (``field.managed === "standard_sizes"``) is shown as a price list.
  */
 (() => {
     const ALLOWED_UPLOADS = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
-    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+    const DEFAULT_UPLOAD_BYTES = 5 * 1024 * 1024;
     const OPTION_TYPES = new Set(["select", "radio", "checkboxes"]);
     const CHARGE_LABELS = { per_unit: "each", per_order: "per order", per_sqft: "per sq ft" };
 
@@ -43,13 +46,26 @@
         return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     }
 
+    /** The product's per-file upload limit in bytes (from the server), and as "25 MB". */
+    function uploadLimit(product) {
+        const value = Number(product?.upload_limit_bytes);
+        return Number.isFinite(value) && value > 0 ? value : DEFAULT_UPLOAD_BYTES;
+    }
+
+    function limitText(bytes) {
+        const mb = bytes / 1024 / 1024;
+        return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+    }
+
     /** Short price hint for an option, shown only when the product has an administrator price. */
-    function optionPriceHint(product, option) {
+    function optionPriceHint(product, option, field = null) {
         if (option.requires_quote) return "quote required";
-        const priced = product.pricing_mode !== "quote" && product.base_price !== null;
+        // A standard size's own price per piece (the Tarpaulin price list).
+        if (field?.managed === "standard_sizes") return option.price_adjustment ? `${money(option.price_adjustment)} each` : "";
+        const priced = product.pricing_mode === "size" || (product.pricing_mode !== "quote" && product.base_price !== null);
         if (!priced || !option.price_adjustment) return "";
         const sign = option.price_adjustment > 0 ? "+" : "−";
-        const charge = option.price_type === "per_sqft" && product.pricing_mode !== "area" ? "each" : CHARGE_LABELS[option.price_type] || "each";
+        const charge = option.price_type === "per_sqft" && !["area", "size"].includes(product.pricing_mode) ? "each" : CHARGE_LABELS[option.price_type] || "each";
         return `${sign}${money(Math.abs(option.price_adjustment))} ${charge}`;
     }
 
@@ -124,7 +140,7 @@
             const select = el("select", { className: "input", id, name: field.field_key, required: field.required });
             select.append(el("option", { value: "", text: field.required ? `Choose ${field.label.toLowerCase()}…` : "No preference" }));
             for (const option of field.options) {
-                const hint = optionPriceHint(product, option);
+                const hint = optionPriceHint(product, option, field);
                 select.append(el("option", { value: option.value, text: hint ? `${option.label} · ${hint}` : option.label }));
             }
             if (field.default_value && field.options.some((option) => option.value === field.default_value)) {
@@ -136,7 +152,8 @@
 
         function renderChoiceGroup(field) {
             const multiple = field.field_type === "checkboxes";
-            const group = el("div", { className: "choice-chips", role: multiple ? "group" : "radiogroup" });
+            const sizeList = field.managed === "standard_sizes";
+            const group = el("div", { className: `choice-chips${sizeList ? " size-price-chips" : ""}`, role: multiple ? "group" : "radiogroup" });
             field.options.forEach((option, index) => {
                 const id = fieldId(field, `-${index}`);
                 const input = el("input", {
@@ -148,12 +165,12 @@
                 });
                 if (!multiple && option.value === field.default_value) input.checked = true;
                 input.addEventListener("change", () => changed(field));
-                const hint = optionPriceHint(product, option);
+                const hint = optionPriceHint(product, option, field);
                 const body = el("span", { className: "choice-chip-body" }, el("span", { text: option.label }));
                 if (hint) body.append(el("small", { text: hint }));
                 group.append(el("label", { className: "choice-chip", for: id }, input, body));
             });
-            const legend = el("legend", { className: "field-label" }, field.label);
+            const legend = el("legend", { className: "field-label" }, sizeList ? `${field.label} & price` : field.label);
             if (!field.required) legend.append(" ", el("span", { className: "optional", text: "(optional)" }));
             return [legend, group];
         }
@@ -184,6 +201,7 @@
 
         function renderFile(field) {
             const id = fieldId(field);
+            const maxBytes = uploadLimit(product);
             const files = [];
             let replaceIndex = -1;
             uploads.set(field.field_key, files);
@@ -199,7 +217,7 @@
                 { className: "upload-zone upload-zone-compact", for: id },
                 el("span", { className: "upload-icon", "aria-hidden": "true", text: "↥" }),
                 el("strong", { text: field.max_files > 1 ? `Choose up to ${field.max_files} files` : "Choose a file" }),
-                el("small", { text: "JPG, PNG, WebP, or PDF · 5 MB maximum each" }),
+                el("small", { text: `JPG, PNG, WebP, or PDF · ${limitText(maxBytes)} maximum each` }),
             );
             // Opening the normal picker should add files, not replace the last one the customer chose to replace.
             zone.addEventListener("click", () => {
@@ -210,8 +228,8 @@
             function previewProblem(chosen) {
                 const invalid = chosen.find((file) => !ALLOWED_UPLOADS.has(file.type) || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name));
                 if (invalid) return `${invalid.name}: choose a JPG, PNG, WebP, or PDF file.`;
-                const oversized = chosen.find((file) => file.size > MAX_UPLOAD_BYTES);
-                if (oversized) return `${oversized.name}: each file must be 5 MB or smaller.`;
+                const oversized = chosen.find((file) => file.size > maxBytes);
+                if (oversized) return `${oversized.name} is ${formatBytes(oversized.size)}. Each file must be ${limitText(maxBytes)} or smaller.`;
                 return "";
             }
 
@@ -395,5 +413,5 @@
         };
     }
 
-    window.PrintShopDynamicForm = { create, optionPriceHint, money };
+    window.PrintShopDynamicForm = { create, optionPriceHint, money, uploadLimit, limitText, formatBytes };
 })();

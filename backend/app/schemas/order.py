@@ -127,6 +127,8 @@ class AdminDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     file: Any = None
+    # Design remarks shown to the customer with the draft.
+    remarks: Any = ""
     expected_version: Any = None
 
 

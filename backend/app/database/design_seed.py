@@ -57,6 +57,8 @@ CATEGORY_DEFAULT_FIELDS: dict[str, list[dict[str, Any]]] = {
     "sintra-board": _fields(("headline", True), ("celebrant_name", False), ("event_date", False), ("other_details", False)),
     "party-needs": _fields(("celebrant_name", True), ("celebrant_age", False), ("event_date", False), ("message", False)),
     "large-format": _fields(("headline", True), ("celebrant_name", False), ("event_date", False), ("event_location", False), ("other_details", False)),
+    # Shirt templates: the text and names to print on the shirts.
+    "tshirt-printing": _fields(("headline", False), ("business_name", False), ("names_list", False), ("other_details", False)),
 }
 DEFAULT_FIELDS = _fields(("headline", False), ("other_details", False))
 

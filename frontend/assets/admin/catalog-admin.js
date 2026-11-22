@@ -19,7 +19,7 @@
         file: "File upload",
     };
     const OPTION_TYPES = new Set(["select", "radio", "checkboxes"]);
-    const PRICING_LABELS = { unit: "Per piece", area: "Per square foot (by size)", quote: "Always by quotation" };
+    const PRICING_LABELS = { unit: "Per piece", area: "Per square foot (by size)", size: "Standard size price list (e.g. Tarpaulin)", quote: "Always by quotation" };
     const PRICE_TYPE_LABELS = { per_unit: "per piece", per_order: "per order", per_sqft: "per sq ft" };
     const EVENT_LABELS = { none: "Not collected", optional: "Optional", required: "Required" };
     const SECTION_LABELS = { "": "Basic specifications", design: "Design customization", event: "Event details", upload: "Uploads" };
@@ -107,8 +107,18 @@
         for (const category of categories()) category.products = category.products.filter((item) => item.id !== productId);
     }
 
+    /** Active standard sizes of a category (the Size prices tab), from the admin catalog. */
+    function activeSizes(categoryId) {
+        return (state.catalog?.standard_sizes || []).filter((size) => size.category_id === categoryId && size.active);
+    }
+
     function priceText(product) {
         if (product.pricing_mode === "quote") return "Always quoted";
+        if (product.pricing_mode === "size") {
+            const sizes = activeSizes(product.category_id);
+            if (!sizes.length) return "Size price list (no active sizes)";
+            return `Size price list · from ${money(Math.min(...sizes.map((size) => size.price)))}`;
+        }
         if (product.base_price === null) return "Request a quote (no price set)";
         return product.pricing_mode === "area" ? `${money(product.base_price)} per sq ft` : `${money(product.base_price)} per piece`;
     }
@@ -260,7 +270,7 @@
 
     // ---------------------------------------------------------------- tabs (Products · Packages · Categories)
 
-    const TABS = ["products", "packages", "designs", "categories"];
+    const TABS = ["products", "packages", "designs", "sizes", "categories"];
     let activeTab = "products";
 
     /** Show one tab. The tab is kept in the URL hash (#packages) so a reload or a shared link reopens it. */
@@ -280,15 +290,16 @@
             // replaceState: switching tabs must not add history entries (Back leaves the page, as before).
             window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${hash}`);
         }
-        // The sidebar highlights "Package Management" on the Packages tab and "Services & Products" otherwise.
+        // The sidebar (Catalog Management group) highlights the entry of the open tab.
         document.dispatchEvent(new CustomEvent("catalog-tab-change", { detail: { tab: activeTab } }));
     }
 
     function setupTabs() {
         const list = document.querySelector("[data-catalog-tabs]");
         if (!list) return;
+        // The URL hash names the tab (each Catalog Management sidebar entry links to one); none means Products.
         const fromHash = window.location.hash.slice(1);
-        if (TABS.includes(fromHash)) activeTab = fromHash;
+        activeTab = TABS.includes(fromHash) ? fromHash : "products";
         if (!list.dataset.bound) {
             list.dataset.bound = "true";
             list.addEventListener("click", (event) => {
@@ -330,6 +341,7 @@
     const customizeAllowed = (product) => product?.allow_customize !== false;
 
     function hasPublishedPrice(product) {
+        if (product.pricing_mode === "size") return activeSizes(product.category_id).length > 0;
         return product.pricing_mode !== "quote" && product.base_price !== null;
     }
 
@@ -457,8 +469,9 @@
         setTabCount("products", allProducts().length);
         setTabCount("categories", categories().length);
         setTabCount("packages", packageState.data ? packageState.data.packages.length : null);
-        // The Designs tab (design-admin.js) loads its own list.
+        // The Designs tab (design-admin.js) and the Size prices tab (size-admin.js) load their own lists.
         window.PrintShopDesignAdmin?.render();
+        window.PrintShopSizeAdmin?.render();
     }
 
     function orderPreviewUrl(product) {
@@ -615,13 +628,21 @@
         const maxQuantity = h("input", { name: "max_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: product?.max_quantity ?? 10000 });
         const pricingMode = selectOf("pricing_mode", Object.entries(PRICING_LABELS), product?.pricing_mode || "unit");
         const basePrice = h("input", { name: "base_price", type: "number", min: 0, step: "0.01", placeholder: "Not set — customers request a quote", value: product?.base_price ?? "" });
-        const priceLabel = () => (pricingMode.value === "area" ? "Base price per sq ft (PHP)" : "Base price per piece (PHP)");
+        const priceLabel = () => (pricingMode.value === "area" ? "Base price per sq ft (PHP)" : pricingMode.value === "size" ? "Base price (not used: each size has its own price)" : "Base price per piece (PHP)");
         const basePriceField = formField(priceLabel(), basePrice, { note: "Leave blank until the shop approves a price. Blank means customers get a quotation." });
-        pricingMode.addEventListener("change", () => {
+        const sizeNote = h("p", { className: "field-note full" });
+        const syncPricing = () => {
             basePriceField.querySelector("label").textContent = priceLabel();
-            basePrice.disabled = pricingMode.value === "quote";
-        });
-        basePrice.disabled = pricingMode.value === "quote";
+            basePrice.disabled = pricingMode.value === "quote" || pricingMode.value === "size";
+            const sizes = activeSizes(category.value);
+            sizeNote.hidden = pricingMode.value !== "size";
+            sizeNote.textContent = sizes.length
+                ? `Priced from this category's standard size price list (${sizes.length} active size${sizes.length === 1 ? "" : "s"}: ${sizes.map((size) => `${size.label} ${money(size.price)}`).join(", ")}). Edit sizes and prices on the Size prices tab. Customers can also choose Custom size, which is quoted.`
+                : "⚠ This category has no active standard sizes yet: add them on the Size prices tab. Until then customers can only request a custom-size quotation.";
+        };
+        pricingMode.addEventListener("change", syncPricing);
+        category.addEventListener("change", syncPricing);
+        syncPricing();
 
         form.append(h("div", { className: "form-grid" },
             formField("Product name", name),
@@ -632,8 +653,9 @@
             h("div", { className: "form-field full" }, h("label", { for: allowCustomize.id = `allow-customize-${Math.random().toString(36).slice(2, 7)}`, text: "Customized orders" }), allowCustomize, customizeNote),
             formField("Minimum quantity", minQuantity),
             formField("Maximum quantity", maxQuantity),
-            formField("Pricing method", pricingMode, { note: "“Per square foot” uses the product's width, height, and measurement unit fields." }),
+            formField("Pricing method", pricingMode, { note: "“Per square foot” uses the product's width, height, and measurement unit fields. “Standard size price list” uses the Size prices tab." }),
             basePriceField,
+            sizeNote,
         ), h("div", { className: "form-field full" },
             h("span", { className: "form-label-strong", text: "Product photos" }),
             h("span", { className: "field-note", text: "Upload several photos (JPG, PNG, or WebP · 2 MB each). Customers see all of them on the services and order pages. Select a photo to view it larger with zoom and fullscreen." }),
@@ -674,7 +696,7 @@
                 min_quantity: Number(minQuantity.value),
                 max_quantity: Number(maxQuantity.value),
                 pricing_mode: pricingMode.value,
-                base_price: pricingMode.value === "quote" ? null : numberOrNull(basePrice.value),
+                base_price: pricingMode.value === "quote" || pricingMode.value === "size" ? null : numberOrNull(basePrice.value),
                 ...photos.value(),
             };
             void guarded(save, async () => {
@@ -704,6 +726,11 @@
 
     function describeCondition(product, field) {
         if (!field.depends_on) return "";
+        if (field.depends_on === "standard_size") {
+            return product.pricing_mode === "size"
+                ? "Shows when the customer chooses Custom size (quoted by the shop)"
+                : "Always shown (the product is not priced by the standard size list)";
+        }
         const parent = product.fields.find((item) => item.field_key === field.depends_on);
         if (!parent) return `Shows when “${field.depends_on}” matches (field missing)`;
         const labels = field.depends_values.map((value) => parent.options.find((option) => option.value === value)?.label || value);
@@ -758,8 +785,22 @@
         const hasOptions = product.fields.some((field) => OPTION_TYPES.has(field.field_type) && field.options.length);
         const prices = h("button", { className: "button button-small", type: "button", text: "₱ Option prices", title: "Edit the price of every option on one screen", disabled: !hasOptions });
         prices.addEventListener("click", () => openOptionPricesEditor(product.id));
+        const sizes = product.pricing_mode === "size" ? activeSizes(product.category_id) : [];
+        const sizeInfo = product.pricing_mode === "size"
+            ? h("p", { className: "notice-card" },
+                h("strong", { text: "Standard size (shown first on the order form): " }),
+                sizes.length ? `${sizes.map((size) => `${size.label} ${money(size.price)}`).join(" · ")} · Custom size (quotation).` : "no active sizes yet.",
+                " ",
+                h("a", { className: "table-link", href: "#sizes", "data-catalog-goto": "sizes", text: "Edit sizes & prices →" }))
+            : null;
+        sizeInfo?.querySelector("[data-catalog-goto]")?.addEventListener("click", (event) => {
+            event.preventDefault();
+            closeDialog();
+            selectTab("sizes");
+        });
         return h("section", { className: "catalog-fields" },
             h("div", { className: "catalog-section-head" }, h("h3", { className: "catalog-section-title", text: `Order form fields (${product.fields.length})` }), h("div", { className: "catalog-row-actions" }, prices, add)),
+            sizeInfo,
             h("p", { className: "field-note", text: "Customers see these questions, in this order, after choosing this product. Quantity and contact details are always asked. Each option can add to the price; use “Option prices” to set them all at once." }),
             product.fields.length ? list : h("p", { className: "empty-state", text: "No fields yet. Add the sizes, materials, and other options customers should choose." }),
         );
@@ -1522,7 +1563,7 @@
         if (!dialog().open) dialog().classList.remove("admin-dialog-wide");
     });
 
-    /** Open a tab from outside (the sidebar's Package Management link). */
+    /** Open a tab from outside (the Catalog Management entries in the sidebar). */
     function openTab(tab) {
         if (!TABS.includes(tab)) return;
         activeTab = tab;
@@ -1532,7 +1573,10 @@
     window.PrintShopCatalogAdmin = {
         renderServices,
         openTab,
+        selectTab,
         reload: () => refreshPackagesView(),
+        // Reloads the catalog (used after size price list changes, which change the product pricing text).
+        reloadCatalog: () => load(true).then(rerenderActiveView, rerenderActiveView),
         // Shared with design-admin.js (the Designs tab of this page).
         helpers: { h, api, toast, openDialog, closeDialog, formField, selectOf, guarded, readImage, statusBadge, bindControl, setTabCount },
     };

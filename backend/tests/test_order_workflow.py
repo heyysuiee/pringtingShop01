@@ -645,7 +645,11 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
         address = {row["key"]: row["value"] for row in order["fulfillment"]["address"]}
         self.assertEqual(address["barangay"], "San Roque")
         self.assertEqual(address["landmark"], "Across the chapel")
-        self.assertEqual(order["fulfillment"]["release_status"], "Out for Delivery")
+        # Packed and fully paid delivery orders wait for the courier hand-off (Ready for Dispatch).
+        self.assertEqual(order["fulfillment"]["release_status"], "Ready for Dispatch")
+        # The delivery area and fee are worked out by the server from the province (Metro Manila → Luzon).
+        self.assertEqual(order["fulfillment"]["area_label"], "Luzon (including Metro Manila)")
+        self.assertEqual(order["fulfillment"]["delivery_fee"], 0.0)
         pickup = self.place(fulfillment={"method": "pickup", "street": "ignored"})
         self.assertEqual((pickup["fulfillment"]["method"], pickup["fulfillment"]["address"]), ("pickup", []))
         self.assertEqual(stored_order(pickup["reference"]).get("fulfillment"), {"method": "pickup"})
@@ -664,15 +668,26 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
         self.assertEqual(approved["status"], "Approved for Printing")
         self.assertIn("revised draft", approved["history"][-2]["text"])
         self.admin_post(reference, "status", {"status": "In Production"})
-        self.assertEqual(self.admin_view(reference)["allowed_statuses"], ["Out for Delivery"])
+        # Printed orders are inspected and packed before release; they never jump to pickup or delivery.
+        self.assertEqual(self.admin_view(reference)["allowed_statuses"], ["Quality Checking"])
         self.admin_post(reference, "status", {"status": "Ready for Pickup"}, expect=409)
-        self.admin_post(reference, "status", {"status": "Out for Delivery"})
-        # Not completed while a balance is outstanding; the customer pays the remaining 50% through GCash.
-        self.assertTrue(self.admin_view(reference)["actions"]["complete_requires_payment"])
+        self.admin_post(reference, "status", {"status": "Out for Delivery"}, expect=409)
+        self.admin_post(reference, "status", {"status": "Quality Checking"})
+        checks = {key: True for key in ("product_quality", "print_quality", "color_accuracy", "quantity_verified", "material_condition")}
+        self.assertEqual(self.admin_post(reference, "quality-check", {"checks": checks})["status"], "Packaging")
+        # Packed with a balance outstanding: the order waits for the remaining 50% before it is released.
+        packed = self.admin_post(reference, "packaging", {"completed_quantity": 2})
+        self.assertEqual(packed["status"], "Awaiting Full Payment")
+        self.admin_post(reference, "dispatch", {"tracking_number": "JT1234567890"}, expect=409)
         self.admin_post(reference, "status", {"status": "Completed"}, expect=409)
         self.submit_payment(reference)
         collected = self.verify(reference)
         self.assertEqual(collected["payments"][-1]["kind"], "Balance payment")
+        self.assertEqual(collected["status"], "Ready for Dispatch")
+        dispatched = self.admin_post(reference, "dispatch", {"tracking_number": f"JT{uuid.uuid4().int % 10**10:010d}"})
+        self.assertEqual((dispatched["status"], dispatched["fulfillment"]["courier"]), ("Out for Delivery", "J&T Express"))
+        delivered = self.admin_post(reference, "delivery/delivered", {"proof": [{"name": "pod.png", "dataUrl": PNG}]})
+        self.assertEqual(delivered["status"], "Delivered")
         completed = self.admin_post(reference, "status", {"status": "Completed"})
         self.assertEqual((completed["status"], completed["payment"]["balance"]), ("Completed", 0.0))
         self.assertIn("status_changed", self.kinds(reference))
@@ -712,7 +727,11 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
         reference = self.legacy_order("Awaiting Down Payment", 400)
         view = self.admin_view(reference)
         self.assertEqual(view["payment_option"], "down_payment")
-        self.assertEqual(view["fulfillment"], {"method": "pickup", "label": "Store Pickup", "recorded": False, "address": [], "release_status": "Ready for Pickup"})
+        self.assertEqual(
+            {key: view["fulfillment"][key] for key in ("method", "label", "recorded", "address", "release_status")},
+            {"method": "pickup", "label": "Store Pickup", "recorded": False, "address": [], "release_status": "Ready for Pickup"},
+        )
+        self.assertEqual((view["fulfillment"]["attempts"], view["fulfillment"]["pickup_confirmation"]), ([], None))
         self.assertTrue(view["actions"]["record_payment"])
         # Placed before accounts existed: the signed-in customer with the same email may still act on it.
         self.assertEqual(self.shopper.get(f"/api/orders/{reference}", params={"email": self.email}).status_code, 200)

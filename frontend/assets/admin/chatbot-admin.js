@@ -66,8 +66,9 @@
     function render(body, shared) {
         helpers = shared;
         root = body;
+        // The URL hash names the tab (each AI Chatbot sidebar entry links to one); none means Overview.
         const requested = window.location.hash.replace("#", "");
-        if (TABS.some(([value]) => value === requested)) state.tab = requested;
+        state.tab = TABS.some(([value]) => value === requested) ? requested : "overview";
         draw();
         helpers.setRefresh(() => draw());
     }
@@ -84,9 +85,12 @@
     }
 
     function openTab(tab) {
+        if (!TABS.some(([value]) => value === tab)) return;
         state.tab = tab;
         window.history.replaceState(window.history.state, "", `${window.location.pathname}${tab === "overview" ? "" : `#${tab}`}`);
-        draw();
+        // The sidebar highlights the entry of the open tab.
+        document.dispatchEvent(new CustomEvent("chatbot-tab-change", { detail: { tab } }));
+        if (root?.isConnected) draw();
     }
 
     function draw() {
@@ -525,5 +529,5 @@
         );
     }
 
-    window.PrintShopChatbotAdmin = { render };
+    window.PrintShopChatbotAdmin = { render, openTab };
 })();

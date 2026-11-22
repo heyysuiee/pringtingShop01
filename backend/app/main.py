@@ -17,14 +17,19 @@ from backend.app.repositories import (
     chatbot_repository,
     customer_repository,
     design_repository,
+    file_repository,
     order_repository,
     package_repository,
+    payment_method_repository,
+    size_repository,
 )
 from backend.app.routes.admin import router as admin_router
 from backend.app.routes.auth import router as auth_router
 from backend.app.routes.catalog import router as catalog_router
 from backend.app.routes.chatbot import router as chatbot_router
+from backend.app.routes.operations import router as operations_router
 from backend.app.routes.order import router as order_router
+from backend.app.routes.uploads import router as uploads_router
 
 
 logger = logging.getLogger("printshop")
@@ -50,6 +55,9 @@ CUSTOMER_PAGES = {
 ADMIN_PAGES = {
     "/admin/dashboard": "Dashboard.html",
     "/admin/orders": "OrderManagement.html",
+    "/admin/production": "ProductionMonitoring.html",
+    "/admin/fulfillment": "FulfillmentManagement.html",
+    "/admin/refunds": "CancellationsRefunds.html",
     "/admin/customers": "CustomerManagement.html",
     "/admin/services": "ServicesProducts.html",
     "/admin/payments": "PaymentMonitoring.html",
@@ -84,7 +92,13 @@ async def lifespan(app: FastAPI):
     admin_repository.initialize()
     auth_throttle_repository.initialize()
     order_repository.initialize()
+    # E-wallet payment methods (GCash active, Maya inactive until the shop enters its account).
+    payment_method_repository.initialize()
     catalog_repository.initialize()
+    # The standard size price lists (Tarpaulin sizes) reference catalog categories.
+    size_repository.initialize()
+    # Chunked uploads and order files kept in the database (PRINTSHOP_FILE_STORAGE=database).
+    file_repository.initialize()
     # Packages reference catalog products, so this runs after the catalog is seeded/migrated.
     package_repository.initialize()
     # Shop-made designs (seeded with TEMPORARY SAMPLE designs until the shop uploads its own).
@@ -128,6 +142,8 @@ app.mount("/frontend", StaticFiles(directory=ASSETS_DIR), name="frontend")
 app.include_router(auth_router)
 app.include_router(catalog_router)
 app.include_router(order_router)
+app.include_router(operations_router)
+app.include_router(uploads_router)
 app.include_router(admin_router)
 app.include_router(chatbot_router)
 

@@ -38,6 +38,11 @@ class OrderUpdates(TypedDict):
     quotation: NotRequired[dict[str, Any]]
     payment_submissions: NotRequired[list[dict[str, Any]]]
     quotation_history: NotRequired[list[dict[str, Any]]]
+    fulfillment: NotRequired[dict[str, Any]]
+    production: NotRequired[dict[str, Any]]
+    drafts: NotRequired[list[dict[str, Any]]]
+    cancellation_requests: NotRequired[list[dict[str, Any]]]
+    refunds: NotRequired[list[dict[str, Any]]]
 
 
 # How a customer pays for an order. Every new order requires the 50% down payment (package and customized
@@ -48,7 +53,8 @@ PAYMENT_OPTIONS = {"down_payment": "50% Down Payment", "cod": "Cash on Delivery 
 NEW_ORDER_PAYMENT_OPTION = "down_payment"
 PAYMENT_OPTION_PENDING_LABEL = "50% Down Payment (after the quotation is accepted)"
 DOWN_PAYMENT_RATE = 0.5
-# Customers pay through GCash and upload the screenshot or receipt; the administrator verifies it.
+# Customers pay through an administrator-configured e-wallet (payment_methods table; GCash is used when the
+# customer does not name one) and upload the screenshot or receipt; the administrator verifies it.
 CUSTOMER_PAYMENT_METHOD = "GCash"
 
 # How the finished order reaches the customer. Older orders have no fulfillment and were picked up.
@@ -62,6 +68,7 @@ DELIVERY_FIELDS = (
     ("city", "City / Municipality", True, 120),
     ("province", "Province", True, 120),
     ("landmark", "Landmark", False, 200),
+    ("delivery_instructions", "Delivery instructions", False, 500),
 )
 
 
@@ -110,3 +117,17 @@ class OrderRecord(TypedDict):
     # {"revision", "amount", "previous_amount", "note", "sent_at", "sent_by",
     #  "status": "sent" | "accepted" | "declined" | "superseded", "responded_at", "decline_reason", "superseded_at"}.
     quotation_history: NotRequired[list[dict[str, Any]]]
+    # Production monitoring (UTC ISO times): {"started_at", "estimated_completion", "personnel", "ordered_quantity",
+    #  "printed_quantity", "completed_quantity", "progress", "remarks", "updates": [...], "photos": [attachments],
+    #  "quality_check": {...latest...}, "quality_history": [...], "packaging": {"started_at", "completed_at",
+    #  "completed_quantity", "remarks", "proof"}}. Older orders have {}.
+    production: NotRequired[dict[str, Any]]
+    # Every draft sent to the customer, oldest first: {"id", "file", "remarks", "sent_at", "sent_by",
+    #  "status": "pending" | "approved" | "revision_requested", "responded_at", "revision_note"}.
+    # draft_attachment always holds the latest draft (older orders have only draft_attachment).
+    drafts: NotRequired[list[dict[str, Any]]]
+    # Customer cancellation requests (see refund_services). Never deleted.
+    cancellation_requests: NotRequired[list[dict[str, Any]]]
+    # Refund records (see refund_services). Separate from cancellation: a duplicate-payment refund never
+    # cancels the order.
+    refunds: NotRequired[list[dict[str, Any]]]

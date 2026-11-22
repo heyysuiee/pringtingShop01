@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Body, Request, Response
-from fastapi.responses import FileResponse
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin
@@ -48,7 +47,7 @@ def price_quote(request: Request, payload: dict[str, Any] = Body(...)) -> dict[s
 
 
 @router.get("/api/catalog/images/{filename}")
-def catalog_image(filename: str) -> FileResponse:
+def catalog_image(filename: str) -> Response:
     return catalog_services.catalog_image(filename)
 
 
@@ -203,3 +202,30 @@ def admin_update_design(design_id: str, request: Request, payload: dict[str, Any
 def admin_delete_design(design_id: str, request: Request) -> dict[str, Any]:
     require_admin(request)
     return design_services.delete_design(design_id)
+
+
+# ---------------------------------------------------------------- admin: standard size price lists (Size prices tab)
+
+
+@router.get("/api/admin/catalog/sizes")
+def admin_read_sizes(request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return catalog_services.admin_sizes()
+
+
+@router.post("/api/admin/catalog/sizes", status_code=201)
+def admin_create_size(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    require_admin(request)
+    return catalog_services.create_size(payload)
+
+
+@router.patch("/api/admin/catalog/sizes/{size_id}")
+def admin_update_size(size_id: str, request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    require_admin(request)
+    return catalog_services.update_size(size_id, payload)
+
+
+@router.delete("/api/admin/catalog/sizes/{size_id}")
+def admin_delete_size(size_id: str, request: Request) -> dict[str, Any]:
+    require_admin(request)
+    return catalog_services.delete_size(size_id)

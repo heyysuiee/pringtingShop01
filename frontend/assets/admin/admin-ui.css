@@ -2191,7 +2191,12 @@ button.notification-item:hover {
 
 @media (max-width: 900px) {
     .revenue-summary {
-        grid-template-columns: 1fr;
+        /* minmax(0, …) lets the track shrink below the chart's width; the chart scrolls instead. */
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .revenue-summary .chart-box {
+        overflow-x: auto;
     }
 
     .revenue-figures {

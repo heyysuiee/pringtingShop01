@@ -20,7 +20,9 @@ FIELD_SECTIONS = ("", "options", "design", "event", "upload")
 PACKAGE_PERSONALIZATION_TYPES = ("text", "textarea", "file", "date", "time")
 
 # unit: price per piece. area: price per square foot (needs width/height fields). quote: always quoted by the shop.
-PRICING_MODES = ("unit", "area", "quote")
+# size: the category's standard size price list (Tarpaulin: 2 x 3 ft = PHP 200, ...); each standard size has its
+# own price per piece and "Custom size" is quoted by the shop.
+PRICING_MODES = ("unit", "area", "size", "quote")
 # How an option's price adjustment is applied.
 PRICE_TYPES = ("per_unit", "per_order", "per_sqft")
 # Whether the order form collects event details (celebrant, date, venue) for a product.
@@ -30,6 +32,11 @@ EVENT_MODES = ("none", "optional", "required")
 AREA_WIDTH_KEY = "width"
 AREA_HEIGHT_KEY = "height"
 AREA_UNIT_KEY = "measurement_unit"
+# The standard-size choice of a "size" priced product. It is not stored as a catalog field: the order form
+# receives it from the category's standard size price list (standard_sizes table), so one price list serves
+# every product of the category and prices are edited in one place.
+STANDARD_SIZE_KEY = "standard_size"
+CUSTOM_SIZE_VALUE = "custom"
 # Conversion of one unit to feet.
 FEET_PER_UNIT = {"ft": 1.0, "in": 1 / 12, "cm": 1 / 30.48, "m": 3.280839895}
 
@@ -66,6 +73,20 @@ class CatalogField(TypedDict):
     sort_order: int
     active: bool
     options: list[FieldOption]
+
+
+class StandardSize(TypedDict):
+    """One row of a category's standard size price list (for example Tarpaulin 2 x 3 ft, PHP 200)."""
+
+    id: str
+    category_id: str
+    label: str
+    width: float
+    height: float
+    unit: str
+    price: float
+    sort_order: int
+    active: bool
 
 
 class CatalogProduct(TypedDict):

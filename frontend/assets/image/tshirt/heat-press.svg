@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" role="img" aria-labelledby="title desc">
+  <title id="title">Heat Press Printing</title>
+  <desc id="desc">Illustration of a colored cotton T-shirt with a heat-pressed print on the front.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4ebe3"/>
+      <stop offset="1" stop-color="#e6d3c6"/>
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b4a43"/>
+      <stop offset="1" stop-color="#553a35"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg)"/>
+  <circle cx="640" cy="120" r="70" fill="#d9a7a0" opacity="0.35"/>
+  <circle cx="130" cy="500" r="90" fill="#c98b8b" opacity="0.18"/>
+  <path d="M290 120 L350 100 Q400 135 450 100 L510 120 L610 185 L565 265 L520 240 L520 500 L280 500 L280 240 L235 265 L190 185 Z" fill="url(#shirt)"/>
+  <path d="M350 100 Q400 135 450 100 Q440 150 400 152 Q360 150 350 100 Z" fill="#4a322e"/>
+  <rect x="330" y="210" width="140" height="120" rx="14" fill="#f4ebe3"/>
+  <path d="M352 300 L385 250 L405 280 L420 262 L448 300 Z" fill="#c98b8b"/>
+  <circle cx="430" cy="238" r="12" fill="#d9a7a0"/>
+  <text x="400" y="372" text-anchor="middle" font-family="Plus Jakarta Sans, Arial, sans-serif" font-size="26" font-weight="800" fill="#f4ebe3" letter-spacing="2">YOUR DESIGN</text>
+  <rect x="0" y="530" width="800" height="70" fill="#4f3b37"/>
+  <text x="40" y="575" font-family="Plus Jakarta Sans, Arial, sans-serif" font-size="28" font-weight="800" fill="#f4ebe3">HEAT PRESS PRINTING</text>
+  <text x="760" y="575" text-anchor="end" font-family="Plus Jakarta Sans, Arial, sans-serif" font-size="18" fill="#e6d3c6">Cotton · your color · front / back</text>
+</svg>

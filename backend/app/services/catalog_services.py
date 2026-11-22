@@ -12,11 +12,12 @@ import binascii
 import math
 import re
 import secrets
+import sqlite3
 from datetime import date, time
 from typing import Any
 
 from fastapi import HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from backend.app.core.config import settings
 from backend.app.database.catalog_seed import slug
@@ -24,6 +25,7 @@ from backend.app.models.catalog import (
     AREA_HEIGHT_KEY,
     AREA_UNIT_KEY,
     AREA_WIDTH_KEY,
+    CUSTOM_SIZE_VALUE,
     EVENT_MODES,
     FEET_PER_UNIT,
     FIELD_SECTIONS,
@@ -32,12 +34,14 @@ from backend.app.models.catalog import (
     PACKAGE_PERSONALIZATION_TYPES,
     PRICE_TYPES,
     PRICING_MODES,
+    STANDARD_SIZE_KEY,
     CatalogField,
     CatalogProduct,
     FieldOption,
     InvitationPackage,
+    StandardSize,
 )
-from backend.app.repositories import catalog_repository, package_repository
+from backend.app.repositories import catalog_repository, package_repository, size_repository
 from backend.app.models.order import DOWN_PAYMENT_RATE
 
 
@@ -69,6 +73,136 @@ def _bad(detail: str, status: int = 422) -> HTTPException:
 # ================================================================== public reads
 
 
+# ================================================================== standard sizes & upload limits
+
+
+SIZE_FIELD_LABEL = "Standard size"
+CUSTOM_SIZE_LABEL = "Custom size (request a quote)"
+SIZE_UNITS = ("ft", "in", "cm", "m")
+
+
+def upload_limit_bytes(product: Any) -> int:
+    """The largest file a customer may attach to an order of this product (tarpaulins accept bigger files)."""
+    category = product.get("category_id") if isinstance(product, dict) else None
+    megabytes = settings.large_format_max_upload_mb if category in settings.large_upload_categories else settings.max_upload_mb
+    return megabytes * 1024 * 1024
+
+
+def size_label(width: float, height: float, unit: str) -> str:
+    return f"{_format_number(width)} × {_format_number(height)} {unit}"
+
+
+def standard_size_field(product: CatalogProduct, sizes: list[StandardSize]) -> CatalogField:
+    """The "Standard size" choice of a size-priced product, built from its category's active price list.
+
+    It has the shape of a catalog field, so the order form renders it, and the server validates, prices, and
+    describes it, with the same code as every other option. Each option's price adjustment is the size's price
+    per piece. "Custom size" needs a quotation and shows the width and height fields.
+    """
+    field_id = f"size-list-{product['category_id']}"
+    options: list[FieldOption] = []
+    for index, size in enumerate(sizes):
+        option: FieldOption = {
+            "id": f"size-{size['id']}",
+            "field_id": field_id,
+            "value": size["id"],
+            "label": size["label"],
+            "price_adjustment": size["price"],
+            "price_type": "per_unit",
+            "requires_quote": False,
+            "sort_order": index,
+            "active": True,
+        }
+        option["dimensions"] = {"width": size["width"], "height": size["height"], "unit": size["unit"]}  # type: ignore[typeddict-unknown-key]
+        options.append(option)
+    options.append({
+        "id": f"size-{CUSTOM_SIZE_VALUE}",
+        "field_id": field_id,
+        "value": CUSTOM_SIZE_VALUE,
+        "label": CUSTOM_SIZE_LABEL,
+        "price_adjustment": 0.0,
+        "price_type": "per_unit",
+        "requires_quote": True,
+        "sort_order": len(sizes),
+        "active": True,
+    })
+    field: CatalogField = {
+        "id": field_id,
+        "product_id": product["id"],
+        "field_key": STANDARD_SIZE_KEY,
+        "label": SIZE_FIELD_LABEL,
+        "field_type": "radio",
+        "required": True,
+        "placeholder": "",
+        "help_text": "Each standard size has its own price per piece. Choose Custom size for other dimensions; the shop sends a quotation.",
+        "default_value": "",
+        "min_value": None,
+        "max_value": None,
+        "max_length": None,
+        "max_files": 1,
+        "depends_on": "",
+        "depends_values": [],
+        "section": "",
+        "sort_order": -1,
+        "active": True,
+        "options": options,
+    }
+    field["managed"] = "standard_sizes"  # type: ignore[typeddict-unknown-key]
+    return field
+
+
+def _active_sizes_by_category() -> dict[str, list[StandardSize]]:
+    grouped: dict[str, list[StandardSize]] = {}
+    for size in size_repository.list_sizes(active_only=True):
+        grouped.setdefault(size["category_id"], []).append(size)
+    return grouped
+
+
+def standard_size_label(product: CatalogProduct) -> str:
+    """The label of an invitation's standard (preselected) size, for example "4 x 6 in"; "" when none."""
+    field = next((item for item in product["fields"] if item["field_key"] == "invitation_size"), None)
+    if field is None or not field["default_value"]:
+        return ""
+    option = next((item for item in field["options"] if item["value"] == field["default_value"]), None)
+    return option["label"] if option else ""
+
+
+def customer_product(product: CatalogProduct, sizes_by_category: dict[str, list[StandardSize]] | None = None) -> CatalogProduct:
+    """The product as the order form and the server's order validation see it.
+
+    Size-priced products get the "Standard size" choice (their category's active price list) as their first
+    field. On other products, fields that only apply to a custom size are shown unconditionally, so a product
+    switched back to per-square-foot pricing still asks for its width and height.
+    """
+    if sizes_by_category is None:
+        sizes_by_category = _active_sizes_by_category()
+    fields = list(product["fields"])
+    sizes: list[StandardSize] = []
+    if product["pricing_mode"] == "size":
+        sizes = sizes_by_category.get(product["category_id"], [])
+        fields = [standard_size_field(product, sizes), *fields]
+    else:
+        fields = [
+            {**field, "depends_on": "", "depends_values": []} if field["depends_on"] == STANDARD_SIZE_KEY else field
+            for field in fields
+        ]
+    result: CatalogProduct = {**product, "fields": fields}
+    result["upload_limit_bytes"] = upload_limit_bytes(product)  # type: ignore[typeddict-unknown-key]
+    result["standard_sizes"] = [  # type: ignore[typeddict-unknown-key]
+        {"id": size["id"], "label": size["label"], "width": size["width"], "height": size["height"], "unit": size["unit"], "price": size["price"]}
+        for size in sizes
+    ]
+    result["standard_size_label"] = standard_size_label(product)  # type: ignore[typeddict-unknown-key]
+    return result
+
+
+def _customer_categories(categories: list[Any]) -> list[Any]:
+    sizes = _active_sizes_by_category()
+    for category in categories:
+        category["products"] = [customer_product(product, sizes) for product in category["products"]]
+    return categories
+
+
 def _with_packages(categories: list[Any]) -> list[Any]:
     """Attach each product's active packages and the field keys a package order still asks for."""
     grouped: dict[str, list[InvitationPackage]] = {}
@@ -92,14 +226,14 @@ def public_catalog() -> dict[str, Any]:
     product's published packages.
     """
     categories = [category for category in catalog_repository.load_catalog(active_only=True) if category["products"]]
-    return {"currency": CURRENCY, "categories": _with_packages(categories)}
+    return {"currency": CURRENCY, "categories": _with_packages(_customer_categories(categories))}
 
 
 def public_catalog_full() -> dict[str, Any]:
     """Every active category, including categories that have no active products yet."""
     return {
         "currency": CURRENCY,
-        "categories": _with_packages(catalog_repository.load_catalog(active_only=True)),
+        "categories": _with_packages(_customer_categories(catalog_repository.load_catalog(active_only=True))),
     }
 
 
@@ -107,6 +241,8 @@ def admin_catalog() -> dict[str, Any]:
     return {
         "currency": CURRENCY,
         "categories": catalog_repository.load_catalog(active_only=False),
+        "standard_sizes": size_repository.list_sizes(active_only=False),
+        "upload_limits": upload_limits(),
         "field_types": list(FIELD_TYPES),
         "pricing_modes": list(PRICING_MODES),
         "price_types": list(PRICE_TYPES),
@@ -121,7 +257,7 @@ def orderable_product(product_id: Any) -> CatalogProduct:
     product = catalog_repository.get_product(product_id.strip(), active_only=True)
     if product is None:
         raise _bad("The selected product is no longer available. Choose another product.")
-    return product
+    return customer_product(product)
 
 
 def ensure_customizable(product: CatalogProduct) -> None:
@@ -134,7 +270,7 @@ def public_product(product_id: str) -> CatalogProduct:
     product = catalog_repository.get_product(product_id, active_only=True)
     if product is None:
         raise _bad("Product not found.", 404)
-    return product
+    return customer_product(product)
 
 
 def admin_product(product_id: str) -> CatalogProduct:
@@ -219,13 +355,30 @@ def calculate_price(product: CatalogProduct, quantity: int, selections: dict[str
     reasons: list[str] = []
     incomplete: list[str] = []
     area = _area_square_feet(selections) if mode == "area" else None
+    size_mode = mode == "size"
+    chosen_size: FieldOption | None = None
 
     if mode == "quote":
         reasons.append("This product is priced by quotation after the shop reviews your request.")
-    elif base_price is None:
+    elif base_price is None and not size_mode:
         reasons.append("The shop has not published a price for this product yet, so it will be quoted.")
     if mode == "area" and area is None:
         incomplete.append("Enter the width and height to calculate the size-based price.")
+    if size_mode:
+        # size mode: (standard size price + per-piece options + per-sq-ft options x the size's area) x quantity
+        # + per-order options. The size's price comes from the price list; there is no separate base price.
+        size_field = next((field for field in product["fields"] if field["field_key"] == STANDARD_SIZE_KEY), None)
+        value = selections.get(STANDARD_SIZE_KEY)
+        chosen_size = _options_by_value(size_field).get(value) if size_field is not None and isinstance(value, str) else None
+        if chosen_size is None:
+            incomplete.append("Choose a standard size to see its price.")
+        elif chosen_size["value"] == CUSTOM_SIZE_VALUE:
+            # Shown for reference only: a custom size is always quoted by the shop.
+            area = _area_square_feet(selections)
+        else:
+            dimensions = chosen_size.get("dimensions") or {}  # type: ignore[typeddict-item]
+            factor = FEET_PER_UNIT.get(dimensions.get("unit", "ft"), 1.0)
+            area = float(dimensions.get("width", 0)) * factor * float(dimensions.get("height", 0)) * factor or None
 
     per_sqft = 0.0
     per_unit = 0.0
@@ -235,7 +388,7 @@ def calculate_price(product: CatalogProduct, quantity: int, selections: dict[str
     sqft_lines: list[tuple[dict[str, Any], float]] = []
     sqft_text = f"{_format_number(area)} sq ft" if area is not None else "area"
 
-    if base_price is not None and mode != "quote":
+    if base_price is not None and mode not in ("quote", "size"):
         if mode == "area":
             per_sqft += base_price
             line = {"label": "Base price", "detail": f"{money(base_price)} per sq ft × {sqft_text} × {quantity}", "amount": 0.0}
@@ -265,10 +418,14 @@ def calculate_price(product: CatalogProduct, quantity: int, selections: dict[str
             sign = "+" if adjustment > 0 else "−"
             amount_text = f"{sign}{money(abs(adjustment))}"
             price_type = option["price_type"]
-            if price_type == "per_order":
+            if field["field_key"] == STANDARD_SIZE_KEY:
+                # The standard size's own price per piece (the Tarpaulin price list).
+                per_unit += adjustment
+                lines.append({"label": label, "detail": f"{money(adjustment)} each × {quantity}", "amount": round(adjustment * quantity, 2)})
+            elif price_type == "per_order":
                 per_order += adjustment
                 lines.append({"label": label, "detail": f"{amount_text} per order", "amount": round(adjustment, 2)})
-            elif price_type == "per_sqft" and mode == "area":
+            elif price_type == "per_sqft" and mode in ("area", "size"):
                 per_sqft += adjustment
                 line = {"label": label, "detail": f"{amount_text} per sq ft × {sqft_text} × {quantity}", "amount": 0.0}
                 sqft_lines.append((line, adjustment))
@@ -288,10 +445,10 @@ def calculate_price(product: CatalogProduct, quantity: int, selections: dict[str
             for line, rate in sqft_lines:
                 line["amount"] = round(rate * area * quantity, 2)
 
-    return {
+    result: dict[str, Any] = {
         "currency": CURRENCY,
         "pricing_mode": mode,
-        "base_price": base_price,
+        "base_price": None if size_mode else base_price,
         "quantity": quantity,
         "area_sqft": round(area, 2) if area is not None else None,
         "unit_price": round(unit_price, 2) if unit_price is not None else None,
@@ -301,6 +458,22 @@ def calculate_price(product: CatalogProduct, quantity: int, selections: dict[str
         "quote_reasons": reasons,
         "incomplete": incomplete,
     }
+    if size_mode:
+        standard = chosen_size is not None and chosen_size["value"] != CUSTOM_SIZE_VALUE
+        result["standard_size"] = (
+            {"id": chosen_size["value"], "label": chosen_size["label"], "unit_price": round(chosen_size["price_adjustment"], 2)}
+            if standard and chosen_size is not None else None
+        )
+        result["custom_size"] = chosen_size is not None and chosen_size["value"] == CUSTOM_SIZE_VALUE
+        # A standard size from the published price list is a fixed price: subtotal = size price x quantity
+        # (plus any priced options). A custom size is always quoted by the shop.
+        fixed = standard and total is not None and total > 0
+        result["price_basis"] = "standard_size" if fixed else None
+        if fixed and total is not None:
+            down = round(total * DOWN_PAYMENT_RATE, 2)
+            result["down_payment"] = down
+            result["balance_after_down_payment"] = round(total - down, 2)
+    return result
 
 
 def quote(payload: dict[str, Any]) -> dict[str, Any]:
@@ -710,7 +883,12 @@ def evaluate_order(
         specifications.append({"key": key, "label": field["label"], "value": value, "type": field["field_type"]})
     if package is not None:
         pricing = _package_pricing(package, quantity, scoped, selections)
-        specifications = _package_specifications(package) + specifications
+        package_rows = _package_specifications(package)
+        standard = standard_size_label(product)
+        if not package["size"] and standard:
+            # The package has no size of its own: it is printed in the invitation type's standard size.
+            package_rows.insert(2, {"key": "package_size", "label": "Size", "value": f"{standard} (standard size)", "type": "text"})
+        specifications = package_rows + specifications
     else:
         pricing = calculate_price(scoped, quantity, selections)
         if pricing["area_sqft"] is not None:
@@ -840,12 +1018,13 @@ def decode_catalog_image(upload: Any, label: str = "Product", max_bytes: int = C
 
 
 def _save_catalog_image(upload: Any) -> str:
-    _, extension, contents = decode_catalog_image(upload)
-    CATALOG_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    from backend.app.services import file_services
+
+    mime_type, extension, contents = decode_catalog_image(upload)
     filename = f"{secrets.token_hex(16)}{extension}"
     try:
-        (CATALOG_IMAGE_DIR / filename).write_bytes(contents)
-    except OSError as error:
+        file_services.save_catalog_image(filename, mime_type, contents)
+    except (OSError, sqlite3.Error) as error:
         raise _bad("The product image could not be saved.", 500) from error
     return f"/api/catalog/images/{filename}"
 
@@ -903,14 +1082,13 @@ def resolve_images(payload: dict[str, Any], current: list[str], *, creating: boo
     return images
 
 
-def catalog_image(filename: str) -> FileResponse:
+def catalog_image(filename: str) -> Response:
+    from backend.app.services import file_services
+
     if not re.fullmatch(r"[0-9a-f]{32}\.(jpg|png|webp)", filename):
         raise _bad("Image not found.", 404)
-    path = CATALOG_IMAGE_DIR / filename
-    if not path.is_file():
-        raise _bad("Image not found.", 404)
     media = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[filename.rsplit(".", 1)[1]]
-    return FileResponse(path, media_type=media)
+    return file_services.catalog_image_response(filename, media)
 
 
 def _product_values(payload: dict[str, Any], current: CatalogProduct | None) -> dict[str, Any]:
@@ -1094,7 +1272,11 @@ def _field_values(product: CatalogProduct, payload: dict[str, Any], current: Cat
     if wants("depends_on"):
         depends_on = _text(payload, "depends_on", "Show-when field", 40)
         own_key = values.get("field_key", current["field_key"] if current else "")
-        if depends_on:
+        if depends_on == STANDARD_SIZE_KEY:
+            # Asked only for a chosen standard size or a custom size (products priced by the size list).
+            if product["pricing_mode"] != "size":
+                raise _bad("“Show only when Standard size …” works only for products priced by the standard size list.")
+        elif depends_on:
             parent = next((field for field in product["fields"] if field["field_key"] == depends_on), None)
             if parent is None or depends_on == own_key:
                 raise _bad("“Show only when” must name another field on this product.")
@@ -1130,7 +1312,13 @@ def _field_values(product: CatalogProduct, payload: dict[str, Any], current: Cat
     return values, options
 
 
+def _reserved_key(payload: dict[str, Any]) -> None:
+    if payload.get("field_key") == STANDARD_SIZE_KEY:
+        raise _bad("“standard_size” is reserved for the size price list. Choose another field key.")
+
+
 def create_field(product_id: str, payload: dict[str, Any]) -> CatalogProduct:
+    _reserved_key(payload)
     product = admin_product(product_id)
     values, options = _field_values(product, payload, None)
     values["options"] = options or []
@@ -1140,6 +1328,7 @@ def create_field(product_id: str, payload: dict[str, Any]) -> CatalogProduct:
 
 
 def update_field(field_id: str, payload: dict[str, Any]) -> CatalogProduct:
+    _reserved_key(payload)
     current = catalog_repository.get_field(field_id)
     if current is None:
         raise _bad("Field not found.", 404)
@@ -1169,3 +1358,111 @@ def reorder_fields(product_id: str, payload: dict[str, Any]) -> CatalogProduct:
         raise _bad("The field order must list every field of this product exactly once.")
     catalog_repository.reorder_fields(product_id, field_ids)
     return admin_product(product_id)
+
+
+# ================================================================== admin: standard size price lists
+
+
+def upload_limits() -> dict[str, Any]:
+    return {
+        "standard_mb": settings.max_upload_mb,
+        "large_format_mb": settings.large_format_max_upload_mb,
+        "large_format_categories": list(settings.large_upload_categories),
+    }
+
+
+def admin_sizes() -> dict[str, Any]:
+    """Every standard size (active and inactive) and the categories they can belong to."""
+    categories = catalog_repository.load_catalog(active_only=False)
+    return {
+        "currency": CURRENCY,
+        "sizes": size_repository.list_sizes(active_only=False),
+        "units": list(SIZE_UNITS),
+        "categories": [
+            {
+                "id": category["id"],
+                "label": category["label"],
+                "size_priced_products": [
+                    {"id": product["id"], "name": product["name"]}
+                    for product in category["products"] if product["pricing_mode"] == "size"
+                ],
+            }
+            for category in categories
+        ],
+    }
+
+
+def _dimension(payload: dict[str, Any], key: str, label: str) -> float:
+    number = _number(payload.get(key))
+    if number is None or not 0.1 <= number <= 1000:
+        raise _bad(f"{label} must be a number from 0.1 to 1,000.")
+    return round(number, 2)
+
+
+def _size_values(payload: dict[str, Any], current: StandardSize | None) -> dict[str, Any]:
+    creating = current is None
+    values: dict[str, Any] = {}
+
+    def wants(key: str) -> bool:
+        return creating or key in payload
+
+    if wants("category_id"):
+        category_id = payload.get("category_id")
+        if not isinstance(category_id, str) or catalog_repository.get_category(category_id) is None:
+            raise _bad("Choose an existing category for this size.")
+        values["category_id"] = category_id
+    if wants("width"):
+        values["width"] = _dimension(payload, "width", "Width")
+    if wants("height"):
+        values["height"] = _dimension(payload, "height", "Height")
+    if wants("unit"):
+        values["unit"] = _choice(payload, "unit", "Unit", SIZE_UNITS, "ft")
+    if wants("price"):
+        price = _price(payload.get("price"), "Price", allow_none=False)
+        if price is None or price <= 0:
+            raise _bad("Enter a price greater than zero.")
+        values["price"] = price
+    if wants("active"):
+        values["active"] = _bool(payload, "active", True)
+    if "sort_order" in payload:
+        values["sort_order"] = _int(payload, "sort_order", "Display order", 0, 10_000, 0)
+    merged = {**(current or {}), **values}
+    if wants("label") or any(key in values for key in ("width", "height", "unit")):
+        label = _text(payload, "label", "Size name", 60) if "label" in payload else ""
+        values["label"] = label or size_label(merged["width"], merged["height"], merged["unit"])
+    if size_repository.duplicate_dimensions(merged["category_id"], merged["width"], merged["height"], merged["unit"], current["id"] if current else ""):
+        raise _bad(f"{size_label(merged['width'], merged['height'], merged['unit'])} is already in this category's price list.")
+    return values
+
+
+def _admin_size(size_id: str) -> StandardSize:
+    size = size_repository.get_size(size_id)
+    if size is None:
+        raise _bad("Size not found.", 404)
+    return size
+
+
+def create_size(payload: dict[str, Any]) -> dict[str, Any]:
+    values = _size_values(payload, None)
+    base = slug(f"{values['category_id']}-{_format_number(values['width'])}x{_format_number(values['height'])}-{values['unit']}")
+    size_id, sequence = base, 1
+    while size_repository.id_taken(size_id):
+        sequence += 1
+        size_id = f"{base}-{sequence}"
+    values["id"] = size_id
+    values.setdefault("sort_order", size_repository.next_sort_order(values["category_id"]))
+    size_repository.create_size(values)
+    return {**admin_sizes(), "size": _admin_size(size_id)}
+
+
+def update_size(size_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    current = _admin_size(size_id)
+    size_repository.update_size(size_id, _size_values(payload, current))
+    return {**admin_sizes(), "size": _admin_size(size_id)}
+
+
+def delete_size(size_id: str) -> dict[str, Any]:
+    """Remove a size from the price list. Orders keep the size and price they were placed with."""
+    _admin_size(size_id)
+    size_repository.delete_size(size_id)
+    return admin_sizes()

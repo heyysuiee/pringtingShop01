@@ -1860,3 +1860,145 @@ textarea:disabled {
         display: none;
     }
 }
+
+/* ---------- Standard sizes (Tarpaulin price list), invitation standard size, upload progress ---------- */
+
+.size-price-chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px;
+}
+
+.size-price-chips .choice-chip-body {
+    min-height: 64px;
+    justify-content: center;
+}
+
+.size-price-chips .choice-chip-body > span {
+    font-weight: 700;
+}
+
+.size-price-chips .choice-chip-body small {
+    color: var(--accent-pink-light);
+    font-weight: 700;
+}
+
+.size-price-table {
+    width: 100%;
+    max-width: 420px;
+    margin-top: 12px;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.size-price-table caption {
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: left;
+    text-transform: uppercase;
+}
+
+.size-price-table th,
+.size-price-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+}
+
+.size-price-table thead th {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.size-price-table td {
+    color: var(--accent-pink-light);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    text-align: right;
+}
+
+.size-price-table thead th:last-child {
+    text-align: right;
+}
+
+.size-price-table .size-price-custom td {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.service-row-packages.service-row-sizes {
+    grid-area: auto;
+    grid-column: 2 / -1;
+}
+
+@media (max-width: 860px) {
+    .service-row-packages.service-row-sizes {
+        grid-column: 1 / -1;
+    }
+}
+
+.standard-size-note {
+    display: inline-block;
+    margin: 6px 0 4px;
+    padding: 4px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.upload-progress {
+    display: grid;
+    gap: 6px;
+    margin-top: 14px;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+}
+
+.upload-progress[hidden] {
+    display: none;
+}
+
+.upload-progress-track {
+    display: block;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.upload-progress-bar {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--grad-text, var(--accent-pink));
+    transition: width 200ms linear;
+}
+
+/* Home services: the seventh service (T-Shirt Printing) is centred on its own row instead of hanging left. */
+.mp-home-services-head > .mp-home-services-head-actions:last-child:nth-child(3n + 2) {
+    grid-column: 2;
+}
+
+@media (max-width: 992px) {
+    .mp-home-services-head > .mp-home-services-head-actions:last-child:nth-child(3n + 2) {
+        grid-column: auto;
+    }
+
+    .mp-home-services-head > .mp-home-services-head-actions:last-child:nth-child(even) {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 620px) {
+    .mp-home-services-head > .mp-home-services-head-actions:last-child:nth-child(even) {
+        grid-column: auto;
+    }
+}

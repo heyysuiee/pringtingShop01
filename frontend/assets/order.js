@@ -165,10 +165,20 @@
         return pkg.included_quantity ? Math.round((pkg.price / pkg.included_quantity) * 100) / 100 : null;
     }
 
-    /** "₱12.00 per piece", "₱20.00 per sq ft", packages "from ₱15.00 per piece", or "Request a quote". */
+    /** The cheapest standard size of a size-priced product (Tarpaulin price list), or null. */
+    function cheapestSize(product) {
+        const sizes = product.pricing_mode === "size" ? (product.standard_sizes || []) : [];
+        return sizes.length ? sizes.reduce((low, size) => (size.price < low.price ? size : low)) : null;
+    }
+
+    /** "₱12.00 per piece", "₱20.00 per sq ft", "from ₱200.00 (2 × 3 ft)", packages "from ₱15.00 per piece", or "Request a quote". */
     function priceSummary(product) {
         const packages = product.packages || [];
         const cheapest = packages.length ? Math.min(...packages.map((pkg) => perPiece(pkg) ?? Infinity)) : Infinity;
+        if (product.pricing_mode === "size") {
+            const size = cheapestSize(product);
+            return size ? `From ${money(size.price)} (${size.label}) · custom sizes quoted` : "Request a quote";
+        }
         if (product.pricing_mode !== "quote" && product.base_price !== null) {
             return product.pricing_mode === "area"
                 ? `${money(product.base_price)} per sq ft`
@@ -479,8 +489,42 @@
                 ? "Customize your own order; the shop has not published packages for this item yet."
                 : "This item is not available to order right now. Please choose another product or contact the shop.")));
         if (designCount) copy.append(el("p", "field-hint", `${designCount} shop design${designCount === 1 ? "" : "s"} to choose from — just add your details.`));
+        if (product.standard_size_label) copy.append(el("p", "standard-size-note", `Standard size: ${product.standard_size_label}`));
+        const priceList = sizePriceTable(product);
+        if (priceList) copy.append(priceList);
         if (product.min_quantity > 1) copy.append(el("span", "min-badge", `Minimum order: ${product.min_quantity.toLocaleString()} pcs`));
         selectedProduct.append(gallery(productImages(product), product.name, "selected-product-gallery"), copy);
+    }
+
+    /** The standard sizes and their prices per piece (Tarpaulin), as a small table. Null for other products. */
+    function sizePriceTable(product, { caption = "Standard sizes & prices" } = {}) {
+        const sizes = product.pricing_mode === "size" ? (product.standard_sizes || []) : [];
+        if (!sizes.length) return null;
+        const table = el("table", "size-price-table");
+        const head = el("caption", "", caption);
+        const headRow = el("tr");
+        [["Size", "col"], ["Price per piece", "col"]].forEach(([text]) => {
+            const cell = el("th", "", text);
+            cell.scope = "col";
+            headRow.append(cell);
+        });
+        const thead = el("thead");
+        thead.append(headRow);
+        const body = el("tbody");
+        sizes.forEach((size) => {
+            const row = el("tr");
+            const name = el("th", "", size.label);
+            name.scope = "row";
+            row.append(name, el("td", "", money(size.price)));
+            body.append(row);
+        });
+        const custom = el("tr", "size-price-custom");
+        const customName = el("th", "", "Custom size");
+        customName.scope = "row";
+        custom.append(customName, el("td", "", "Request a quote"));
+        body.append(custom);
+        table.append(head, thead, body);
+        return table;
     }
 
     /** Whether the shop accepts customized orders (quotation requests) for a product. Older data: yes. */
@@ -514,14 +558,17 @@
         setError("");
 
         renderSelectedProduct(product);
+        syncUploadLimit(product);
         const note = pricingNote.querySelector("div");
-        const priced = product.pricing_mode !== "quote" && product.base_price !== null;
+        const priced = product.pricing_mode === "size" ? Boolean((product.standard_sizes || []).length) : product.pricing_mode !== "quote" && product.base_price !== null;
         note.replaceChildren(
             el("strong", "", state.packages.length ? (customizeAllowed(product) ? "Packages or a customized order" : "Packages") : (priced ? "Prices set by the shop" : "Request a quote")),
             el("p", "", state.packages.length
                 ? (customizeAllowed(product)
                     ? "Choose a published package with a fixed price, or customize your order. The total is calculated from the quantity and the shop confirms the final amount before payment."
                     : "Choose a published package with a fixed price. The total is calculated from the quantity and the shop confirms the final amount before payment.")
+                : priced && product.pricing_mode === "size"
+                    ? "Choose a standard size: its published price × the quantity is your total. Custom sizes are quoted by the shop."
                 : priced
                     ? "You will see the price per piece and a live total as you choose options. The administrator confirms the final amount before payment is requested."
                     : "This product does not have a published price yet. Submit your options and the administrator will send a quotation."),
@@ -540,6 +587,8 @@
             ? `Choose one of the shop's ${state.designs.length} design${state.designs.length === 1 ? "" : "s"} and add your details, or send your own design.`
             : state.invitation
             ? "Set the printing, finish, envelope, quantity, design direction, and event details yourself."
+            : product.pricing_mode === "size"
+                ? "Choose a standard size from the price list, or a custom size for a quotation, then upload your design."
             : largeFormat
                 ? "Enter your exact size, material, and requirements. Priced per square foot or by quotation."
                 : "Choose your own size, material, and details. Priced from the shop's rates or by quotation.";
@@ -1217,7 +1266,9 @@
         else if (quote.unit_price !== null) {
             status = quote.pricing_mode === "package"
                 ? packageFormula(quote)
-                : `${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · estimate, confirmed by the shop`;
+                : quote.price_basis === "standard_size"
+                    ? `${quote.standard_size?.label || "Standard size"}: ${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · published price`
+                    : `${money(quote.unit_price)} per piece × ${quote.quantity.toLocaleString()} pcs · estimate, confirmed by the shop`;
         } else status = "";
         reference.status.textContent = status;
         if (quote.requires_quote) return;
@@ -1243,10 +1294,16 @@
      * payment option is chosen in the customer portal after the quotation is accepted.
      */
     function isFixedPrice() {
-        if (state.mode !== "package" || !state.package) return false;
         const quote = state.quote;
+        // A standard size from the published price list (Tarpaulin): size price × quantity is the order total.
+        if (state.mode !== "package") return Boolean(quote && quote.price_basis === "standard_size" && quote.estimated_total > 0);
+        if (!state.package) return false;
         if (!quote) return true; // the package total is still loading
         return quote.estimated_total !== null && quote.estimated_total > 0 && !quote.requires_quote;
+    }
+
+    function fixedTotalLabel() {
+        return state.mode === "package" ? "Package total" : "Price-list total";
     }
 
     function syncPaymentSection() {
@@ -1260,19 +1317,24 @@
         if (!isFixedPrice()) {
             return [
                 ["Payment", "50% Down Payment"],
-                ["Total", "Set by the shop's quotation (you accept or decline it first)"],
+                ["Total", `Set by the shop's quotation (you accept or decline it first)${fulfillmentMethod() === "delivery" && selectedArea() ? ` plus the ${money(deliveryFee())} delivery fee` : ""}`],
                 ["Down payment (50%)", "Half of the accepted quotation, verified by the shop"],
             ];
         }
         const quote = state.quote || {};
         const rows = [["Payment", "50% Down Payment"]];
         if (typeof quote.down_payment !== "number" || typeof quote.estimated_total !== "number") {
-            rows.push(["Package total", "Calculating…"]);
+            rows.push([fixedTotalLabel(), "Calculating…"]);
             return rows;
         }
-        rows.push(["Package total", money(quote.estimated_total)]);
-        rows.push(["Down payment (50%)", money(quote.down_payment)]);
-        rows.push(["Remaining balance (50%)", money(quote.balance_after_down_payment)]);
+        const fee = deliveryFee();
+        const total = Math.round((quote.estimated_total + fee) * 100) / 100;
+        const down = Math.round(total * 50) / 100;
+        rows.push([fixedTotalLabel(), money(quote.estimated_total)]);
+        if (fulfillmentMethod() === "delivery") rows.push(["Delivery fee", selectedArea() ? money(fee) : "Choose your delivery area"]);
+        rows.push(["Order total", money(total)]);
+        rows.push(["Down payment (50%)", money(down)]);
+        rows.push(["Remaining balance (50%)", money(Math.round((total - down) * 100) / 100)]);
         return rows;
     }
 
@@ -1287,7 +1349,7 @@
             paymentBreakdown.append(row);
         });
         if (state.quote?.estimated_total !== null && state.quote?.estimated_total !== undefined) {
-            paymentBreakdown.append(el("p", "field-hint", "From the package's published price and add-on rate. Pay the down payment after the shop approves your order; it is confirmed once the shop verifies your GCash payment."));
+            paymentBreakdown.append(el("p", "field-hint", `${state.mode === "package" ? "From the package's published price and add-on rate." : "From the shop's published size price list (price per piece × quantity)."} Pay the down payment after the shop approves your order; it is confirmed once the shop verifies your e-wallet payment.`));
         }
     }
 
@@ -1296,6 +1358,65 @@
 
     const deliveryFields = $("#delivery-fields");
     const deliveryInputs = [...deliveryFields.querySelectorAll("[data-delivery-field]")];
+    const pickupFields = $("#pickup-fields");
+    const areaSelect = $("#delivery-area");
+    const pickupSelect = $("#pickup-location");
+    // Delivery areas (fee and estimated courier period) and pickup locations configured by the shop. The
+    // server calculates the delivery fee again when the order is submitted.
+    let fulfillmentOptions = { delivery_enabled: true, areas: [], pickup_locations: [], delivery_disclaimer: "" };
+    fetch("/api/fulfillment-options", { credentials: "same-origin" })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((options) => {
+            if (!options) return;
+            fulfillmentOptions = options;
+            areaSelect.replaceChildren(new Option("Choose your area", ""), ...options.areas.map((area) => new Option(`${area.label} — ${money(area.fee)} delivery fee`, area.id)));
+            const deliveryRadio = form.querySelector('input[name="fulfillment-method"][value="delivery"]');
+            if (!options.delivery_enabled && deliveryRadio) {
+                deliveryRadio.disabled = true;
+                deliveryRadio.closest("label").title = "Delivery is not available right now.";
+            }
+            $("#pickup-location-field").hidden = options.pickup_locations.length < 2;
+            pickupSelect.replaceChildren(...options.pickup_locations.map((item) => new Option(`${item.name} — ${item.address}`, item.id)));
+            $("#pickup-date").min = new Date().toISOString().slice(0, 10);
+            // Without configured areas the server works the area out from the province.
+            if (!options.areas.length) {
+                areaSelect.dataset.optional = "true";
+                areaSelect.closest(".field").hidden = true;
+            }
+            syncFulfillment();
+        })
+        .catch(() => {
+            areaSelect.dataset.optional = "true";
+            areaSelect.closest(".field").hidden = true;
+            syncFulfillment();
+        });
+
+    function selectedArea() {
+        return fulfillmentOptions.areas.find((area) => area.id === areaSelect.value) || null;
+    }
+
+    /** The delivery fee shown before submitting (the server recalculates it from the address). */
+    function deliveryFee() {
+        return fulfillmentMethod() === "delivery" ? Number(selectedArea()?.fee || 0) : 0;
+    }
+
+    function estimateText(area) {
+        if (!area) return "";
+        const low = area.estimate_min_days;
+        const high = area.estimate_max_days;
+        if (low === null && high === null) return "Estimated delivery period confirmed by the shop";
+        if (low === null || high === null || low === high) return `About ${high ?? low} days (estimate)`;
+        return `${low}–${high} days (estimate)`;
+    }
+
+    function renderDeliveryQuote() {
+        const area = selectedArea();
+        $("#delivery-quote").textContent = area
+            ? `Delivery fee ${money(area.fee)} · ${estimateText(area)}. ${fulfillmentOptions.delivery_disclaimer || ""}`
+            : "Choose the area of the delivery address to see the delivery fee and estimated delivery period.";
+        const location = fulfillmentOptions.pickup_locations.find((item) => item.id === pickupSelect.value) || fulfillmentOptions.pickup_locations[0];
+        $("#pickup-info").textContent = [location ? `Pickup at ${location.name}, ${location.address}${location.hours ? ` (${location.hours})` : ""}.` : "Pickup at the shop.", location?.instructions, fulfillmentOptions.pickup_instructions, "Orders are released only when fully paid; bring the pickup code shown in your customer portal."].filter(Boolean).join(" ");
+    }
 
     function fulfillmentMethod() {
         return form.querySelector('input[name="fulfillment-method"]:checked')?.value || "pickup";
@@ -1305,6 +1426,8 @@
     function syncFulfillment() {
         const delivery = fulfillmentMethod() === "delivery";
         deliveryFields.hidden = !delivery;
+        pickupFields.hidden = delivery;
+        renderDeliveryQuote();
         deliveryInputs.forEach((input) => {
             input.disabled = !delivery;
             input.required = delivery && input.dataset.optional !== "true";
@@ -1317,22 +1440,45 @@
     }
 
     function fulfillmentPayload() {
-        if (fulfillmentMethod() !== "delivery") return { method: "pickup" };
+        if (fulfillmentMethod() !== "delivery") {
+            const pickup = { method: "pickup" };
+            if (pickupSelect.value) pickup.pickup_location_id = pickupSelect.value;
+            if ($("#pickup-date").value) pickup.preferred_pickup_date = $("#pickup-date").value;
+            if ($("#pickup-notes").value.trim()) pickup.pickup_notes = $("#pickup-notes").value.trim();
+            return pickup;
+        }
         const result = { method: "delivery" };
         deliveryInputs.forEach((input) => { result[input.dataset.deliveryField] = input.value.trim(); });
         return result;
     }
 
     function fulfillmentRows() {
-        if (fulfillmentMethod() !== "delivery") return [["Method", "Store Pickup — no delivery address needed"]];
+        if (fulfillmentMethod() !== "delivery") {
+            const location = fulfillmentOptions.pickup_locations.find((item) => item.id === pickupSelect.value);
+            return [
+                ["Method", "Store Pickup — no delivery address needed"],
+                location ? ["Pickup location", `${location.name}, ${location.address}`] : ["Pickup location", "The shop"],
+                ["Preferred pickup date", $("#pickup-date").value || "Not specified"],
+            ];
+        }
+        const area = selectedArea();
         return [
             ["Method", "Delivery"],
-            ...deliveryInputs.map((input) => [input.closest(".field").querySelector("label").textContent.replace("(optional)", "").trim(), input.value.trim()]),
+            ...deliveryInputs.filter((input) => input !== areaSelect).map((input) => [input.closest(".field").querySelector("label").textContent.replace("(optional)", "").trim(), input.value.trim()]),
+            ["Delivery area", area ? area.label : "Not chosen"],
+            ["Delivery fee", area ? money(area.fee) : "—"],
+            ["Estimated delivery", area ? `${estimateText(area)} — not a guaranteed arrival date` : "—"],
         ];
     }
 
     form.querySelectorAll('input[name="fulfillment-method"]').forEach((input) => input.addEventListener("change", () => {
         syncFulfillment();
+        renderPaymentBreakdown();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    }));
+    [areaSelect, pickupSelect].forEach((select) => select.addEventListener("change", () => {
+        renderDeliveryQuote();
+        renderPaymentBreakdown();
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }));
     syncFulfillment();
@@ -1377,8 +1523,9 @@
         const allowed = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
         const invalid = chosen.find((file) => !allowed.has(file.type) || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name));
         if (invalid) return setError(`${invalid.name}: choose a JPG, JPEG, PNG, WebP, or PDF file.`);
-        const oversized = chosen.find((file) => file.size > 5 * 1024 * 1024);
-        if (oversized) return setError(`${oversized.name}: each file must be no larger than 5 MB.`);
+        const limit = DynamicForm.uploadLimit(state.product);
+        const oversized = chosen.find((file) => file.size > limit);
+        if (oversized) return setError(`${oversized.name} is ${DynamicForm.formatBytes(oversized.size)}. Each file must be no larger than ${DynamicForm.limitText(limit)}.`);
         if (state.referenceFiles.length + chosen.length > MAX_REFERENCE_FILES) return setError(`Attach up to ${MAX_REFERENCE_FILES} reference files.`);
         state.referenceFiles.push(...chosen);
         renderReferenceFiles();
@@ -1502,8 +1649,13 @@
             if (quote.unit_price !== null) pricing.push(["Price per piece", `${money(quote.unit_price)} × ${quote.quantity.toLocaleString()} pcs`]);
             pricing.push(["Estimated total", money(quote.estimated_total)]);
         }
+        if (quote?.standard_size) {
+            pricing.unshift(["Selected size", quote.standard_size.label], ["Unit price", money(quote.standard_size.unit_price)], ["Quantity", `${quote.quantity.toLocaleString()} pcs`]);
+        }
         pricing.push(["Final amount", isFixedPrice()
-            ? "The package's published price; the shop confirms the order before payment"
+            ? (state.mode === "package"
+                ? "The package's published price; the shop confirms the order before payment"
+                : "The published size price × quantity; the shop confirms the order before payment")
             : "Set by the shop's quotation, which you accept or decline before any payment"]);
         appendGroup("Pricing", pricing);
         appendGroup("Delivery or pickup", fulfillmentRows());
@@ -1661,17 +1813,86 @@
 
     // ---------------------------------------------------------------- submission
 
-    function fileAsDataUrl(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.addEventListener("load", () => resolve(reader.result));
-            reader.addEventListener("error", () => reject(new Error(`Could not read ${file.name}.`)));
-            reader.readAsDataURL(file);
-        });
+    /** Show the per-product upload limit next to the general reference-file and invitation upload hints. */
+    function syncUploadLimit(product) {
+        const text = DynamicForm.limitText(DynamicForm.uploadLimit(product));
+        const artwork = $("#artwork-limit");
+        if (artwork) artwork.textContent = `${text} maximum per file.`;
+        document.querySelectorAll("[data-upload-limit]").forEach((node) => { node.textContent = text; });
     }
 
-    async function encodeFiles(files) {
-        return Promise.all(files.map(async (file) => ({ name: file.name, dataUrl: await fileAsDataUrl(file) })));
+    // ------------------------------------------------------------- chunked uploads (large Tarpaulin files)
+    //
+    // Files are sent in pieces (at most 2 MB each) before the order itself, so every request stays below the
+    // hosting request limit and large print files can be uploaded. A file that was uploaded once is reused if
+    // the customer submits again (for example after fixing a form error).
+
+    const uploadProgress = $("#upload-progress");
+    const uploadedFiles = new WeakMap(); // File -> { key, upload_id }
+
+    function showUploadProgress(done, total, name) {
+        if (!uploadProgress) return;
+        uploadProgress.hidden = false;
+        const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 100;
+        $("#upload-progress-label").textContent = name ? `Uploading ${name}… ${percent}%` : `Uploading files… ${percent}%`;
+        $("#upload-progress-bar").style.width = `${percent}%`;
+    }
+
+    function hideUploadProgress() {
+        if (uploadProgress) uploadProgress.hidden = true;
+    }
+
+    async function uploadFile(file, fieldKey, progress) {
+        const key = `${state.product.id}:${fieldKey}`;
+        const known = uploadedFiles.get(file);
+        if (known && known.key === key) {
+            progress.done += file.size;
+            showUploadProgress(progress.done, progress.total, file.name);
+            return { upload_id: known.upload_id };
+        }
+        const started = await requestJson("/api/uploads", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ product_id: state.product.id, field_key: fieldKey, name: file.name, size: file.size, mime_type: file.type }),
+        });
+        const chunk = started.chunk_size;
+        for (let index = 0, offset = 0; offset < file.size; index += 1, offset += chunk) {
+            const piece = file.slice(offset, Math.min(file.size, offset + chunk));
+            let attempt = 0;
+            for (;;) {
+                try {
+                    await requestJson(`/api/uploads/${encodeURIComponent(started.upload_id)}/chunks/${index}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/octet-stream" },
+                        body: piece,
+                    });
+                    break;
+                } catch (error) {
+                    attempt += 1;
+                    if (attempt >= 3) throw new Error(`${file.name} could not be uploaded. ${error instanceof Error ? error.message : ""}`.trim());
+                }
+            }
+            progress.done += piece.size;
+            showUploadProgress(progress.done, progress.total, file.name);
+        }
+        await requestJson(`/api/uploads/${encodeURIComponent(started.upload_id)}/complete`, { method: "POST" });
+        uploadedFiles.set(file, { key, upload_id: started.upload_id });
+        return { upload_id: started.upload_id };
+    }
+
+    /** Upload every file of the order; returns {fieldFiles: {key: [{upload_id}]}, files: [{upload_id}]}. */
+    async function uploadOrderFiles(fieldFileMap, referenceFiles) {
+        const all = [...Object.values(fieldFileMap).flat(), ...referenceFiles];
+        const progress = { done: 0, total: all.reduce((sum, file) => sum + file.size, 0) };
+        if (all.length) showUploadProgress(0, progress.total, "");
+        const fieldFiles = {};
+        for (const [key, files] of Object.entries(fieldFileMap)) {
+            fieldFiles[key] = [];
+            for (const file of files) fieldFiles[key].push(await uploadFile(file, key, progress));
+        }
+        const files = [];
+        for (const file of referenceFiles) files.push(await uploadFile(file, "", progress));
+        return { fieldFiles, files };
     }
 
     async function submitOrder(event) {
@@ -1688,10 +1909,15 @@
         button.disabled = true;
         button.textContent = "Submitting…";
         try {
-            const fieldFiles = {};
-            for (const dynamicForm of activeForms()) {
-                for (const [key, files] of Object.entries(dynamicForm.files())) fieldFiles[key] = await encodeFiles(files);
+            const designOrderFiles = state.mode === "design" && Boolean(state.design);
+            const fieldFileMap = {};
+            if (!designOrderFiles) {
+                for (const dynamicForm of activeForms()) Object.assign(fieldFileMap, dynamicForm.files());
             }
+            const referenceFiles = designOrderFiles || state.invitation ? [] : state.referenceFiles;
+            button.textContent = "Uploading files…";
+            const uploads = await uploadOrderFiles(fieldFileMap, referenceFiles);
+            button.textContent = "Submitting…";
             const customization = {
                 quantity: quantityValue(),
                 options: collectValues(),
@@ -1718,9 +1944,9 @@
                 has_event: designOrder ? false : (state.invitation ? true : !eventFields.hidden),
                 event: designOrder || state.invitation || eventFields.hidden ? {} : eventData(),
                 acknowledged: $("#acknowledge").checked,
-                // A shop design order never sends design or reference files.
-                files: designOrder || state.invitation ? [] : await encodeFiles(state.referenceFiles),
-                field_files: designOrder ? {} : fieldFiles,
+                // A shop design order never sends design or reference files. Files were uploaded in pieces above.
+                files: uploads.files,
+                field_files: uploads.fieldFiles,
             };
             const result = await requestJson("/api/orders", {
                 method: "POST",
@@ -1732,6 +1958,7 @@
         } catch (error) {
             setError(error instanceof Error ? error.message : "The order request could not be submitted.");
         } finally {
+            hideUploadProgress();
             button.disabled = false;
             button.textContent = "Submit order request";
         }
@@ -1750,22 +1977,23 @@
             el("p", "", `${order.product.name}${packageName ? ` · ${packageName}` : ""} · ${order.customization.quantity.toLocaleString()} pc(s) · ${order.status}`),
         ];
         if (order.fixed_price) {
+            const sizeText = order.price_list?.size ? ` · ${order.price_list.size}` : "";
             lines.push(
-                el("p", "", `Package total: ${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece)` : ""}.`),
+                el("p", "", `${order.fixed_price_label || "Package total"}: ${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece${sizeText})` : ""}.`),
                 el("p", "", `50% down payment: ${money(payment.down_payment_required)} · remaining balance ${money(payment.remaining_after_down_payment)}. `
-                    + "Pay the down payment through GCash after the shop approves your order; your order is confirmed once the shop verifies it."),
+                    + "Pay the down payment through the shop's e-wallet (GCash, Maya, or another listed option) after the shop approves your order; your order is confirmed once the shop verifies it."),
             );
         } else {
             lines.push(
                 el("p", "", estimate !== null && estimate !== undefined
                     ? `Estimated total: ${money(estimate)} — the shop will send a quotation for you to accept or decline.`
                     : "The shop will send a quotation for you to accept or decline."),
-                el("p", "", "You will be notified in the customer portal when the quotation is ready. After you accept it, pay the 50% down payment through GCash; your order is confirmed once the shop verifies it."),
+                el("p", "", "You will be notified in the customer portal when the quotation is ready. After you accept it, pay the 50% down payment through the shop's e-wallet; your order is confirmed once the shop verifies it."),
             );
         }
         lines.push(el("p", "", `Fulfillment: ${fulfillment.label || "Store Pickup"}${fulfillment.method === "delivery"
-            ? ` to ${fulfillment.address.filter((row) => ["street", "barangay", "city", "province"].includes(row.key)).map((row) => row.value).join(", ")}`
-            : ""}.`));
+            ? ` to ${fulfillment.address.filter((row) => ["street", "barangay", "city", "province"].includes(row.key)).map((row) => row.value).join(", ")} · delivery fee ${money(fulfillment.delivery_fee || 0)}${fulfillment.estimate_text ? ` · ${fulfillment.estimate_text}` : ""}`
+            : fulfillment.pickup_location ? ` at ${fulfillment.pickup_location.name}` : ""}.`));
         details.replaceChildren(...lines);
         $("#confirm-track").href = "/customer-portal";
         const confirmation = $("#confirmation");
@@ -1843,7 +2071,11 @@
 
     /** The lowest published price for a product: its base rate, else its cheapest package, else none (quotation). */
     function startingPrice(product) {
-        if (product.pricing_mode !== "quote" && product.base_price !== null) {
+        if (product.pricing_mode === "size") {
+            const size = cheapestSize(product);
+            if (size) return { amount: money(size.price), unit: `${size.label} · per piece` };
+        }
+        if (product.pricing_mode !== "quote" && product.base_price !== null && product.pricing_mode !== "size") {
             return { amount: money(product.base_price), unit: product.pricing_mode === "area" ? "per sq ft" : "per piece" };
         }
         const packages = product.packages || [];
@@ -1894,6 +2126,9 @@
         const designCount = customizeAllowed(product) ? (product.designs || []).length : 0;
         if (designCount) tags.push(`${designCount} shop design${designCount === 1 ? "" : "s"}`);
         if (product.min_quantity > 1) tags.push(`Min. ${product.min_quantity.toLocaleString()} pcs`);
+        if (product.standard_size_label) tags.push(`Standard size ${product.standard_size_label}`);
+        if ((product.standard_sizes || []).length && product.pricing_mode === "size") tags.push(`${product.standard_sizes.length} standard sizes`);
+        if ((product.upload_limit_bytes || 0) > 5 * 1024 * 1024) tags.push(`Files up to ${DynamicForm.limitText(product.upload_limit_bytes)}`);
         if (tags.length) {
             const tagList = el("p", "service-row-tags");
             tags.forEach((tag) => tagList.append(el("span", "service-row-tag", tag)));
@@ -1916,6 +2151,14 @@
         actions.append(avail);
 
         row.append(serviceRowMedia(product), info, price, actions);
+
+        // Size-priced services (Tarpaulin) show their price list.
+        const priceTable = sizePriceTable(product, { caption: `${product.name}: standard sizes & prices` });
+        if (priceTable) {
+            const sizes = el("details", "service-row-packages service-row-sizes");
+            sizes.append(el("summary", "", `View price list (${product.standard_sizes.length} sizes · custom sizes by quotation)`), priceTable);
+            row.append(sizes);
+        }
 
         // Packages open the order form with that package already chosen.
         if (packages.length) {

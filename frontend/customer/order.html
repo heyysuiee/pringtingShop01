@@ -215,7 +215,7 @@
                             <label for="artwork" class="field-label">Other reference images or files <span
                                     class="optional">(optional · up to 3 files)</span></label>
                             <label class="upload-zone upload-zone-compact" for="artwork"><span class="upload-icon"
-                                    aria-hidden="true">↥</span><strong>Choose JPG, PNG, WebP, or PDF files</strong><small>5 MB
+                                    aria-hidden="true">↥</span><strong>Choose JPG, PNG, WebP, or PDF files</strong><small id="artwork-limit">5 MB
                                     maximum per file.</small></label>
                             <input id="artwork" class="visually-hidden" type="file"
                                 accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" multiple>
@@ -297,7 +297,7 @@
                         printing.</p>
                     <div id="invitation-event-fields" aria-live="polite"></div>
                     <h3 class="invitation-subtitle">Photos &amp; references</h3>
-                    <p class="field-hint">Attach up to 15 files in total. JPG, PNG, WebP, or PDF · 5 MB maximum each.
+                    <p class="field-hint">Attach up to 15 files in total. JPG, PNG, WebP, or PDF · <span data-upload-limit>5 MB</span> maximum each.
                         You can preview, replace, or remove a file before submitting.</p>
                     <div id="invitation-upload-fields" aria-live="polite"></div>
                     <div class="field">
@@ -364,8 +364,8 @@
                                 <input type="radio" name="fulfillment-method" value="delivery">
                                 <span class="payment-option-body">
                                     <strong>Delivery</strong>
-                                    <small>We deliver to the address below. The shop confirms delivery
-                                        arrangements with you.</small>
+                                    <small>Shipped to the address below (J&amp;T Express by default). The delivery
+                                        fee for your area is added to the order total.</small>
                                 </span>
                             </label>
                         </div>
@@ -397,6 +397,28 @@
                                         class="optional">(optional)</span></label><input id="delivery-landmark"
                                     class="input" maxlength="200" placeholder="e.g. Beside the barangay hall"
                                     data-delivery-field="landmark" data-optional="true"></div>
+                            <div class="field"><label for="delivery-instructions" class="field-label">Delivery
+                                    instructions <span class="optional">(optional)</span></label><textarea
+                                    id="delivery-instructions" class="input" rows="2" maxlength="500"
+                                    placeholder="e.g. Call before arriving; leave with the guard"
+                                    data-delivery-field="delivery_instructions" data-optional="true"></textarea></div>
+                            <div class="field"><label for="delivery-area" class="field-label">Delivery area</label><select
+                                    id="delivery-area" class="input" data-delivery-field="area_id"></select>
+                                <p class="field-hint" id="delivery-quote" aria-live="polite"></p></div>
+                        </div>
+                        <div class="delivery-fields" id="pickup-fields">
+                            <div class="form-grid">
+                                <div class="field" id="pickup-location-field" hidden><label for="pickup-location"
+                                        class="field-label">Pickup location</label><select id="pickup-location"
+                                        class="input"></select></div>
+                                <div class="field"><label for="pickup-date" class="field-label">Preferred pickup date
+                                        <span class="optional">(optional)</span></label><input id="pickup-date"
+                                        class="input" type="date"></div>
+                            </div>
+                            <div class="field"><label for="pickup-notes" class="field-label">Pickup notes <span
+                                        class="optional">(optional)</span></label><input id="pickup-notes" class="input"
+                                    maxlength="500" placeholder="e.g. My sister will claim it"></div>
+                            <p class="field-hint" id="pickup-info"></p>
                         </div>
                     </fieldset>
 
@@ -448,6 +470,10 @@
                             reviewed my details and understand the order instructions, including how payment is
                             arranged (a 50% down payment, verified by the shop) and “NO APPROVAL, NO PRINT.”</span></label>
                     <p class="field-error" id="acknowledgement-error" role="alert"></p>
+                    <div class="upload-progress" id="upload-progress" role="status" aria-live="polite" hidden>
+                        <span class="upload-progress-label" id="upload-progress-label">Uploading files…</span>
+                        <span class="upload-progress-track" aria-hidden="true"><span class="upload-progress-bar" id="upload-progress-bar"></span></span>
+                    </div>
                 </section>
 
                 <div class="wizard-actions">

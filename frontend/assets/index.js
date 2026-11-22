@@ -252,6 +252,17 @@ function initImageFallbacks() {
                 ["directional-banners", "Directional Banners", "A wayfinding banner concept to guide visitors."],
                 ["temporary-signs", "Temporary Signs", "A short-term sign concept for events and promotions."]
             ]
+        },
+        "tshirt-printing": {
+            label: "T-Shirt Printing",
+            title: "T-Shirt Printing",
+            kicker: "Wear your design",
+            description: "Two printing methods, each with its own options and prices: Heat Press Printing and Sublimation Printing.",
+            palette: ["#efe4dc", "#4f3b37", "#c98b8b"],
+            samples: [
+                ["heat-press-printing", "Heat Press Printing", "Your design heat-pressed onto a cotton or blend shirt in the color you choose.", "/frontend/image/tshirt/heat-press.svg"],
+                ["sublimation-printing", "Sublimation Printing", "Full-color dye sublimation on white polyester shirts, all-over or partial.", "/frontend/image/tshirt/sublimation.svg"]
+            ]
         }
     };
 
@@ -270,6 +281,14 @@ function initImageFallbacks() {
     }
 
     function priceLabel(product) {
+        if (product.pricing_mode === "size") {
+            const sizes = product.standard_sizes || [];
+            if (sizes.length) {
+                const low = sizes.reduce((min, size) => (size.price < min.price ? size : min));
+                return `From ${peso(low.price)} (${low.label}) · ${sizes.length} standard sizes`;
+            }
+            return "Pricing by quote";
+        }
         if (product.pricing_mode !== "quote" && product.base_price !== null) {
             return product.pricing_mode === "area" ? `${peso(product.base_price)} per sq ft` : `${peso(product.base_price)} per piece`;
         }
@@ -295,6 +314,8 @@ function initImageFallbacks() {
                     productDetails.set(product.id, {
                         images: product.images && product.images.length ? product.images : (product.image ? [product.image] : []),
                         packages: product.packages || [],
+                        sizes: product.pricing_mode === "size" ? (product.standard_sizes || []) : [],
+                        standardSize: product.standard_size_label || "",
                     });
                     return [product.id, product.name, product.description, product.image || undefined, priceLabel(product)];
                 })
@@ -530,7 +551,26 @@ function initImageFallbacks() {
         }
         const packageHost = document.querySelector("#sample-dialog-packages");
         if (packageHost) {
-            packageHost.replaceChildren(...details.packages.map((pkg) => {
+            // Standard sizes and prices (Tarpaulin) are listed like packages; invitations show their standard size.
+            const sizeItems = (details.sizes || []).map((size) => {
+                const item = document.createElement("li");
+                const name = document.createElement("span");
+                name.textContent = size.label;
+                const price = document.createElement("strong");
+                price.textContent = `${peso(size.price)} each`;
+                item.append(name, price);
+                return item;
+            });
+            if (details.standardSize) {
+                const item = document.createElement("li");
+                const name = document.createElement("span");
+                name.textContent = "Standard size";
+                const value = document.createElement("strong");
+                value.textContent = details.standardSize;
+                item.append(name, value);
+                sizeItems.unshift(item);
+            }
+            packageHost.replaceChildren(...sizeItems, ...details.packages.map((pkg) => {
                 const item = document.createElement("li");
                 const name = document.createElement("span");
                 name.textContent = `${pkg.name} · ${pkg.included_quantity} pcs`;
@@ -539,7 +579,7 @@ function initImageFallbacks() {
                 item.append(name, price);
                 return item;
             }));
-            packageHost.hidden = !details.packages.length;
+            packageHost.hidden = !details.packages.length && !sizeItems.length;
         }
         sampleDialog.showModal();
     }

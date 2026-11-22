@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Header, Request, Response
-from fastapi.responses import FileResponse
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin, require_session
@@ -69,7 +68,7 @@ def customer_order(reference: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/orders/{reference}/files/{file_id}")
-def customer_order_file(reference: str, file_id: str, request: Request) -> FileResponse:
+def customer_order_file(reference: str, file_id: str, request: Request) -> Response:
     # Only the signed-in customer who owns the order; any old "?email=" in a link is ignored.
     claims = require_session(request, "customer")
     return order_services.get_customer_order_file(claims["sub"], reference, file_id)
@@ -184,7 +183,7 @@ def read_account_notifications(payload: NotificationsRead, request: Request) -> 
 
 
 @router.get("/api/admin/orders/{reference}/files/{file_id}")
-def admin_order_file(reference: str, file_id: str, request: Request) -> FileResponse:
+def admin_order_file(reference: str, file_id: str, request: Request) -> Response:
     require_admin(request)
     return order_services.get_admin_order_file(reference, file_id)
 

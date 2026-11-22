@@ -36,6 +36,14 @@ class Settings:
     # chatbot still answers from the database, but without the AI model.
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    # Upload limits (megabytes per file). Large-format categories (tarpaulins) accept bigger print files.
+    max_upload_mb: int = 5
+    large_format_max_upload_mb: int = 25
+    large_upload_categories: tuple[str, ...] = ("large-format",)
+    # Where order files (designs, references, drafts, payment proofs) are kept: "disk" (PRINTSHOP_UPLOAD_DIR,
+    # needs a persistent volume) or "database" (stored in the database, shared by every copy of the app;
+    # the default when Turso is configured, because Vercel has no persistent disk).
+    file_storage: str = "disk"
 
     @property
     def gemini_configured(self) -> bool:
@@ -52,6 +60,8 @@ class Settings:
     def validate(self) -> None:
         if self.environment not in {"development", "test", "production"}:
             raise RuntimeError("PRINTSHOP_ENVIRONMENT must be development, test, or production.")
+        if self.file_storage not in {"disk", "database"}:
+            raise RuntimeError("PRINTSHOP_FILE_STORAGE must be disk or database.")
         if not self.production:
             return
         required = {
@@ -71,6 +81,15 @@ class Settings:
             raise RuntimeError("PRINTSHOP_ALLOWED_HOSTS must contain explicit host names.")
         if not self.admin_password_hash.startswith("pbkdf2_sha256$"):
             raise RuntimeError("PRINTSHOP_ADMIN_PASSWORD_HASH must be a PBKDF2-SHA256 password hash.")
+
+
+def _int_setting(name: str, default: int, low: int, high: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a whole number of megabytes.") from error
+    return max(low, min(high, value))
 
 
 def _csv_setting(name: str, default: str = "") -> tuple[str, ...]:
@@ -143,4 +162,11 @@ settings = Settings(
     behind_vercel_proxy=bool(os.environ.get("VERCEL")),
     gemini_api_key=(os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")).strip(),
     gemini_model=os.environ.get("GEMINI_MODEL", "").strip() or "gemini-2.5-flash",
+    max_upload_mb=_int_setting("PRINTSHOP_MAX_UPLOAD_MB", 5, 1, 50),
+    large_format_max_upload_mb=_int_setting("PRINTSHOP_LARGE_FORMAT_MAX_UPLOAD_MB", 25, 1, 200),
+    large_upload_categories=_csv_setting("PRINTSHOP_LARGE_UPLOAD_CATEGORIES", "large-format"),
+    file_storage=(
+        os.environ.get("PRINTSHOP_FILE_STORAGE", "").strip().lower()
+        or ("database" if os.environ.get("TURSO_DATABASE_URL", "").strip() else "disk")
+    ),
 )

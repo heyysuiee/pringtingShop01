@@ -14,6 +14,8 @@ from backend.app.utils.order_number import base_reference, candidate_reference
 
 
 UPLOAD_DIR = settings.upload_dir
+# JSON columns added for production monitoring, draft history, cancellations, and refunds, with their empty values.
+NEW_JSON_COLUMNS = {"production": "{}", "drafts": "[]", "cancellation_requests": "[]", "refunds": "[]"}
 
 
 def initialize() -> None:
@@ -77,6 +79,10 @@ def initialize() -> None:
         if "quotation_history" not in columns:
             # Every quotation the administrator sent (amount, previous amount, note, timestamps, response) (JSON).
             connection.execute("ALTER TABLE orders ADD COLUMN quotation_history TEXT NOT NULL DEFAULT '[]'")
+        for column, default in NEW_JSON_COLUMNS.items():
+            if column not in columns:
+                # Additive migration: existing orders get the empty default and keep every other value.
+                connection.execute(f"ALTER TABLE orders ADD COLUMN {column} TEXT NOT NULL DEFAULT '{default}'")
         connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key)"
         )
@@ -114,6 +120,8 @@ def decode_row(row: sqlite3.Row | None) -> OrderRecord | None:
     result["quotation"] = json.loads(result.get("quotation") or "{}")
     result["payment_submissions"] = json.loads(result.get("payment_submissions") or "[]")
     result["quotation_history"] = json.loads(result.get("quotation_history") or "[]")
+    for column, default in NEW_JSON_COLUMNS.items():
+        result[column] = json.loads(result.get(column) or default)
     if result["draft_attachment"]:
         result["draft_attachment"] = json.loads(result["draft_attachment"])
     return cast(OrderRecord, result)
@@ -179,8 +187,9 @@ def create_order(order: dict[str, Any], idempotency_key: str, audit: dict[str, A
                 reference, created_at, updated_at, customer, product, customization,
                 event_details, has_event, acknowledged, status, total_amount,
                 attachments, history, customer_id, idempotency_key, pricing, payment_option,
-                fulfillment, quotation, payment_submissions, quotation_history
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                fulfillment, quotation, payment_submissions, quotation_history,
+                production, drafts, cancellation_requests, refunds
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reference,
@@ -206,6 +215,10 @@ def create_order(order: dict[str, Any], idempotency_key: str, audit: dict[str, A
                 json.dumps(order.get("quotation") or {}),
                 json.dumps(order.get("payment_submissions") or []),
                 json.dumps(order.get("quotation_history") or []),
+                json.dumps(order.get("production") or {}),
+                json.dumps(order.get("drafts") or []),
+                json.dumps(order.get("cancellation_requests") or []),
+                json.dumps(order.get("refunds") or []),
             ),
         )
         if audit:
@@ -255,6 +268,16 @@ def _apply_updates(order: OrderRecord, updates: OrderUpdates) -> None:
         order["payment_submissions"] = updates["payment_submissions"]
     if "quotation_history" in updates:
         order["quotation_history"] = updates["quotation_history"]
+    if "fulfillment" in updates:
+        order["fulfillment"] = updates["fulfillment"]
+    if "production" in updates:
+        order["production"] = updates["production"]
+    if "drafts" in updates:
+        order["drafts"] = updates["drafts"]
+    if "cancellation_requests" in updates:
+        order["cancellation_requests"] = updates["cancellation_requests"]
+    if "refunds" in updates:
+        order["refunds"] = updates["refunds"]
 
 
 def update_order(
@@ -286,7 +309,9 @@ def update_order(
         _apply_updates(current, updates)
         current["updated_at"] = now_iso()
         current["history"].append({"at": current["updated_at"], "text": event})
-        if current["status"] == "Completed" and previous_status != "Completed":
+        # The first completion date is kept: an order completed again after a reprint stays reported on the
+        # date it was first completed, so historical reports do not change.
+        if current["status"] == "Completed" and previous_status != "Completed" and not current.get("completed_at"):
             current["completed_at"] = current["updated_at"]
         values = {
             "updated_at": current["updated_at"],
@@ -303,6 +328,11 @@ def update_order(
             "quotation": json.dumps(current.get("quotation") or {}),
             "payment_submissions": json.dumps(current.get("payment_submissions") or []),
             "quotation_history": json.dumps(current.get("quotation_history") or []),
+            "fulfillment": json.dumps(current.get("fulfillment") or {}),
+            "production": json.dumps(current.get("production") or {}),
+            "drafts": json.dumps(current.get("drafts") or []),
+            "cancellation_requests": json.dumps(current.get("cancellation_requests") or []),
+            "refunds": json.dumps(current.get("refunds") or []),
         }
         connection.execute(
             """
@@ -312,7 +342,9 @@ def update_order(
                 draft_attachment = :draft_attachment, history = :history,
                 admin_notes = :admin_notes, completed_at = :completed_at,
                 payment_option = :payment_option, quotation = :quotation,
-                payment_submissions = :payment_submissions, quotation_history = :quotation_history
+                payment_submissions = :payment_submissions, quotation_history = :quotation_history,
+                fulfillment = :fulfillment, production = :production, drafts = :drafts,
+                cancellation_requests = :cancellation_requests, refunds = :refunds
             WHERE reference = :reference
             """,
             {**values, "reference": reference},

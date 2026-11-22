@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 from backend.app.models.order import FULFILLMENT_METHODS, PAYMENT_OPTIONS, OrderRecord
 from backend.app.repositories import admin_repository, catalog_repository, chatbot_repository, customer_repository, order_repository
-from backend.app.services import order_services
+from backend.app.services import fulfillment_services, order_services, refund_services, shop_settings_services
 from backend.app.utils.order_number import SHOP_TIMEZONE
 
 
@@ -50,6 +50,8 @@ SERVICE_KEYWORDS = (
     ("party", "party-needs"),
     ("tarpaulin", "large-format"),
     ("large format", "large-format"),
+    ("t-shirt", "tshirt-printing"),
+    ("tshirt", "tshirt-printing"),
 )
 
 
@@ -198,16 +200,20 @@ def payment_status(order: Mapping[str, Any]) -> str:
 
 
 def is_confirmed_revenue(order: Mapping[str, Any]) -> bool:
-    return order["status"] == "Completed" and is_fully_paid(order)
+    """Completed and fully paid. A completed order being reprinted keeps its original recognized revenue."""
+    if order["status"] == "Completed":
+        return is_fully_paid(order)
+    basis = order_services.revenue_basis(order)
+    return basis is not None and float(basis) > 0 and paid_amount(order) >= round(float(basis), 2) - 0.005
 
 
 def confirmed_revenue(order: Mapping[str, Any]) -> float:
     """The order's confirmed total, counted once, only for completed and fully paid orders."""
-    return money(order["total_amount"]) if is_confirmed_revenue(order) else 0.0
+    return money(order_services.revenue_basis(order)) if is_confirmed_revenue(order) else 0.0
 
 
 def completion_date(order: Mapping[str, Any]) -> date | None:
-    if order["status"] != "Completed":
+    if not order_services.counts_as_completed(order):
         return None
     return local_date(order.get("completed_at"))
 
@@ -258,6 +264,7 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "service_id": service["id"],
         "service": service["label"],
         "product": (order.get("product") or {}).get("name", ""),
+        "product_id": (order.get("product") or {}).get("id", ""),
         "product_image": (order.get("product") or {}).get("image", ""),
         "order_kind": customization.get("order_kind", ""),
         "package_name": package.get("name", ""),
@@ -283,8 +290,12 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "fulfillment_label": FULFILLMENT_METHODS[order_services.fulfillment_method(order)],
         "quotation_status": order_services.quotation(order).get("status", ""),
         "fixed_price": order_services.is_fixed_price(order),
+        "price_basis": order_services.price_basis(order),
+        "standard_size": ((customization.get("price_list") or {}).get("size", "") if isinstance(customization.get("price_list"), dict) else ""),
         "price_agreed": order_services.price_agreed(order),
-        "completed_at": order.get("completed_at") if order["status"] == "Completed" else None,
+        "completed_at": order.get("completed_at") if order_services.counts_as_completed(order) else None,
+        "reported_completed": order_services.counts_as_completed(order),
+        "reprint_in_progress": order_services.active_reprint(order) is not None,
         "completion_date": iso(completion_date(order)),
         "completion_days": completion_days(order),
         "confirmed_revenue": confirmed_revenue(order),
@@ -306,6 +317,8 @@ def admin_order_view(order: OrderRecord, services: ServiceIndex | None = None) -
     view["customer_id"] = order.get("customer_id")
     view["allowed_statuses"] = order_services.allowed_transitions(order)
     pending = order_services.pending_submissions(order)
+    cancellation = order_services.pending_cancellation(order)
+    method = order_services.fulfillment_method(order)
     chosen = bool(order_services.payment_option(order))
     payable = status in order_services.PAYABLE_STATUSES and total is not None and chosen and paid < total - 0.005
     view["actions"] = {
@@ -320,11 +333,33 @@ def admin_order_view(order: OrderRecord, services: ServiceIndex | None = None) -
         "complete_requires_payment": status in order_services.RELEASE_STATUSES and not is_fully_paid(order),
         "cancel_blocked_by_payments": bool(order["payments"]) or bool(pending),
         "change_payment_option": order_services.payment_option_changeable(order) and status not in CANCELLED_STATUSES,
+        # Production monitoring, quality checking, packaging, and fulfillment (fulfillment_services).
+        "update_production": status in {"Approved for Printing", "In Production", "Quality Checking", "Packaging"} and not cancellation,
+        "quality_check": status == "Quality Checking" and not cancellation,
+        "complete_packaging": status == "Packaging" and not cancellation,
+        "dispatch": status == "Ready for Dispatch" and not cancellation,
+        "confirm_delivery": status == "Out for Delivery" and not cancellation,
+        "delivery_failed": status == "Out for Delivery",
+        "reschedule_delivery": status == "Delivery Failed" and not cancellation,
+        "schedule_pickup": method == "pickup" and status in {"Packaging", "Awaiting Full Payment", "Ready for Pickup"},
+        "confirm_pickup": status == "Ready for Pickup" and not cancellation,
+        "awaiting_full_payment": status == "Awaiting Full Payment",
+        # Cancellation requests and refunds (refund_services).
+        "cancellation_pending": bool(cancellation),
+        "create_refund": refund_services.max_refundable(order) > 0,
+        "start_reprint": status in order_services.REPRINTABLE_STATUSES and not cancellation and order_services.active_reprint(order) is None,
     }
     view["payment_methods"] = [
-        method for method in order_services.PAYMENT_METHODS
+        method for method in order_services.admin_payment_methods()
         if method != "Cash on Delivery" or order_services.is_cod(order)
     ]
+    settings = shop_settings_services.fulfillment_settings()
+    view["couriers"] = [{"id": item["id"], "name": item["name"], "service": item["service"]} for item in settings["couriers"] if item["active"]]
+    view["default_courier"] = settings["default_courier"]
+    view["max_refundable"] = refund_services.max_refundable(order)
+    view["cancellation_policy"] = refund_services.policy_guidance(order)
+    view["failure_reasons"] = fulfillment_services.FAILURE_REASONS
+    view["quality_checks"] = [{"key": key, "label": label} for key, label in fulfillment_services.QUALITY_CHECKS]
     return view
 
 
@@ -392,6 +427,23 @@ def service_options(services: ServiceIndex, rows: Iterable[Mapping[str, Any]] = 
     return options
 
 
+def product_options(services: ServiceIndex, orders: Iterable[OrderRecord]) -> list[dict[str, str]]:
+    """Every catalog product (printing service) plus products that only appear on saved orders, by service."""
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for category in catalog_repository.load_catalog(active_only=False):
+        for item in category["products"]:
+            options.append({"id": item["id"], "label": item["name"], "service_id": category["id"]})
+            seen.add(item["id"])
+    for order in orders:
+        product = order.get("product") or {}
+        product_id = product.get("id")
+        if product_id and product_id not in seen:
+            options.append({"id": product_id, "label": product.get("name") or product_id, "service_id": services.resolve(order)["id"]})
+            seen.add(product_id)
+    return options
+
+
 # ================================================================== orders table
 
 
@@ -415,9 +467,14 @@ def order_rows(params: Mapping[str, Any], orders: list[OrderRecord] | None = Non
     search = param_text(params, "search")
     status = param_text(params, "status", 60)
     service = param_text(params, "service", 80)
+    product = param_text(params, "product", 120)
     pay = param_text(params, "payment_status", 40)
     kind = param_text(params, "kind", 20)
     option = param_text(params, "payment_option", 20)
+    method = param_text(params, "fulfillment", 20)
+    customer = param_text(params, "customer", 64)
+    if method and method not in FULFILLMENT_METHODS:
+        raise bad_request("Select Store Pickup or Delivery.")
     if kind and kind not in {"package", "customize", "design"}:
         raise bad_request("Select a valid order type.")
     if option and option not in PAYMENT_OPTIONS:
@@ -430,17 +487,23 @@ def order_rows(params: Mapping[str, Any], orders: list[OrderRecord] | None = Non
             continue
         if option and row["payment_option"] != option:
             continue
+        if method and row["fulfillment_method"] != method:
+            continue
+        if customer and row["customer_id"] != customer:
+            continue
         if status:
             group = STATUS_GROUPS.get(status)
             if (group is not None and row["status"] not in group) or (group is None and row["status"] != status):
                 continue
         if service and row["service_id"] != service:
             continue
+        if product and row["product_id"] != product:
+            continue
         if pay and row["payment_status"] != pay:
             continue
         if not in_range(local_date(row["created_at"]), start, end):
             continue
-        if not matches(search, row["reference"], row["customer_name"], row["customer_email"], row["product"], row["service"]):
+        if not matches(search, row["reference"], row["customer_name"], row["customer_email"], row["product"], row["service"], row["standard_size"]):
             continue
         rows.append(row)
     return sort_rows(rows, params, ORDER_SORTS, "request_date"), services
@@ -451,6 +514,7 @@ def order_list(params: Mapping[str, Any]) -> dict[str, Any]:
     rows, services = order_rows(params, orders, services)
     result = paginate(rows, params)
     result["services"] = service_options(services, (order_row(order, services) for order in orders))
+    result["products"] = product_options(services, orders)
     result["statuses"] = STATUS_ORDER
     result["status_counts"] = {status: sum(1 for order in orders if order["status"] == status) for status in STATUS_ORDER}
     return result
@@ -944,7 +1008,7 @@ def completed_rows(params: Mapping[str, Any], orders: list[OrderRecord] | None =
         raise bad_request("The minimum duration must not be more than the maximum duration.")
     rows = []
     for order in orders:
-        if order["status"] != "Completed":
+        if not order_services.counts_as_completed(order):
             continue
         row = order_row(order, services)
         if service and row["service_id"] != service:
@@ -1153,13 +1217,23 @@ def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], 
     Payments are cash flow, not revenue: revenue is still recognized only when an order is completed
     and fully paid.
     """
-    received = down = balance = cod = 0.0
+    received = down = balance = cod = delivery = 0.0
     count = 0
     methods: dict[str, dict[str, Any]] = {}
+    refunds_completed = refunds_open = 0.0
+    refund_count = 0
     for order in orders:
+        for refund in order.get("refunds") or []:
+            if refund.get("status") == "refunded" and in_range(local_date(refund.get("refunded_at")), start, end):
+                refunds_completed += float(refund.get("amount") or 0)
+                refund_count += 1
+            elif refund.get("status") in {"approved", "processing", "failed"}:
+                refunds_open += float(refund.get("amount") or 0)
         option = order_services.payment_option(order)
         total = order["total_amount"]
         threshold = float(total) * order_services.DOWN_PAYMENT_RATE if total is not None else 0.0
+        # The delivery fee's share of each payment (payments cover the whole total, fee included, pro rata).
+        fee_share = order_services.delivery_fee(order) / float(total) if total else 0.0
         cumulative = 0.0
         for payment in sorted(order["payments"], key=lambda item: item.get("received_at") or ""):
             amount = money(payment.get("amount"))
@@ -1176,6 +1250,7 @@ def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], 
             down += parts[0]
             balance += parts[1]
             cod += parts[2]
+            delivery += amount * fee_share
             method = payment.get("method") or "Other"
             entry = methods.setdefault(method, {"method": method, "count": 0, "amount": 0.0})
             entry["count"] += 1
@@ -1183,6 +1258,13 @@ def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], 
     active = [row for row in requested if row["status"] not in CANCELLED_STATUSES]
     return {
         "received_total": money(received),
+        # Verified collections minus completed refunds (pending, rejected, and failed refunds are not deducted).
+        "verified_collections": money(received),
+        "refunds_completed": money(refunds_completed),
+        "refund_count": refund_count,
+        "refunds_in_progress": money(refunds_open),
+        "net_collections": money(received - refunds_completed),
+        "delivery_fee_collections": money(delivery),
         "payment_count": count,
         "down_payments": money(down),
         "balance_payments": money(balance),
@@ -1212,10 +1294,31 @@ def business_summary(params: Mapping[str, Any]) -> dict[str, Any]:
     if selected:
         rows = [row for row in rows if row["service_id"] == selected]
         orders = [order for order in orders if services.resolve(order)["id"] == selected]
+    # Optional filters: fulfillment method, order status (or status group), payment method, customer.
+    method = param_text(params, "fulfillment", 20)
+    if method:
+        if method not in FULFILLMENT_METHODS:
+            raise bad_request("Select Store Pickup or Delivery.")
+        rows = [row for row in rows if row["fulfillment_method"] == method]
+        orders = [order for order in orders if order_services.fulfillment_method(order) == method]
+    status_filter = param_text(params, "status", 60)
+    if status_filter:
+        group = STATUS_GROUPS.get(status_filter, {status_filter})
+        rows = [row for row in rows if row["status"] in group]
+        orders = [order for order in orders if order["status"] in group]
+    customer_filter = param_text(params, "customer", 64)
+    if customer_filter:
+        rows = [row for row in rows if row["customer_id"] == customer_filter]
+        orders = [order for order in orders if order.get("customer_id") == customer_filter]
+    payment_method = param_text(params, "payment_method", 60)
+    if payment_method:
+        orders = [order for order in orders if any(item.get("method") == payment_method for item in order["payments"])]
+        kept = {order["reference"] for order in orders}
+        rows = [row for row in rows if row["reference"] in kept]
     requested = [row for row in rows if in_range(local_date(row["created_at"]), start, end)]
     completed = [
         row for row in rows
-        if row["status"] == "Completed" and in_range(date.fromisoformat(row["completion_date"]) if row["completion_date"] else None, start, end)
+        if row["reported_completed"] and in_range(date.fromisoformat(row["completion_date"]) if row["completion_date"] else None, start, end)
     ]
     customers = customer_repository.list_customers()
     durations = [row["completion_days"] for row in completed if row["completion_days"] is not None]
@@ -1293,7 +1396,25 @@ def action_counts() -> dict[str, Any]:
     awaiting_down_payment = counts["Awaiting Down Payment"]
     confirmed = counts["Confirmed"]
     new_customers = sum(1 for customer in customers if (local_date(customer["created_at"]) or date.min) >= week_ago)
+    pending_cancellations = sum(1 for order in orders if order_services.pending_cancellation(order))
+    pending_refunds = sum(
+        1 for order in orders for refund in order.get("refunds") or [] if refund.get("status") in {"pending_review", "approved", "processing", "failed"}
+    )
+    open_issues = sum(1 for order in orders for issue in order_services.fulfillment(order).get("issues", []) if issue.get("status") == "open")
     return {
+        "quality_checking": counts["Quality Checking"],
+        "packaging": counts["Packaging"],
+        "awaiting_full_payment": counts["Awaiting Full Payment"],
+        "ready_for_dispatch": counts["Ready for Dispatch"],
+        "delivery_failed": counts["Delivery Failed"],
+        "delivered": counts["Delivered"],
+        "order_claimed": counts["Order Claimed"],
+        "pending_cancellations": pending_cancellations,
+        "pending_refunds": pending_refunds,
+        "open_delivery_issues": open_issues,
+        "production": counts["Approved for Printing"] + counts["In Production"] + counts["Quality Checking"] + counts["Packaging"],
+        "fulfillment": counts["Ready for Pickup"] + counts["Ready for Dispatch"] + counts["Delivery Failed"] + open_issues,
+        "refunds": pending_cancellations + pending_refunds,
         "new_requests": new_requests,
         "to_review": to_review,
         "awaiting_down_payment": awaiting_down_payment,
@@ -1318,6 +1439,7 @@ def action_counts() -> dict[str, Any]:
         "chatbot_inquiries": chatbot_repository.count_open_inquiries(),
         # Changes whenever any order or registration changes, so pages know to refresh.
         "signature": f"{len(orders)}:{max((order['updated_at'] for order in orders), default='')}:{len(customers)}",
+        "status_counts": counts,
     }
 
 
@@ -1329,8 +1451,11 @@ DASHBOARD_STAGES = {
     "new": ("Pending Confirmation",),
     "to_review": ("Under Review", "Awaiting Quotation", "Quotation Declined", "Awaiting COD Confirmation"),
     "awaiting_customer": ("Quotation Sent", "Awaiting Down Payment"),
-    "production": ("Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production"),
-    "release": ("Ready for Pickup", "Out for Delivery"),
+    "production": (
+        "Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production",
+        "Quality Checking", "Packaging", "Awaiting Full Payment",
+    ),
+    "release": ("Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed"),
     "completed": ("Completed",),
 }
 STATUS_GROUPS.update({key: set(value) for key, value in DASHBOARD_STAGES.items() if key != "completed"})
@@ -1344,7 +1469,7 @@ def dashboard() -> dict[str, Any]:
     orders, services = _load()
     rows = [order_row(order, services) for order in orders]
     stages = {key: sum(1 for row in rows if row["status"] in statuses) for key, statuses in DASHBOARD_STAGES.items()}
-    completed = [row for row in rows if row["status"] == "Completed"]
+    completed = [row for row in rows if row["reported_completed"]]
     active = [order for order in orders if order["status"] not in CANCELLED_STATUSES]
     today = today_local()
     month_start = today.replace(day=1)
@@ -1353,8 +1478,18 @@ def dashboard() -> dict[str, Any]:
         payment for order in orders for payment in order["payments"]
         if in_range(local_date(payment.get("received_at")), month_start, today)
     ]
+    status_counts = {status: sum(1 for order in orders if order["status"] == status) for status in STATUS_ORDER}
+    refunds_completed = money(sum(order_services.refunded_amount(order) for order in orders))
+    received_total = money(sum(float(payment.get("amount") or 0) for order in orders for payment in order["payments"]))
     return {
         "stages": stages,
+        "status_counts": status_counts,
+        "pending_cancellations": sum(1 for order in orders if order_services.pending_cancellation(order)),
+        "pending_refunds": sum(
+            1 for order in orders for refund in order.get("refunds") or [] if refund.get("status") in {"pending_review", "approved", "processing", "failed"}
+        ),
+        "pending_orders": sum(1 for row in rows if row["status"] in PENDING_STATUSES),
+        "collections": {"verified": received_total, "refunds_completed": refunds_completed, "net": money(received_total - refunds_completed)},
         "payments_to_verify": sum(1 for order in active if order_services.pending_submissions(order)),
         "payments_to_verify_amount": money(sum(order_services.pending_submission_amount(order) for order in active)),
         "payments_missing_reference": sum(
@@ -1394,6 +1529,20 @@ def _classify(text: str) -> tuple[str, str]:
         (lambda value: value.startswith("Customer cancelled"), "Order cancelled by customer", "customer"),
         (lambda value: value.startswith("Customer accepted the quotation"), "Quotation accepted", "customer"),
         (lambda value: value.startswith("Customer declined the quotation"), "Quotation declined", "customer"),
+        (lambda value: value.startswith("Customer requested cancellation"), "Cancellation requested", "customer"),
+        (lambda value: value.startswith("Customer requested a refund"), "Refund requested", "customer"),
+        (lambda value: value.startswith("Customer reported a delivery issue"), "Delivery issue reported", "customer"),
+        (lambda value: "approved cancellation request" in value, "Cancellation approved", "admin"),
+        (lambda value: "rejected cancellation request" in value, "Cancellation rejected", "admin"),
+        (lambda value: "completed refund" in value, "Refund completed", "admin"),
+        (lambda value: "refund" in value.lower() and value.startswith(("Administrator", "Refund")), "Refund updated", "admin"),
+        (lambda value: "quality check" in value.lower(), "Quality check recorded", "admin"),
+        (lambda value: "completed packaging" in value, "Packaging completed", "admin"),
+        (lambda value: "dispatched the order" in value, "Order dispatched", "admin"),
+        (lambda value: value.startswith("Delivery attempt") and "failed" in value, "Delivery failed", "admin"),
+        (lambda value: "confirmed the delivery" in value, "Order delivered", "admin"),
+        (lambda value: value.startswith("Order claimed"), "Order claimed", "admin"),
+        (lambda value: "updated production" in value, "Production updated", "admin"),
         (lambda value: "the order is now Confirmed" in value, "Down payment verified · order confirmed", "admin"),
         (lambda value: "verified the customer's payment" in value, "Payment verified", "admin"),
         (lambda value: "could not verify the customer's payment" in value, "Payment submission rejected", "admin"),
@@ -1476,7 +1625,7 @@ def _notification_category(event: Mapping[str, Any]) -> str:
     title = str(event.get("title", "")).lower()
     if event.get("kind") == "customer":
         return "customers"
-    if "payment" in title or "down payment" in title:
+    if "payment" in title or "refund" in title:
         return "payments"
     if "quotation" in title or "draft" in title:
         return "quotations"

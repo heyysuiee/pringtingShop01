@@ -149,11 +149,19 @@ IMG = "/frontend/image"
 
 ORIENTATION = choice("orientation", "Orientation", ["Portrait", "Landscape"], kind="radio", default="portrait")
 
-# Invitation paper sizes, offered as a dropdown. 5 x 7 in is the standard size and is preselected. The
-# administrator can rename, price, or remove sizes from the field editor.
+# Invitation paper sizes, offered as a dropdown. Each invitation type has its own standard size, which is
+# preselected on the order form and shown with the product: Birthday and Christening 4 x 6 in, Wedding 5 x 7 in.
+# The administrator can change the standard size (the field's default option), rename, price, or remove sizes
+# from the field editor. Other sizes stay available; a custom size is quoted by the shop.
 INVITATION_SIZE_LABEL = "5 x 7 in"
+INVITATION_SMALL_SIZE_LABEL = "4 x 6 in"
+INVITATION_STANDARD_SIZES = {
+    "birthday-invitation": INVITATION_SMALL_SIZE_LABEL,
+    "christening-invitation": INVITATION_SMALL_SIZE_LABEL,
+    "wedding-invitation": INVITATION_SIZE_LABEL,
+}
 INVITATION_SIZES: list[OptionSpec] = [
-    "4 x 6 in",
+    INVITATION_SMALL_SIZE_LABEL,
     INVITATION_SIZE_LABEL,
     "5 x 5 in (square)",
     "6 x 8 in",
@@ -171,8 +179,14 @@ def time_field(key: str, label: str, required: bool = True) -> dict[str, Any]:
     return {"field_key": key, "label": label, "field_type": "time", "required": required}
 
 
+def invitation_size_help(standard: str, kind: str) -> str:
+    return f"{standard} is the standard size for {kind} invitations. A custom size is quoted by the shop."
+
+
 def invitation_fields(
     *,
+    standard_size: str = INVITATION_SIZE_LABEL,
+    kind: str = "these",
     folds: Sequence[OptionSpec],
     printing: Sequence[OptionSpec],
     envelopes: Sequence[OptionSpec],
@@ -190,8 +204,8 @@ def invitation_fields(
             "invitation_size",
             "Invitation size",
             INVITATION_SIZES,
-            default=slug(INVITATION_SIZE_LABEL),
-            help_text="5 x 7 in is our standard size. A custom size is quoted by the shop.",
+            default=slug(standard_size),
+            help_text=invitation_size_help(standard_size, kind),
         ),
         choice("printing_type", "Printing type", printing),
         ORIENTATION,
@@ -298,6 +312,8 @@ INVITATIONS = [
         "Birthday Invitation",
         "A cheerful invitation for birthdays and milestones.",
         invitation_fields(
+            standard_size=INVITATION_STANDARD_SIZES["birthday-invitation"],
+            kind="birthday",
             folds=["Flat card (no fold)", "Bi-fold", "Tri-fold"],
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope"],
@@ -312,6 +328,8 @@ INVITATIONS = [
         "Wedding Invitation",
         "Elegant stationery for wedding celebrations.",
         invitation_fields(
+            standard_size=INVITATION_STANDARD_SIZES["wedding-invitation"],
+            kind="wedding",
             folds=["Flat card (no fold)", "Bi-fold", "Gatefold", "Tri-fold", opt("Pocket fold", quote=True)],
             printing=["Single-sided, full color", "Double-sided, full color", "Full color with foil accents"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope", "Kraft envelope", "Vellum envelope"],
@@ -326,6 +344,8 @@ INVITATIONS = [
         "Christening Invitation",
         "A gentle invitation for a christening or baptism day.",
         invitation_fields(
+            standard_size=INVITATION_STANDARD_SIZES["christening-invitation"],
+            kind="christening",
             folds=["Flat card (no fold)", "Bi-fold"],
             printing=["Single-sided, full color", "Double-sided, full color"],
             envelopes=["No envelope", "Plain white envelope", "Colored envelope"],
@@ -875,16 +895,52 @@ PARTY_NEEDS = [
 # ---------------------------------------------------------------- Tarpaulins & Large Format
 
 
+# Tarpaulins are priced from the standard size price list (Admin → Services & Products → Size prices). The
+# width and height fields are asked only for "Custom size", which the shop quotes.
+CUSTOM_SIZE_ONLY = {"depends_on": "standard_size", "depends_values": ["custom"]}
+CUSTOM_SIZE_HELP = "Custom sizes are quoted by the shop after reviewing your request."
+
+# The published Tarpaulin price list: (width, height) in feet and the price of one piece in PHP.
+TARPAULIN_PRICE_LIST = [
+    (2, 3, 200.00),
+    (2, 4, 250.00),
+    (3, 4, 300.00),
+    (3, 5, 350.00),
+    (4, 5, 400.00),
+    (4, 6, 500.00),
+    (4, 7, 550.00),
+    (4, 8, 600.00),
+]
+STANDARD_SIZE_SEED: list[dict[str, Any]] = [
+    {
+        "id": f"tarpaulin-{width}x{height}-ft",
+        "category_id": "large-format",
+        "label": f"{width} × {height} ft",
+        "width": float(width),
+        "height": float(height),
+        "unit": "ft",
+        "price": price,
+    }
+    for width, height, price in TARPAULIN_PRICE_LIST
+]
+
+
+LARGE_FORMAT_UPLOAD_HELP = "Large print-ready files are accepted (JPG, PNG, or PDF); the maximum size is shown below."
+
+
 def large_format_fields(extra: list[dict[str, Any]] | None = None, *, outdoor_default: str = "") -> list[dict[str, Any]]:
     return [
-        number("width", "Width", minimum=0.5, maximum=1000, placeholder="e.g. 3"),
-        number("height", "Height", minimum=0.5, maximum=1000, placeholder="e.g. 5"),
-        choice(
-            "measurement_unit",
-            "Measurement unit",
-            [opt("Feet (ft)", "ft"), opt("Inches (in)", "in"), opt("Centimeters (cm)", "cm"), opt("Meters (m)", "m")],
-            default="ft",
-        ),
+        {**number("width", "Custom width", minimum=0.5, maximum=1000, placeholder="e.g. 3", help_text=CUSTOM_SIZE_HELP), **CUSTOM_SIZE_ONLY},
+        {**number("height", "Custom height", minimum=0.5, maximum=1000, placeholder="e.g. 5"), **CUSTOM_SIZE_ONLY},
+        {
+            **choice(
+                "measurement_unit",
+                "Measurement unit",
+                [opt("Feet (ft)", "ft"), opt("Inches (in)", "in"), opt("Centimeters (cm)", "cm"), opt("Meters (m)", "m")],
+                default="ft",
+            ),
+            **CUSTOM_SIZE_ONLY,
+        },
         choice("material", "Material", ["Tarpaulin, standard", "Tarpaulin, heavy duty", "Mesh tarpaulin (wind-permeable)", "Vinyl sticker print"]),
         choice("placement", "Indoor / outdoor", ["Indoor", "Outdoor"], kind="radio", default=outdoor_default),
         choice("eyelets", "Eyelets", ["No eyelets", "Four corners only", "Every 2 ft around the edges", "Top edge only"]),
@@ -896,6 +952,7 @@ def large_format_fields(extra: list[dict[str, Any]] | None = None, *, outdoor_de
             "Design upload",
             required=True,
             max_files=3,
+            help_text=LARGE_FORMAT_UPLOAD_HELP,
             depends_on="design_preference",
             depends_values=["i-will-upload-a-print-ready-design"],
         ),
@@ -920,31 +977,116 @@ LARGE_FORMAT = [
         "Celebration tarpaulins for birthdays, weddings, and graduations.",
         large_format_fields([choice("occasion", "Occasion", ["Birthday", "Wedding", "Graduation", "Other celebration"], kind="radio"), wording()]),
         image=f"{IMG}/tarpaulin/event.jpg",
-        pricing_mode="area",
+        pricing_mode="size",
         event_mode="optional",
     ),
-    product("event-tarpaulins", "Event Tarpaulins", "Tarpaulins for events, programs, and gatherings.", large_format_fields([wording()]), image=f"{IMG}/tarpaulin/event.jpg", pricing_mode="area", event_mode="optional"),
-    product("store-banners", "Store Banners", "Storefront banners for your business name and services.", large_format_fields([wording("Banner text", "Business name, services, contact number")], outdoor_default="outdoor"), pricing_mode="area"),
-    product("promotional-banners", "Promotional Banners", "Banners for sales, promos, and product advertisements.", large_format_fields([wording("Promo text", "Promo headline, details, validity dates")]), pricing_mode="area"),
+    product("event-tarpaulins", "Event Tarpaulins", "Tarpaulins for events, programs, and gatherings.", large_format_fields([wording()]), image=f"{IMG}/tarpaulin/event.jpg", pricing_mode="size", event_mode="optional"),
+    product("store-banners", "Store Banners", "Storefront banners for your business name and services.", large_format_fields([wording("Banner text", "Business name, services, contact number")], outdoor_default="outdoor"), pricing_mode="size"),
+    product("promotional-banners", "Promotional Banners", "Banners for sales, promos, and product advertisements.", large_format_fields([wording("Promo text", "Promo headline, details, validity dates")]), pricing_mode="size"),
     product(
         "stage-backdrops",
         "Stage Backdrops",
         "Large backdrops for stages, events, and photo areas.",
         large_format_fields([choice("mounting", "Mounting", ["Tarpaulin only", opt("With frame or stand", quote=True)]), wording()]),
-        pricing_mode="area",
+        pricing_mode="size",
         event_mode="optional",
     ),
-    product("welcome-banners", "Welcome Banners", "Welcome banners for guests and event venues.", large_format_fields([wording()]), pricing_mode="area", event_mode="optional"),
-    product("program-banners", "Program Banners", "Banners that show an event program or schedule.", large_format_fields([wording("Program content", "Program flow, schedule, and segment names")]), pricing_mode="area", event_mode="optional"),
-    product("school-announcements", "School Announcements", "Announcement and schedule banners for schools.", large_format_fields([wording("Announcement text", "Announcement, schedule, and school name")]), pricing_mode="area"),
-    product("public-notices", "Public Notices", "Clear, readable public notice banners.", large_format_fields([wording("Notice text", "Notice title and full text")], outdoor_default="outdoor"), pricing_mode="area"),
-    product("entrance-signs", "Entrance Signs", "Entrance signs for venues, events, and businesses.", large_format_fields([wording("Sign text", "Venue or event name and greeting")]), pricing_mode="area"),
+    product("welcome-banners", "Welcome Banners", "Welcome banners for guests and event venues.", large_format_fields([wording()]), pricing_mode="size", event_mode="optional"),
+    product("program-banners", "Program Banners", "Banners that show an event program or schedule.", large_format_fields([wording("Program content", "Program flow, schedule, and segment names")]), pricing_mode="size", event_mode="optional"),
+    product("school-announcements", "School Announcements", "Announcement and schedule banners for schools.", large_format_fields([wording("Announcement text", "Announcement, schedule, and school name")]), pricing_mode="size"),
+    product("public-notices", "Public Notices", "Clear, readable public notice banners.", large_format_fields([wording("Notice text", "Notice title and full text")], outdoor_default="outdoor"), pricing_mode="size"),
+    product("entrance-signs", "Entrance Signs", "Entrance signs for venues, events, and businesses.", large_format_fields([wording("Sign text", "Venue or event name and greeting")]), pricing_mode="size"),
     product(
         "directional-banners",
         "Directional Banners",
         "Wayfinding banners that guide visitors.",
         large_format_fields([choice("arrow_direction", "Arrow direction", ["Left", "Right", "Straight ahead", "No arrow"]), wording("Directions text", "e.g. Reception this way")]),
-        pricing_mode="area",
+        pricing_mode="size",
+    ),
+]
+
+# ---------------------------------------------------------------- T-Shirt Printing
+#
+# Two separate services with their own order forms and their own prices (no price is shared between them):
+# Heat Press Printing (heat-transfer print on a cotton/blend shirt in the customer's chosen color) and
+# Sublimation Printing (dye printed into a white polyester shirt, full or partial). No prices are seeded: the
+# administrator enters the base price and the option prices (shirt type, size, placement, sublimation type)
+# in Services & Products. Shirt types, colors, sizes, and placements are order-form options the
+# administrator can add, rename, price, or hide.
+
+SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "Kids (indicate age below)", "Mixed sizes (list below)"]
+PLACEMENTS = ["Front", "Back", "Front and Back"]
+TSHIRT_UPLOAD_HELP = "Upload your design (print-ready PNG with a transparent background, JPG, or PDF)."
+
+
+def shirt_size_fields() -> list[dict[str, Any]]:
+    return [
+        choice("tshirt_size", "T-shirt size", SHIRT_SIZES, help_text="Larger sizes may cost more; the amount is shown next to each size."),
+        text(
+            "size_breakdown",
+            "Size breakdown",
+            multiline=True,
+            required=True,
+            max_length=1000,
+            placeholder="e.g. 5 pcs S, 10 pcs M, 3 pcs XL (kids: 2 pcs age 6)",
+            depends_on="tshirt_size",
+            depends_values=["kids-indicate-age-below", "mixed-sizes-list-below"],
+        ),
+    ]
+
+
+def shirt_design_fields(label: str) -> list[dict[str, Any]]:
+    return [
+        upload("design_upload", label, required=True, max_files=3, help_text=TSHIRT_UPLOAD_HELP),
+        text("print_text", "Text, names, or numbers to print", multiline=True, max_length=2000, placeholder="e.g. team name, player names and numbers"),
+        upload("reference_image", "Reference image", max_files=3, help_text="Optional: a photo of a similar shirt or layout you want us to follow."),
+        text("special_requests", "Special requests", multiline=True, max_length=1000, placeholder="e.g. individual packing, specific print size, rush date"),
+    ]
+
+
+TSHIRT_PRINTING = [
+    product(
+        "heat-press-printing",
+        "Heat Press Printing",
+        "Your design heat-pressed onto a cotton or blend shirt in the color you choose. Good for logos, names, and small to medium batches.",
+        [
+            choice("tshirt_type", "T-shirt type", ["Cotton round neck", "Cotton V-neck", "Polo shirt", "Dri-fit round neck", "Long sleeves"]),
+            choice("tshirt_color", "T-shirt color", ["White", "Black", "Gray", "Navy blue", "Red", "Other color (specify)"]),
+            text("color_other", "Preferred color", required=True, placeholder="e.g. Maroon, Mint green", depends_on="tshirt_color", depends_values=["other-color-specify"]),
+            *shirt_size_fields(),
+            choice("print_placement", "Print placement", PLACEMENTS, kind="radio", default="front"),
+            choice("print_size", "Print size", ["Logo size (up to 4 × 4 in)", "A5 (up to 6 × 8 in)", "A4 (up to 8 × 11 in)", "A3 (up to 11 × 16 in)"]),
+            *shirt_design_fields("Your design"),
+        ],
+        image=f"{IMG}/tshirt/heat-press.svg",
+    ),
+    product(
+        "sublimation-printing",
+        "Sublimation Printing",
+        "Full-color dye sublimation on white polyester shirts: an all-over print or a partial print that will not crack or peel.",
+        [
+            choice(
+                "tshirt_type",
+                "T-shirt type",
+                ["Polyester round neck", "Polyester V-neck", "Polyester polo shirt", "Jersey / sando", "Long sleeves (polyester)"],
+                help_text="Sublimation works on white or light polyester fabric only.",
+            ),
+            *shirt_size_fields(),
+            choice(
+                "sublimation_type",
+                "Sublimation type",
+                ["Full sublimation (all-over print)", "Partial sublimation (print area only)"],
+                kind="radio",
+                default="full-sublimation-all-over-print",
+            ),
+            {
+                **choice("print_placement", "Print placement", PLACEMENTS, kind="radio", default="front"),
+                "depends_on": "sublimation_type",
+                "depends_values": ["partial-sublimation-print-area-only"],
+            },
+            *shirt_design_fields("Your design (full artwork)"),
+        ],
+        image=f"{IMG}/tshirt/sublimation.svg",
     ),
 ]
 
@@ -984,5 +1126,11 @@ CATALOG_SEED: list[dict[str, Any]] = [
         "label": "Tarpaulins & Large Format Printing",
         "description": "Tarpaulins and banners priced by size.",
         "products": LARGE_FORMAT,
+    },
+    {
+        "id": "tshirt-printing",
+        "label": "T-Shirt Printing",
+        "description": "Custom shirts by Heat Press or Sublimation printing.",
+        "products": TSHIRT_PRINTING,
     },
 ]

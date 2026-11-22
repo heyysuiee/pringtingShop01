@@ -259,7 +259,8 @@ class DesignOrderTests(DesignTestCase):
         order = self.order(
             "birthday-wedding-graduation-tarpaulins", "sample-birthday-confetti-tarpaulin",
             {"celebrant_name": "Mia", "headline": "Happy 7th Birthday!"},
-            options={"width": 3, "height": 5, "measurement_unit": "ft", "material": "tarpaulin-standard", "placement": "indoor",
+            # A custom size (quoted by the shop) asks for the width and height.
+            options={"standard_size": "custom", "width": 3, "height": 5, "measurement_unit": "ft", "material": "tarpaulin-standard", "placement": "indoor",
                      "eyelets": "four-corners-only", "hemming": "no-hemming", "occasion": "birthday",
                      # Artwork questions are not part of a design order and are dropped.
                      "design_preference": "i-will-upload-a-print-ready-design"},

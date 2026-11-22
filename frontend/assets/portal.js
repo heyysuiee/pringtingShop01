@@ -128,10 +128,17 @@
         ].filter(([, value]) => value);
     }
 
-    /** The steps this order goes through: its pricing (package or quotation), the down payment, and fulfillment. */
+    /** The steps this order goes through: its pricing (package or quotation), the down payment, production, and fulfillment. */
     function orderPath(order) {
         const cod = order.payment?.payment_option === "cod";  // only orders placed while COD was offered
         const payment = cod ? (order.fixed_price ? [] : ["Awaiting COD Confirmation"]) : ["Awaiting Down Payment", "Confirmed"];
+        const delivery = order.fulfillment?.method === "delivery";
+        const reached = new Set((order.status_timeline || []).map((item) => item.status));
+        // Packed orders that were already fully paid skip the "Awaiting Full Payment" step.
+        const packed = ["Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed", "Completed"].includes(order.status);
+        const waitForBalance = order.status === "Awaiting Full Payment" || reached.has("Awaiting Full Payment") || (!packed && (order.payment?.balance || 0) > 0.005);
+        // Orders released before Quality Checking and Packaging existed went straight from printing to release.
+        const legacy = packed && !order.production?.packaging?.completed_at && !reached.has("Packaging");
         return [
             "Pending Confirmation",
             "Under Review",
@@ -141,10 +148,18 @@
             "Awaiting Customer Approval",
             "Approved for Printing",
             "In Production",
-            order.fulfillment?.release_status || "Ready for Pickup",
+            ...(legacy ? [] : ["Quality Checking", "Packaging"]),
+            ...(waitForBalance && !legacy ? ["Awaiting Full Payment"] : []),
+            ...(delivery ? [...(legacy ? [] : ["Ready for Dispatch"]), "Out for Delivery", ...(legacy ? [] : ["Delivered"])] : ["Ready for Pickup", ...(legacy ? [] : ["Order Claimed"])]),
             "Completed",
         ];
     }
+
+    const STEP_LABELS = {
+        "Pending Confirmation": "Order Submitted",
+        "Confirmed": "Down Payment Verified · Order Confirmed",
+        "Ready for Dispatch": "Ready for Dispatch",
+    };
 
     function renderTimeline(order) {
         const timeline = document.querySelector("#detail-timeline");
@@ -152,21 +167,32 @@
         const terminal = ["Rejected", "Cancelled"].includes(order.status);
         const ordered = terminal ? ["Pending Confirmation", order.status] : orderPath(order);
         // Side steps are shown in place of the step they belong to.
-        const shownAs = { "Awaiting Quotation": "Under Review", "Quotation Declined": "Quotation Sent" }[order.status];
+        const shownAs = { "Awaiting Quotation": "Under Review", "Quotation Declined": "Quotation Sent", "Delivery Failed": "Out for Delivery" }[order.status];
         if (shownAs && ordered.includes(shownAs)) ordered[ordered.indexOf(shownAs)] = order.status;
         const currentIndex = ordered.indexOf(order.status);
+        // When each step was reached (latest time), from the server's status history.
+        const times = {};
+        (order.status_timeline || []).forEach((item) => { times[item.status] = item.at; });
         ordered.forEach((status, index) => {
             const item = make("li", "timeline-step");
+            const failed = ["Rejected", "Cancelled", "Delivery Failed", "Quotation Declined"].includes(status) && index === currentIndex;
             if (index < currentIndex) item.classList.add("is-done");
             if (index === currentIndex) {
-                item.classList.add("is-current");
+                item.classList.add(failed ? "is-failed" : "is-current");
                 item.setAttribute("aria-current", "step");
             }
-            const dot = make("span", "timeline-dot", index < currentIndex ? "✓" : String(index + 1));
-            const label = make("span", "timeline-label", status);
+            if (index > currentIndex) item.classList.add("is-pending");
+            const dot = make("span", "timeline-dot", failed ? "!" : index < currentIndex ? "✓" : String(index + 1));
+            const label = make("span", "timeline-label", STEP_LABELS[status] || status);
             item.append(dot, label);
+            if (index <= currentIndex && times[status]) item.append(make("time", "timeline-time", formatDateTime(times[status])));
             timeline.append(item);
         });
+    }
+
+    function formatDateTime(value) {
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleString("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     }
 
     function renderAttachments(target, attachments, label) {
@@ -246,8 +272,10 @@
         const revised = quote.revision > 1;
         quotationPanel.append(
             make("h3", "", revised ? `Revised quotation (revision ${quote.revision})` : "Your quotation is ready"),
-            make("p", "field-hint", "Review the latest quotation from the shop. If you accept it, the next step is the 50% down payment through GCash. If you decline it, nothing is paid and the shop may send a revised quotation."),
+            make("p", "field-hint", "Review the latest quotation from the shop. If you accept it, the next step is the 50% down payment through one of the shop's e-wallets. If you decline it, nothing is paid and the shop may send a revised quotation."),
             definitionList([
+                quote.delivery_fee ? ["Printing", money(quote.amount)] : ["", ""],
+                quote.delivery_fee ? ["Delivery fee", money(quote.delivery_fee)] : ["", ""],
                 ["Quoted total", money(total)],
                 revised && typeof quote.previous_amount === "number" ? ["Previous quotation", money(quote.previous_amount)] : ["", ""],
                 ["50% down payment", money(payment.down_payment_required)],
@@ -272,7 +300,7 @@
         const decline = make("button", "btn btn-ghost-dark", "Decline Quotation");
         decline.type = "button";
         accept.addEventListener("click", async () => {
-            if (!(await window.PrintConfirm(`Accept the quotation of ${money(total)}? You will then pay the 50% down payment of ${money(payment.down_payment_required)} through GCash.`, { title: "Accept quotation?", confirmLabel: "Accept quotation" }))) return;
+            if (!(await window.PrintConfirm(`Accept the quotation of ${money(total)}? You will then pay the 50% down payment of ${money(payment.down_payment_required)} through the shop's e-wallet.`, { title: "Accept quotation?", confirmLabel: "Accept quotation" }))) return;
             // The revision you reviewed is sent along: if the shop revised the quotation meanwhile, acceptance is refused.
             void orderAction("quotation/accept", { quotation_revision: quote.revision }, "The quotation could not be accepted.", accept);
         });
@@ -300,11 +328,14 @@
         const cod = payment.payment_option === "cod";
         paymentPanel.append(make("h3", "", "Payment"));
         paymentPanel.append(definitionList([
-            [order.fixed_price ? "Package total" : "Accepted quotation", money(order.total_amount)],
+            payment.delivery_fee ? ["Printing / package subtotal", money(payment.subtotal)] : ["", ""],
+            payment.delivery_fee ? ["Delivery fee", money(payment.delivery_fee)] : ["", ""],
+            [order.fixed_price ? (payment.delivery_fee ? "Order total" : (order.fixed_price_label || "Package total")) : "Accepted quotation", money(order.total_amount)],
             cod ? ["Down payment", "Not required (Cash on Delivery, arranged before the 50% down payment rule)"] : ["50% down payment", `${money(payment.down_payment_required)} · ${payment.down_payment_status}`],
             ["Verified payments", money(payment.amount_paid)],
             payment.pending_verification ? ["Pending verification", money(payment.pending_verification)] : ["", ""],
             [cod ? "Due on delivery / pickup" : "Remaining balance", money(payment.balance)],
+            payment.refunded ? ["Refunded to you", money(payment.refunded)] : ["", ""],
         ]));
         if (order.status === "Confirmed") {
             paymentPanel.append(make("p", "notice notice-success", "Your down payment is verified and your order is confirmed. The shop is preparing your draft."));
@@ -323,10 +354,12 @@
         } else if (!agreed) {
             paymentPanel.append(make("p", "notice", "Payment opens after the shop approves your order and shares the payment instructions."));
         } else if (pending) {
-            paymentPanel.append(make("p", "notice", `Your GCash payment of ${money(pending.amount)} (reference ${pending.reference}) is pending verification. Your order is confirmed only after the shop verifies it.`));
+            paymentPanel.append(make("p", "notice", `Your ${pending.method} payment of ${money(pending.amount)} (reference ${pending.reference}) is pending verification. ${order.status === "Awaiting Down Payment" ? "Your order is confirmed only after the shop verifies it." : "The shop will update your balance once it is verified."}`));
+        } else if (due && order.customer_actions && !order.customer_actions.pay) {
+            paymentPanel.append(make("p", "notice", "Payment is on hold while your cancellation request is reviewed."));
         } else if (due) {
             if (detailSource !== "account" && !signedIn) {
-                paymentPanel.append(make("p", "notice", "Sign in to your customer account to submit your GCash payment."));
+                paymentPanel.append(make("p", "notice", "Sign in to your customer account to submit your payment."));
             } else {
                 paymentPanel.append(paymentForm(order, due));
             }
@@ -353,9 +386,87 @@
         }
     }
 
-    /** GCash payment form. The amount comes from the server and cannot be edited; a receipt is required. */
+    let methodsRequest = null;
+    function paymentMethods() {
+        methodsRequest ||= request("/api/payment-methods").then((result) => result.methods || []).catch(() => []);
+        return methodsRequest;
+    }
+
+    function copyButton(text, label) {
+        const button = make("button", "btn btn-ghost-dark btn-copy", "Copy");
+        button.type = "button";
+        button.setAttribute("aria-label", `Copy ${label}`);
+        button.addEventListener("click", async () => {
+            try {
+                await navigator.clipboard.writeText(text);
+                button.textContent = "Copied";
+            } catch {
+                button.textContent = "Copy failed";
+            }
+            setTimeout(() => { button.textContent = "Copy"; }, 1600);
+        });
+        return button;
+    }
+
+    /** E-wallet payment form: choose one of the shop's active methods, pay outside the site, then report the
+     *  reference number and screenshot. The amount comes from the server and cannot be edited. */
     function paymentForm(order, due) {
         const formElement = make("form", "payment-submit-form");
+        const cards = make("div", "wallet-cards");
+        cards.setAttribute("role", "radiogroup");
+        cards.setAttribute("aria-label", "Payment method");
+        const details = make("div", "wallet-details");
+        let chosen = null;
+        const showMethod = (method) => {
+            chosen = method;
+            cards.querySelectorAll(".wallet-card").forEach((card) => {
+                const on = card.dataset.method === method.provider;
+                card.classList.toggle("is-selected", on);
+                card.setAttribute("aria-checked", String(on));
+            });
+            details.replaceChildren();
+            const rows = make("dl", "summary");
+            const row = (label, value, copyValue) => {
+                const wrap = make("div", "summary-row");
+                const dd = make("dd", "", value || "—");
+                if (copyValue) dd.append(" ", copyButton(copyValue, label));
+                wrap.append(make("dt", "", label), dd);
+                rows.append(wrap);
+            };
+            row("Pay to", method.account_name || "Ask the shop for the account name");
+            row(`${method.provider} number`, method.account_number || "Not set yet — use the shop's payment instructions", method.account_number);
+            row("Exact amount due", money(due.amount), due.amount.toFixed(2));
+            details.append(rows);
+            if (method.qr_url) {
+                const qr = make("img", "wallet-qr");
+                qr.src = method.qr_url;
+                qr.alt = `${method.provider} QR code of the shop`;
+                qr.loading = "lazy";
+                details.append(qr);
+            }
+            if (method.instructions) details.append(make("p", "field-hint", method.instructions));
+            if (!method.configured) details.append(make("p", "notice", `The shop has not added its ${method.provider} account details yet. Follow the payment instructions from the shop or contact the shop before paying.`));
+            reference.placeholder = `${method.provider} reference number`;
+            referenceLabel.firstChild.textContent = `${method.provider} reference number`;
+            proofLabel.firstChild.textContent = `${method.provider} screenshot or receipt (JPG, PNG, WebP, or PDF · max 5 MB)`;
+        };
+        paymentMethods().then((methods) => {
+            if (!methods.length) {
+                cards.replaceChildren(make("p", "notice", "No payment method is available right now. Contact the shop."));
+                submit.disabled = true;
+                return;
+            }
+            methods.forEach((method) => {
+                const card = make("button", "wallet-card");
+                card.type = "button";
+                card.dataset.method = method.provider;
+                card.setAttribute("role", "radio");
+                card.append(make("strong", "", method.provider), make("span", "field-hint", method.account_name || "E-wallet"));
+                card.addEventListener("click", () => showMethod(method));
+                cards.append(card);
+            });
+            showMethod(methods[0]);
+        });
         const field = (labelText, control) => {
             const label = make("label", "", labelText);
             label.append(control);
@@ -365,18 +476,22 @@
         Object.assign(amount, { type: "text", readOnly: true, value: money(due.amount) });
         amount.setAttribute("aria-readonly", "true");
         const reference = make("input", "input");
-        Object.assign(reference, { maxLength: 120, required: true, placeholder: "GCash reference number", autocomplete: "off" });
+        Object.assign(reference, { maxLength: 120, minLength: 4, required: true, placeholder: "Reference number", autocomplete: "off" });
         const proof = make("input", "input");
         Object.assign(proof, { type: "file", required: true, accept: ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" });
         const submit = make("button", "btn btn-dark", "Submit payment for verification");
         submit.type = "submit";
         const down = due.stage === "down_payment";
+        const referenceLabel = field("Reference number", reference);
+        const proofLabel = field("Screenshot or receipt (JPG, PNG, WebP, or PDF · max 5 MB)", proof);
         formElement.append(
             make("h4", "", down ? "Pay your 50% down payment" : "Pay the remaining balance"),
-            make("p", "field-hint", `Send ${money(due.amount)} through GCash using the shop's instructions, then upload the screenshot or receipt. The amount is set by the shop. Your payment stays Pending Verification until the shop checks it${down ? "; your order is confirmed once it is verified" : ""}.`),
+            make("p", "field-hint", `Choose an e-wallet, send exactly ${money(due.amount)} to the shop's account, then enter the reference number and upload the screenshot or receipt. The amount is set by the shop. Your payment stays Pending Verification until the shop checks the money in its account${down ? "; your order is confirmed once it is verified" : ""}. The shop never asks for your PIN or OTP.`),
+            cards,
+            details,
             field(`Amount to pay (${due.label})`, amount),
-            field("GCash reference number", reference),
-            field("GCash screenshot or receipt (JPG, PNG, WebP, or PDF · max 5 MB)", proof),
+            referenceLabel,
+            proofLabel,
             submit,
         );
         formElement.addEventListener("submit", async (event) => {
@@ -384,10 +499,14 @@
             if (!formElement.reportValidity()) return;
             const file = proof.files?.[0];
             if (!file || file.size > MAX_PROOF_BYTES || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name)) {
-                detailError.textContent = "Upload the GCash screenshot or receipt as a JPG, PNG, WebP, or PDF file no larger than 5 MB.";
+                detailError.textContent = "Upload the payment screenshot or receipt as a JPG, PNG, WebP, or PDF file no larger than 5 MB.";
                 return;
             }
-            if (!(await window.PrintConfirm(`Submit your GCash payment of ${money(due.amount)} (reference ${reference.value.trim()}) for verification?`, { title: "Submit payment?", confirmLabel: "Submit payment" }))) return;
+            if (!chosen) {
+                detailError.textContent = "Choose the e-wallet you paid with.";
+                return;
+            }
+            if (!(await window.PrintConfirm(`Submit your ${chosen.provider} payment of ${money(due.amount)} (reference ${reference.value.trim()}) for verification?`, { title: "Submit payment?", confirmLabel: "Submit payment" }))) return;
             let proofPayload;
             try {
                 proofPayload = { name: file.name, dataUrl: await fileAsDataUrl(file) };
@@ -396,7 +515,7 @@
                 return;
             }
             // The amount is sent only so a stale page is refused; the server decides the amount due.
-            await orderAction("payments", { amount: due.amount, method: "GCash", reference: reference.value.trim(), proof: proofPayload }, "The payment could not be submitted.", submit);
+            await orderAction("payments", { amount: due.amount, method: chosen.provider, reference: reference.value.trim(), proof: proofPayload }, "The payment could not be submitted.", submit);
         });
         return formElement;
     }
@@ -456,7 +575,12 @@
             if (details.length) appendSummaryRow(summary, "Package inclusions", details.map((item) => (item.description ? `${item.name} (${item.description})` : item.name)).join("; "));
         }
         appendSummaryRow(summary, "Quantity", `${order.customization.quantity} pcs`);
-        if (typeof order.pricing?.unit_price === "number") appendSummaryRow(summary, "Price per piece", `${money(order.pricing.unit_price)} (estimate)`);
+        // A standard size from the price list (Tarpaulin): the size and its price, as saved when the order was placed.
+        if (order.price_list) {
+            appendSummaryRow(summary, "Selected size", order.price_list.size);
+            appendSummaryRow(summary, "Unit price", typeof order.price_list.unit_price === "number" ? `${money(order.price_list.unit_price)} per piece (price list)` : "");
+        }
+        if (typeof order.pricing?.unit_price === "number") appendSummaryRow(summary, "Price per piece", `${money(order.pricing.unit_price)}${order.fixed_price ? "" : " (estimate)"}`);
         specificationRows(order).forEach(([label, value]) => appendSummaryRow(summary, label, value));
         appendSummaryRow(summary, "Special instructions", order.customization.notes ?? order.customization.instructions);
         appendSummaryRow(summary, "Customer", order.customer.name);
@@ -470,7 +594,7 @@
             appendSummaryRow(summary, "Estimated total", `${money(estimateOf(order))} (from shop prices; not yet confirmed)`);
         }
         const quoteWaiting = order.status === "Quotation Sent" || order.status === "Quotation Declined";
-        appendSummaryRow(summary, order.fixed_price ? "Package total" : "Confirmed total", order.total_amount === null
+        appendSummaryRow(summary, order.fixed_price ? (order.fixed_price_label || "Package total") : "Confirmed total", order.total_amount === null
             ? "Waiting for Admin Quotation"
             : `${money(order.total_amount)}${quoteWaiting ? " (quotation, not yet accepted)" : ""}`);
         const payment = order.payment || {};
@@ -494,11 +618,34 @@
         const draft = document.querySelector("#customer-draft");
         const awaitingApproval = order.status === "Awaiting Customer Approval" && order.draft_attachment;
         draft.hidden = !awaitingApproval;
+        const drafts = order.drafts || [];
         if (awaitingApproval) {
             const download = document.querySelector("#draft-download");
             download.href = order.draft_attachment.url;
             download.textContent = `Open draft: ${order.draft_attachment.name}`;
+            const latest = drafts[drafts.length - 1];
+            const remarks = document.querySelector("#draft-remarks");
+            remarks.hidden = !latest?.remarks;
+            remarks.textContent = latest?.remarks ? `Notes from the shop: ${latest.remarks}` : "";
+            document.querySelector("#draft-revision-note").value = "";
         }
+        const draftHistory = document.querySelector("#draft-history");
+        document.querySelector("#draft-history-toggle").hidden = drafts.length < 1;
+        draftHistory.replaceChildren(...drafts.slice().reverse().map((item) => {
+            const entry = make("li", `draft-${item.status}`);
+            entry.append(make("strong", "", `Draft ${item.number} · ${item.status_label}`));
+            if (item.file) {
+                const link = make("a", "", item.file.name);
+                link.href = item.file.url;
+                link.target = "_blank";
+                link.rel = "noopener";
+                entry.append(link);
+            }
+            if (item.sent_at) entry.append(make("span", "field-hint", `Sent ${formatDate(item.sent_at)}${item.responded_at ? ` · answered ${formatDate(item.responded_at)}` : ""}`));
+            if (item.remarks) entry.append(make("span", "field-hint", `Shop notes: ${item.remarks}`));
+            if (item.revision_note) entry.append(make("span", "field-hint", `Your revision request: ${item.revision_note}`));
+            return entry;
+        }));
         const history = document.querySelector("#detail-history");
         history.replaceChildren();
         order.history.forEach((entry) => {
@@ -517,6 +664,11 @@
         const cancelButton = document.querySelector("#cancel-order");
         cancelButton.hidden = !canCancel;
         cancelButton.disabled = false;
+        // Tracking (production, pickup, courier), cancellation and refund requests, and the receipt.
+        window.PortalTracking?.render(order, {
+            orderAction, money, formatDate, make, definitionList, fileAsDataUrl, paymentMethods, copyButton, detailError,
+            canAct: detailSource === "account" || signedIn,
+        });
         detail.scrollIntoView({ block: "start", behavior: "instant" });
     }
 
@@ -572,8 +724,15 @@
 
     document.querySelector("#request-draft-changes").addEventListener("click", async (event) => {
         const button = event.currentTarget;
-        if (!currentOrder || !(await window.PrintConfirm("Ask the shop to revise this draft?", { title: "Request changes?", confirmLabel: "Request changes" }))) return;
-        void orderAction("request-changes", { note: "Customer requested changes to the draft layout." }, "The change request could not be recorded.", button);
+        const noteInput = document.querySelector("#draft-revision-note");
+        const note = noteInput.value.trim();
+        if (!note) {
+            detailError.textContent = "Describe the changes you want in the revision instructions.";
+            noteInput.focus();
+            return;
+        }
+        if (!currentOrder || !(await window.PrintConfirm("Ask the shop to revise this draft with your instructions?", { title: "Request revision?", confirmLabel: "Request revision" }))) return;
+        void orderAction("request-changes", { note }, "The revision request could not be recorded.", button);
     });
 
     document.querySelector("#cancel-order").addEventListener("click", async (event) => {

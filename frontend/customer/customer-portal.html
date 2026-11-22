@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
     <link rel="stylesheet" href="/assets/chatbot.css">
+    <link rel="stylesheet" href="/assets/portal-tracking.css">
     <title>Customer Portal — Printing Shop</title>
 </head>
 
@@ -126,12 +127,15 @@
                     <div class="order-ref" id="detail-ref"></div>
                 </header>
                 <div class="status-banner" id="detail-status"></div>
-                <h3 class="section-label">Order progress</h3><ol class="timeline" id="detail-timeline" aria-label="Order progress"></ol>
+                <h3 class="section-label">Order progress</h3><ol class="timeline tracking-timeline" id="detail-timeline" aria-label="Order progress"></ol>
+                <section class="customer-panel" id="customer-tracking" hidden aria-live="polite"></section>
                 <section class="customer-panel" id="customer-quotation" hidden aria-live="polite"></section>
                 <section class="customer-panel" id="customer-payment" hidden aria-live="polite"></section>
-                <div class="customer-order-actions"><button type="button" class="btn btn-ghost-dark" id="cancel-order" hidden>Cancel request</button></div>
+                <section class="customer-panel" id="customer-requests" hidden aria-live="polite"></section>
+                <div class="customer-order-actions"><button type="button" class="btn btn-ghost-dark" id="cancel-order" hidden>Cancel request</button><button type="button" class="btn btn-ghost-dark" id="download-receipt" hidden>Download receipt</button></div>
                 <details class="detail-toggle"><summary class="detail-toggle-summary"><span class="section-label">Request details</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary><div class="detail-toggle-body"><dl class="summary" id="detail-summary"></dl></div></details>
-                <section class="customer-draft" id="customer-draft" hidden><h3>Your draft is ready to review</h3><p>Printing will not begin until you approve the draft.</p><a id="draft-download" class="btn btn-ghost-dark" href="#">Open draft layout</a><div class="draft-actions"><button type="button" class="btn btn-dark" id="approve-draft">Approve draft</button><button type="button" class="btn btn-ghost-dark" id="request-draft-changes">Request changes</button></div></section>
+                <section class="customer-draft" id="customer-draft" hidden><h3>Your draft is ready to review</h3><p>Printing will not begin until you approve the draft.</p><p class="field-hint" id="draft-remarks" hidden></p><a id="draft-download" class="btn btn-ghost-dark" href="#">Open draft layout</a><label class="draft-revision" for="draft-revision-note">Revision instructions (needed to request changes)<textarea id="draft-revision-note" class="input" rows="3" maxlength="1000" placeholder="e.g. Make the name bigger and change the date to December 12"></textarea></label><div class="draft-actions"><button type="button" class="btn btn-dark" id="approve-draft">Approve draft</button><button type="button" class="btn btn-ghost-dark" id="request-draft-changes">Request revision</button></div></section>
+                <details class="detail-toggle" id="draft-history-toggle" hidden><summary class="detail-toggle-summary"><span class="section-label">Draft history</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary><div class="detail-toggle-body"><ol class="payment-submissions" id="draft-history"></ol></div></details>
                 <details class="detail-toggle"><summary class="detail-toggle-summary"><span class="section-label">Activity</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary><div class="detail-toggle-body"><ul class="activity" id="detail-history"></ul></div></details>
             </article>
         </div>
@@ -150,6 +154,7 @@
     <script src="/assets/account.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/portal.js"></script>
+    <script src="/assets/portal-tracking.js"></script>
     <script src="/assets/chatbot.js" defer></script>
 </body>
 

@@ -25,6 +25,9 @@
     const LABELS = {
         dashboard: "Dashboard",
         orders: "Order Management",
+        production: "Production Monitoring",
+        fulfillment: "Fulfillment Management",
+        refunds: "Cancellation & Refunds",
         customers: "Customer Management",
         services: "Services & Products",
         payments: "Payments & Transactions",
@@ -37,12 +40,14 @@
         "Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined",
         "Awaiting COD Confirmation", "Awaiting Down Payment", "Confirmed",
         "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing",
-        "In Production", "Ready for Pickup", "Out for Delivery", "Completed", "Rejected", "Cancelled",
+        "In Production", "Quality Checking", "Packaging", "Awaiting Full Payment",
+        "Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed",
+        "Completed", "Rejected", "Cancelled",
     ];
     const STATUS_GROUPS = [
         ["", "All orders", STATUSES],
         ["pending", "Pending", ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"]],
-        ["processing", "Active (confirmed)", ["Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Ready for Pickup", "Out for Delivery"]],
+        ["processing", "Active (confirmed)", ["Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Quality Checking", "Packaging", "Awaiting Full Payment", "Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed"]],
         ["completed", "Completed", ["Completed"]],
         ["cancelled", "Cancelled / rejected", ["Rejected", "Cancelled"]],
     ];
@@ -70,6 +75,7 @@
         "Rejected": "Reject request",
         "Cancelled": "Cancel order",
         "In Production": "Start production",
+        "Quality Checking": "Send to quality checking",
         "Ready for Pickup": "Mark ready for pickup",
         "Out for Delivery": "Mark out for delivery",
         "Completed": "Mark as completed",
@@ -81,10 +87,30 @@
         "Rejected": "The customer sees the request as rejected.",
         "Cancelled": "Stops the order. Orders with recorded payments cannot be cancelled here.",
         "In Production": "The customer approved the draft; printing starts.",
+        "Quality Checking": "Printing is finished; inspect the products before packaging.",
         "Ready for Pickup": "Printing is done and the order can be collected at the shop.",
         "Out for Delivery": "Printing is done and the order is on its way to the customer's delivery address.",
         "Completed": "Records today as the completion date. The order must be fully paid.",
     };
+    const OPS = () => window.PrintShopOperationsAdmin;
+    /** Shared builders passed to operations-admin.js (Production, Fulfillment, Cancellation & Refunds, settings). */
+    function opsContext() {
+        return {
+            panel, statCard, loadingBlock, errorBlock, field, searchInput, selectInput, dateInput, detailList, cellPair,
+            openOrder, submitAction, refreshBadges, showOrders,
+            setRefresh: (fn) => { refreshActiveView = fn; },
+        };
+    }
+
+    function renderOperations(view) {
+        const body = viewBody();
+        if (!body) return;
+        if (!OPS()) {
+            body.replaceChildren(errorBlock("The operations script did not load. Reload the page."));
+            return;
+        }
+        OPS().render(view, body, opsContext());
+    }
     // Read state used to be kept in this browser; it is now stored on the server (moved once on load).
     const LEGACY_NOTIFICATION_SEEN_KEY = "printshop.admin.notificationsSeenAt";
     const COMPACT_KEY = "printshop.admin.compactTables";
@@ -94,9 +120,10 @@
     let activeView = document.body.dataset.adminView || "dashboard";
     let adminEmail = "";
     let services = [];
+    let products = []; // every printing service (catalog product) with its category, for the order filter
 
     const filters = {
-        orders: { search: "", status: "", service: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" },
+        orders: { search: "", status: "", service: "", product: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" },
         customers: { view: "all", search: "", activity: "", payment_status: "", registered_from: "", registered_to: "", ordered_from: "", ordered_to: "" },
         payments: { search: "", verification: "", method: "", service: "", payment_status: "", payment_option: "", date_from: "", date_to: "" },
         reports: {
@@ -218,8 +245,27 @@
 
     // Former admin pages now part of another view (Package and Pricing Management → Services & Products).
     const VIEW_ALIASES = { packages: "services", pricing: "services", designs: "services" };
-    // Services & Products tabs that have their own sidebar entry (Package Management, Design Management).
-    const CATALOG_SIDEBAR_TABS = { packages: "Package Management", designs: "Design Management" };
+    /**
+     * Views whose tabs have their own sidebar entry (the Catalog Management and AI Chatbot groups).
+     * A sidebar link names its tab with data-catalog-target / data-chatbot-target; the open tab is kept in
+     * the URL hash (#packages), so a reload or a shared link reopens it. `sidebar` maps a tab without its own
+     * entry to the entry that is highlighted for it.
+     */
+    const SECTION_TABS = {
+        services: {
+            attribute: "catalogTarget",
+            fallback: "products",
+            tabs: ["products", "categories", "packages", "designs", "sizes"],
+            open: (tab) => window.PrintShopCatalogAdmin?.openTab(tab),
+        },
+        chatbot: {
+            attribute: "chatbotTarget",
+            fallback: "overview",
+            tabs: ["overview", "conversations", "unanswered", "inquiries", "faqs", "settings"],
+            sidebar: { unanswered: "conversations" },
+            open: (tab) => window.PrintShopChatbotAdmin?.openTab(tab),
+        },
+    };
 
     function viewFromLocation() {
         const segment = window.location.pathname.split("/").filter(Boolean).pop();
@@ -227,19 +273,43 @@
         return LABELS[route] ? route : "dashboard";
     }
 
+    /** The open tab of a SECTION_TABS view, read from the URL hash ("" for other views). */
+    function sectionFromLocation(view = activeView) {
+        const config = SECTION_TABS[view];
+        if (!config) return "";
+        const tab = window.location.hash.slice(1);
+        return config.tabs.includes(tab) ? tab : config.fallback;
+    }
+
+    function linkSection(link) {
+        const config = SECTION_TABS[link.dataset.view];
+        return config ? link.dataset[config.attribute] || "" : "";
+    }
+
+    function closeSidebar() {
+        const sidebar = document.querySelector("#admin-sidebar");
+        if (!sidebar?.classList.contains("open")) return;
+        sidebar.classList.remove("open");
+        const button = document.querySelector('[data-action="menu"]');
+        button?.setAttribute("aria-expanded", "false");
+        button?.setAttribute("aria-label", "Open navigation");
+    }
+
     /**
-     * Open an admin view. `catalogTab` ("products" or "packages") opens that tab of Services & Products:
-     * the sidebar's "Package Management" entry is the Packages tab of that page, not a separate page.
+     * Open an admin view. `tab` opens one tab of a view listed in SECTION_TABS: the sidebar's
+     * "Packages" entry is the Packages tab of Services & Products, not a separate page.
      */
-    async function navigate(view, addHistory = true, { catalogTab = "" } = {}) {
+    async function navigate(view, addHistory = true, { tab = "" } = {}) {
         const nextView = LABELS[view] ? view : "dashboard";
         const path = nextView === "dashboard" ? "/admin/dashboard" : `/admin/${nextView}`;
-        const hash = nextView === "services" && CATALOG_SIDEBAR_TABS[catalogTab] ? `#${catalogTab}` : "";
-        document.querySelector("#admin-sidebar")?.classList.remove("open");
+        const config = SECTION_TABS[nextView];
+        const section = config?.tabs.includes(tab) ? tab : "";
+        const hash = section && section !== config.fallback ? `#${section}` : "";
+        closeSidebar();
         closeNotificationPanel();
         if (nextView === activeView && window.location.pathname === path) {
-            if (nextView === "services" && catalogTab) {
-                window.PrintShopCatalogAdmin?.openTab(catalogTab);
+            if (section) {
+                config.open(section);
                 return;
             }
             renderView();
@@ -257,9 +327,10 @@
             viewRoot.replaceChildren(...Array.from(incomingView.childNodes, (node) => document.importNode(node, true)));
             document.title = pageDocument.title;
             activeView = nextView;
+            document.body.dataset.adminView = nextView;
             if (addHistory) window.history.pushState({ view: nextView }, "", path + hash);
+            // The view opens the tab named in the URL hash (set just above).
             renderView();
-            if (nextView === "services" && catalogTab) window.PrintShopCatalogAdmin?.openTab(catalogTab);
             viewRoot.focus({ preventScroll: true });
             window.scrollTo({ top: 0 });
         } catch (error) {
@@ -267,27 +338,77 @@
         }
     }
 
-    /** Highlight the sidebar entry of the open view (and, on Services & Products, of the open tab). */
-    function markActiveNavigation(catalogTab = CATALOG_SIDEBAR_TABS[window.location.hash.slice(1)] ? window.location.hash.slice(1) : "products") {
+    // ---------------------------------------------------------------- sidebar groups
+
+    const navGroups = () => document.querySelectorAll(".sidebar-nav .nav-group");
+
+    function setNavGroupOpen(group, open) {
+        group.querySelector(".nav-group-toggle")?.setAttribute("aria-expanded", String(open));
+        const submenu = group.querySelector(".nav-submenu");
+        if (submenu) submenu.hidden = !open;
+    }
+
+    /** Groups open one at a time (accordion), so the sidebar stays short. */
+    function toggleNavGroup(button) {
+        const group = button.closest(".nav-group");
+        const open = button.getAttribute("aria-expanded") !== "true";
+        navGroups().forEach((other) => setNavGroupOpen(other, other === group ? open : false));
+    }
+
+    let lastActiveGroup;
+
+    /**
+     * Highlight the sidebar entry of the open view (and, on views with tabs in the sidebar, of the open
+     * tab), mark its group, and show "Admin / Group / Page" in the top bar.
+     */
+    function markActiveNavigation() {
+        const config = SECTION_TABS[activeView];
+        const current = sectionFromLocation();
+        const section = config?.sidebar?.[current] || current;
+        let activeLink = null;
         document.querySelectorAll("[data-view]").forEach((link) => {
-            const target = link.dataset.catalogTarget;
-            const active = link.dataset.view === activeView && (!target || activeView !== "services" || target === catalogTab);
+            const target = linkSection(link);
+            const active = link.dataset.view === activeView && (!target || target === section);
             link.classList.toggle("active", active);
             if (link.matches(".sidebar-nav a")) {
-                if (active) link.setAttribute("aria-current", "page");
-                else link.removeAttribute("aria-current");
+                if (active) {
+                    link.setAttribute("aria-current", "page");
+                    activeLink = activeLink || link;
+                } else {
+                    link.removeAttribute("aria-current");
+                }
             }
         });
+        const activeGroup = activeLink?.closest(".nav-group") || null;
+        navGroups().forEach((group) => group.classList.toggle("has-active", group === activeGroup));
+        // Open the group of the page just opened (and close the others); a refresh of the same page keeps
+        // whatever the administrator expanded.
+        if (activeGroup !== lastActiveGroup) {
+            navGroups().forEach((group) => setNavGroupOpen(group, group === activeGroup));
+            lastActiveGroup = activeGroup;
+        }
+        // Notifications has no sidebar entry: it is opened from the bell, which shows as current instead.
+        document.querySelector('[data-action="toggle-notifications"]')?.classList.toggle("is-active", activeView === "notifications");
+        const groupLabel = activeGroup?.querySelector(".nav-group-toggle .nav-label")?.textContent || "";
+        const groupCrumb = document.querySelector("#current-group");
+        if (groupCrumb) {
+            groupCrumb.textContent = groupLabel;
+            groupCrumb.hidden = !groupLabel;
+            if (groupCrumb.nextElementSibling) groupCrumb.nextElementSibling.hidden = !groupLabel;
+        }
+        document.querySelector("#current-section").textContent = activeLink?.querySelector(".nav-label")?.textContent || LABELS[activeView];
     }
 
     function renderView() {
-        document.querySelector("#current-section").textContent = LABELS[activeView];
         window.PrintIcons?.hydrate(viewRoot);
         markActiveNavigation();
         refreshActiveView = () => {};
         const renderers = {
             dashboard: renderDashboard,
             orders: renderOrders,
+            production: () => renderOperations("production"),
+            fulfillment: () => renderOperations("fulfillment"),
+            refunds: () => renderOperations("refunds"),
             customers: renderCustomers,
             services: () => window.PrintShopCatalogAdmin?.renderServices(),
             payments: renderPayments,
@@ -334,6 +455,20 @@
         badge.setAttribute("aria-label", value ? title : "");
     }
 
+    /** A collapsed sidebar group shows the total of its pages' badges (hidden while the group is open). */
+    function updateGroupBadges() {
+        navGroups().forEach((group) => {
+            const badge = group.querySelector("[data-group-count]");
+            if (!badge) return;
+            const total = [...group.querySelectorAll(".nav-submenu .nav-count")].reduce((sum, item) => sum + (Number(item.textContent) || 0), 0);
+            const label = group.querySelector(".nav-group-toggle .nav-label")?.textContent || "";
+            const text = total ? String(total) : "";
+            badge.textContent = text;
+            badge.title = total ? `${total} item${total === 1 ? "" : "s"} to act on in ${label} (expand to see each page)` : "";
+            badge.setAttribute("aria-label", badge.title);
+        });
+    }
+
     /**
      * Sidebar badges and the header bell: requests to review, payments to collect, new customers, unread
      * notifications (read state is stored on the server). Polled every 30 seconds and after every action;
@@ -348,9 +483,12 @@
             setBadge("#payment-count", counts.payments, `${plural(counts.payments_to_verify, "payment")} to verify, ${plural(counts.collect_before_release, "order")} ready for release with a balance`);
             setBadge("#customer-count", counts.customers, `${plural(counts.customers, "new customer")} in the last 7 days`);
             setBadge("#chatbot-count", counts.chatbot_inquiries || 0, `${plural(counts.chatbot_inquiries || 0, "chat inquiry")} to follow up`);
+            setBadge("#production-count", counts.production || 0, `${plural(counts.production || 0, "order")} printing, in quality checking, or packaging`);
+            setBadge("#fulfillment-count", counts.fulfillment || 0, `${plural(counts.ready_for_pickup || 0, "order")} ready for pickup, ${plural(counts.ready_for_dispatch || 0, "order")} ready for dispatch, ${plural(counts.delivery_failed || 0, "failed delivery", )}, ${plural(counts.open_delivery_issues || 0, "open delivery issue")}`);
+            setBadge("#refund-count", counts.refunds || 0, `${plural(counts.pending_cancellations || 0, "cancellation request")} and ${plural(counts.pending_refunds || 0, "open refund")}`);
+            updateGroupBadges();
             const unread = counts.unread_notifications || 0;
             setBadge("#notification-count", unread, plural(unread, "unread notification"));
-            document.querySelectorAll(".notification-dot").forEach((dot) => { dot.hidden = !unread; });
             document.querySelectorAll('[data-action="toggle-notifications"]').forEach((button) => {
                 button.setAttribute("aria-label", unread ? `Notifications (${plural(unread, "unread notification")})` : "Notifications");
             });
@@ -497,12 +635,26 @@
             statCard({ label: "All orders", value: number(data.total_orders), foot: `${plural(data.cancelled_orders, "cancelled or rejected order")}`, icon: "▤", onClick: () => showOrders("") }),
         );
 
+        const sc = data.status_counts || {};
+        const goTo = (view, apply) => { apply?.(); navigate(view); };
+        const operationCards = h("section", { className: "stats-grid stats-grid-4 dashboard-stages op-stats", "aria-label": "Production, fulfillment, cancellations and refunds" },
+            statCard({ label: "Confirmed orders", value: number(sc["Confirmed"] || 0), foot: "Down payment verified · start the draft", icon: "✔", onClick: () => showOrders("Confirmed") }),
+            statCard({ label: "Quality checking", value: number(sc["Quality Checking"] || 0), foot: "Printed · inspect before packing", icon: "⌕", onClick: () => navigate("production") }),
+            statCard({ label: "Packaging", value: number((sc["Packaging"] || 0) + (sc["Awaiting Full Payment"] || 0)), foot: `${number(sc["Awaiting Full Payment"] || 0)} packed and waiting for the balance`, icon: "▦", onClick: () => navigate("production") }),
+            statCard({ label: "Ready for pickup", value: number(sc["Ready for Pickup"] || 0), foot: "Fully paid · waiting for the claimant", icon: "⌂", onClick: () => navigate("fulfillment") }),
+            statCard({ label: "Ready for dispatch", value: number(sc["Ready for Dispatch"] || 0), foot: "Fully paid · hand to J&T Express", icon: "⛟", onClick: () => navigate("fulfillment") }),
+            statCard({ label: "Out for delivery", value: number(sc["Out for Delivery"] || 0), foot: `${number(sc["Delivery Failed"] || 0)} failed deliveries to reschedule`, icon: "➜", tone: sc["Delivery Failed"] ? "highlight" : "", onClick: () => navigate("fulfillment") }),
+            statCard({ label: "Pending cancellations", value: number(data.pending_cancellations || 0), foot: "Paid orders waiting for review", icon: "⨯", tone: data.pending_cancellations ? "highlight" : "", onClick: () => navigate("refunds") }),
+            statCard({ label: "Open refunds", value: number(data.pending_refunds || 0), foot: data.collections ? `Net collections ${money(data.collections.net)}` : "", icon: "↺", tone: data.pending_refunds ? "highlight" : "", onClick: () => navigate("refunds") }),
+        );
+
         const r = data.revenue;
         const revenueFigures = h("div", { className: "revenue-figures" },
             miniStat("Total confirmed revenue", money(r.total), "Completed and fully paid orders, each counted once"),
             miniStat(`Revenue · ${r.month_label}`, money(r.this_month), "Orders completed and fully paid this month"),
             miniStat("Payments received this month", money(r.received_this_month), `${plural(r.payments_this_month, "verified payment")} (cash flow, not revenue)`),
             miniStat("Outstanding balance", money(r.outstanding_balance), "Still to be paid on agreed, active orders"),
+            data.collections ? miniStat("Net collections (all time)", money(data.collections.net), `Verified ${money(data.collections.verified)} − completed refunds ${money(data.collections.refunds_completed)}`) : null,
         );
         const trend = h("div", { className: "chart-box" });
         UI.columnChart(trend, data.revenue_trend.map((bucket) => ({
@@ -535,9 +687,10 @@
 
         body.replaceChildren(
             orderCards,
+            operationCards,
             data.payments_missing_reference ? h("p", { className: "notice-card notice-warning dashboard-notice" },
                 `${plural(data.payments_missing_reference, "older payment")} ${data.payments_missing_reference === 1 ? "has" : "have"} no reference number. `,
-                h("button", { className: "table-link", type: "button", text: "Review in Payments & Transactions →", onclick: () => { filters.payments = { ...filters.payments, verification: "missing" }; navigate("payments"); } })) : null,
+                h("button", { className: "table-link", type: "button", text: "Review in Payments & Verification →", onclick: () => { filters.payments = { ...filters.payments, verification: "missing" }; navigate("payments"); } })) : null,
             panel("Revenue summary", "Revenue counts only completed and fully paid orders", h("div", { className: "revenue-summary" }, revenueFigures, trend),
                 h("button", { className: "button button-small", type: "button", text: "Open Sales & Reports", onclick: () => navigate("reports") })),
             panel("Recent orders", "Newest requests · select a row for details", recentTable,
@@ -564,7 +717,15 @@
         const tabs = h("div", { className: "segmented", role: "tablist", "aria-label": "Order status groups" });
         const countLabel = h("span", { className: "table-secondary" });
         const tableHost = h("div");
-        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
+        const productChoices = () => [["", "All printing services"], ...products.filter((item) => !f.service || item.service_id === f.service).map((item) => [item.id, item.label])];
+        const productSelect = selectInput(productChoices(), f.product, (value) => apply({ product: value }));
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => {
+            // A printing service belongs to one category: clear it when the category changes.
+            const keep = products.some((item) => item.id === f.product && (!value || item.service_id === value));
+            apply({ service: value, product: keep ? f.product : "" });
+            productSelect.replaceChildren(...productChoices().map(([id, text]) => new Option(text, id)));
+            productSelect.value = f.product;
+        });
         const statusSelect = selectInput([["", "All statuses"], ...STATUS_GROUPS.slice(1).map(([value, label]) => [value, `${label} (group)`]), ...WORKFLOW_STAGES, ...STATUSES.map((status) => [status, status])], f.status, (value) => apply({ status: value }));
         const paymentSelect = selectInput([["", "All payment statuses"], ...PAYMENT_STATUSES.map((status) => [status, status])], f.payment_status, (value) => apply({ payment_status: value }));
         const kindSelect = selectInput([["", "All order types"], ["package", "Package"], ["design", "Customized · shop design"], ["customize", "Customized order"]], f.kind, (value) => apply({ kind: value }));
@@ -623,6 +784,11 @@
                     serviceSelect.replaceChildren(...serviceOptions().map(([value, text]) => new Option(text, value)));
                     serviceSelect.value = f.service;
                 }
+                if (Array.isArray(result.products) && productSelect.options.length <= 1) {
+                    products = result.products;
+                    productSelect.replaceChildren(...productChoices().map(([value, text]) => new Option(text, value)));
+                    productSelect.value = f.product;
+                }
                 countLabel.textContent = `${number(result.total)} order${result.total === 1 ? "" : "s"}`;
             },
             emptyMessage: "No customer orders have been submitted yet.",
@@ -632,14 +798,15 @@
         });
         renderTabs();
         const clear = h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
-            Object.assign(f, { search: "", status: "", service: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" });
+            Object.assign(f, { search: "", status: "", service: "", product: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" });
             renderOrders();
         } });
         body.replaceChildren(
             tabs,
             h("div", { className: "filter-bar" },
                 search,
-                field("Service", serviceSelect),
+                field("Category", serviceSelect),
+                field("Printing service", productSelect),
                 field("Status", statusSelect),
                 field("Payment", paymentSelect),
                 field("Payment option", optionSelect),
@@ -674,12 +841,14 @@
 
     function orderKindChip(row) {
         if (row.order_kind === "package") return `📦 ${row.package_name || "Package"}`;
-        if (row.order_kind === "design") return `🎨 ${row.design_name || "Shop design"}`;
+        if (row.order_kind === "design") return `🎨 ${row.design_name || "Shop design"}${row.standard_size ? ` · ${row.standard_size}` : ""}`;
+        if (row.price_basis === "standard_size") return `📐 ${row.standard_size || "Standard size"} · price list`;
         return "✎ Customized";
     }
 
     function orderKindLabel(order) {
-        return { package: "Package", design: "Customized order (shop design)" }[order.order_kind] || "Customized order";
+        const base = { package: "Package", design: "Customized order (shop design)" }[order.order_kind] || "Customized order";
+        return order.price_basis === "standard_size" ? `${base} · standard size from the price list` : base;
     }
 
     function orderImages(order) {
@@ -923,6 +1092,7 @@
             header,
             h("div", { className: "order-top" }, gallery(order), h("div", { className: "order-top-side" }, facts, actionsPanel(order, reload))),
             details,
+            ...(OPS()?.orderSections(order, reload, opsContext()) || []),
             quotationHistoryCard(order),
             payments,
             history,
@@ -939,7 +1109,7 @@
         const basis = order.total_amount === null ? " (from the estimate)" : "";
         return h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: "Payment" }), detailList([
             ["Payment option", h("strong", { text: payment.payment_option_label || "50% Down Payment" })],
-            [order.fixed_price ? "Package total (fixed)" : "Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
+            [order.fixed_price ? `${order.fixed_price_label || "Package total"} (fixed)` : "Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
             order.fixed_price ? null : [order.order_kind === "package" ? "Package estimate" : "Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
             ["Down payment (50%)", cod ? "Not required (COD)" : payment.down_payment_required === null ? "Half of the quotation" : `${money(payment.down_payment_required)}${basis}`],
             ["Down payment status", badge(payment.down_payment_status || "—")],
@@ -958,9 +1128,16 @@
         const fulfillment = order.fulfillment || {};
         return h("section", { className: "fact-card", dataset: { focus: "fulfillment" } }, h("h3", { text: "Delivery or pickup" }), detailList([
             ["Method", h("strong", { text: fulfillment.label || "Store Pickup" })],
-            ...(fulfillment.address || []).map((row) => [row.label, row.value]),
+            ...(fulfillment.address || []).filter((row) => row.value).map((row) => [row.label, row.value]),
+            fulfillment.method === "delivery" ? ["Delivery area", fulfillment.area_label || "—"] : null,
+            fulfillment.method === "delivery" ? ["Delivery fee", money(fulfillment.delivery_fee || 0)] : null,
+            fulfillment.estimate_text ? ["Estimated delivery", fulfillment.estimate_text] : null,
+            fulfillment.pickup_location ? ["Pickup location", `${fulfillment.pickup_location.name} · ${fulfillment.pickup_location.address}`] : null,
+            fulfillment.preferred_pickup_date ? ["Preferred pickup date", date(fulfillment.preferred_pickup_date)] : null,
+            fulfillment.pickup_notes ? ["Pickup notes", fulfillment.pickup_notes] : null,
+            fulfillment.courier ? ["Courier", `${fulfillment.courier}${fulfillment.tracking_number ? ` · ${fulfillment.tracking_number}` : ""}`] : null,
             fulfillment.recorded ? null : ["Note", "Placed before delivery options existed: store pickup."],
-            ["After production", fulfillment.release_status || "Ready for Pickup"],
+            ["After packaging", fulfillment.release_status || "Ready for Pickup"],
         ]));
     }
 
@@ -969,8 +1146,10 @@
         if (!quote) return null;
         const state = { sent: "Waiting for the customer", accepted: "Accepted by the customer", declined: "Declined by the customer" }[quote.status] || quote.status;
         return h("section", { className: "fact-card", dataset: { focus: "quotation" } }, h("h3", { text: `Quotation (revision ${quote.revision})` }), detailList([
-            ["Amount", money(quote.amount)],
-            typeof quote.previous_amount === "number" ? ["Previous amount", money(quote.previous_amount)] : null,
+            ["Printing amount", money(quote.amount)],
+            quote.delivery_fee ? ["Delivery fee", money(quote.delivery_fee)] : null,
+            ["Quoted total", money(quote.total ?? quote.amount)],
+            typeof quote.previous_amount === "number" ? ["Previous total", money(quote.previous_amount)] : null,
             ["50% down payment", money(quote.down_payment)],
             ["Customer response", badge(state)],
             quote.cod_allowed ? ["Cash on Delivery", "Allowed (older quotation)"] : null,
@@ -1106,6 +1285,7 @@
     function pricingCard(pricing, order = null) {
         if (!pricing || !Object.keys(pricing).length) return null;
         const packageOrder = order?.order_kind === "package" || pricing.pricing_mode === "package";
+        const priceListOrder = !packageOrder && pricing.pricing_mode === "size";
         const items = pricing.requires_quote
             ? (pricing.quote_reasons || []).map((reason) => h("li", { text: reason }))
             : [
@@ -1114,8 +1294,17 @@
                 h("li", { className: "strong", text: pricing.estimated_total === null ? "No total calculated." : `Estimated total: ${money(pricing.estimated_total)}` }),
             ];
         return h("section", { className: "fact-card" },
-            h("h3", { text: packageOrder ? "Package price" : "Price estimate from catalog prices" }),
+            h("h3", { text: packageOrder ? "Package price" : priceListOrder && order?.fixed_price ? "Price from the standard size price list" : "Price estimate from catalog prices" }),
+            order?.price_list ? detailList([
+                ["Selected size", order.price_list.size],
+                ["Unit price (as ordered)", typeof order.price_list.unit_price === "number" ? money(order.price_list.unit_price) : "—"],
+                ["Quantity", number(order.price_list.quantity)],
+                ["Subtotal", typeof order.price_list.computed_total === "number" ? money(order.price_list.computed_total) : "—"],
+            ]) : null,
             h("ul", { className: "plain-list" }, ...items),
+            priceListOrder ? h("p", { className: "field-note", text: order?.fixed_price
+                ? "Saved when the order was placed: later price-list changes do not change this order."
+                : "A custom size (or an option that needs a quote) is priced by your quotation below." }) : null,
             packageOrder ? h("p", { className: "field-note", text: order?.fixed_price
                 ? "Calculated from the shop's published package price and add-on charge. This is the order's fixed total."
                 : "Calculated from the shop's published package price and add-on charge. Some options need a quotation, so confirm the price below." }) : null,
@@ -1157,7 +1346,7 @@
             section.append(h("p", { className: "notice-card notice-warning", text: `Record the remaining balance of ${money(summary.balance)} before marking this order as completed. Only fully paid orders count as completed revenue.` }));
         }
         if (actions.cancel_blocked_by_payments && order.allowed_statuses.some((status) => status === "Rejected" || status === "Cancelled")) {
-            section.append(h("p", { className: "field-note", text: "This order has recorded or submitted payments, so it cannot be rejected or cancelled from here." }));
+            section.append(h("p", { className: "field-note", text: "This order has recorded or submitted payments, so it cannot be rejected or cancelled from here. Paid orders are cancelled through a reviewed cancellation request, with any refund recorded separately." }));
         }
         if (order.status === "Awaiting Customer Approval") {
             section.append(h("p", { className: "notice-card", text: "Waiting for the customer to approve the draft in their portal. The administrator cannot approve printing for the customer." }));
@@ -1169,7 +1358,7 @@
             section.append(h("p", { className: "notice-card", text: "The customer declined this quotation, so it cannot be paid. Send a revised quotation or close the request." }));
         }
         if (order.status === "Awaiting Down Payment" && !actions.verify_payments) {
-            section.append(h("p", { className: "notice-card", text: `Waiting for the customer's 50% down payment of ${money(order.payment?.down_payment_required)} through GCash. The order is confirmed automatically when you verify it.` }));
+            section.append(h("p", { className: "notice-card", text: `Waiting for the customer's 50% down payment of ${money(order.payment?.down_payment_required)} through the shop's e-wallet. The order is confirmed automatically when you verify it.` }));
         }
         if (order.status === "Confirmed") {
             section.append(h("p", { className: "notice-card notice-success", text: "The 50% down payment is verified and the order is confirmed. Start draft preparation or send the draft." }));
@@ -1183,8 +1372,9 @@
         if (actions.record_payment) section.append(paymentForm(order, reload));
         if (actions.send_draft) section.append(draftForm(order, reload));
         if (actions.change_payment_option) section.append(paymentOptionForm(order, reload));
+        section.append(...(OPS()?.orderActions(order, reload, opsContext()) || []));
         if (section.childElementCount === 1) {
-            const final = { Completed: "This order is completed and fully paid. No further actions are needed.", Rejected: "This request was rejected.", Cancelled: "This order was cancelled." }[order.status];
+            const final = { Completed: "This order is completed and fully paid. No further actions are needed.", Rejected: "This request was rejected.", Cancelled: "This order was cancelled. Any refund is handled in the Refunds section below." }[order.status];
             section.append(h("p", { className: "field-note", text: final || "No administrator action is available at this stage." }));
         }
         return section;
@@ -1213,7 +1403,8 @@
         const quote = order.quotation;
         const revising = Boolean(quote);
         // The amount is entered by the administrator; the catalog estimate is shown only as a reference.
-        const amount = h("input", { id: "quote-amount", name: "total_amount", type: "number", min: "0.01", step: "0.01", required: true, value: order.total_amount ?? "" });
+        const fee = order.payment?.delivery_fee || 0;
+        const amount = h("input", { id: "quote-amount", name: "total_amount", type: "number", min: "0.01", step: "0.01", required: true, value: order.payment?.subtotal ?? order.total_amount ?? "" });
         const instructions = h("textarea", { id: "quote-instructions", name: "payment_instructions", maxlength: 1000, placeholder: "The shop's approved payment instructions (GCash number, bank details, etc.)" });
         instructions.value = order.payment_instructions || "";
         const note = h("textarea", { id: "quote-note", name: "note", maxlength: 1000, placeholder: "Optional message shown with the quotation (what it includes, lead time, …)" });
@@ -1223,7 +1414,7 @@
             h("h4", { text: revising ? `Revise quotation (currently revision ${quote.revision}, ${quote.status})` : "Send quotation" }),
             h("p", { className: "field-note", text: `${estimate === null ? "No catalog estimate for this request." : `Catalog estimate for reference only: ${money(estimate)}.`} Enter the customization price yourself. The customer is notified, must accept it, and then pays the 50% down payment.${revising ? " The earlier revision is kept in the quotation history and can no longer be accepted." : ""}` }),
             h("div", { className: "form-grid" },
-                h("div", { className: "form-field" }, h("label", { for: "quote-amount", text: "Quoted total (PHP)" }), amount),
+                h("div", { className: "form-field" }, h("label", { for: "quote-amount", text: fee ? `Printing amount (PHP) · + ${money(fee)} delivery fee` : "Quoted total (PHP)" }), amount),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-instructions", text: "Payment instructions" }), instructions),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-note", text: "Message to the customer (optional)" }), note)),
             h("div", { className: "dialog-actions" }, submit),
@@ -1237,9 +1428,11 @@
                 message: `The customer is notified and accepts or declines the quotation in their portal. After accepting, they pay the 50% down payment.${revising ? " Any earlier acceptance is cleared." : ""}`,
                 confirmLabel: revising ? "Send revised quotation" : "Send quotation",
                 details: [
-                    revising ? ["Previous quotation", money(quote.amount)] : null,
-                    ["Quoted total", money(total)],
-                    ["50% down payment (approx.)", money(Math.round(total * 50) / 100)],
+                    revising ? ["Previous quotation", money(quote.total ?? quote.amount)] : null,
+                    fee ? ["Printing amount", money(total)] : null,
+                    fee ? ["Delivery fee (from checkout)", money(fee)] : null,
+                    ["Quoted total", money(total + fee)],
+                    ["50% down payment (approx.)", money(Math.round((total + fee) * 50) / 100)],
                 ].filter(Boolean),
             });
             if (!answer) return;
@@ -1258,16 +1451,16 @@
         instructions.value = order.payment_instructions || "";
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Approve & request down payment" });
         const form = h("form", { className: "action-form" },
-            h("h4", { text: "Approve the package order" }),
-            h("p", { className: "field-note", text: `Fixed package total ${money(order.total_amount)}. The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)} through GCash; the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
+            h("h4", { text: order.price_basis === "standard_size" ? "Approve the standard-size order" : "Approve the package order" }),
+            h("p", { className: "field-note", text: `Fixed ${order.price_basis === "standard_size" ? "price-list" : "package"} total ${money(order.total_amount)}. The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)} through GCash; the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
             h("div", { className: "form-field full" }, h("label", { for: "confirm-instructions", text: "Payment instructions" }), instructions),
             h("div", { className: "dialog-actions" }, submit),
         );
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
-            const answer = await UI.confirm({ title: "Approve this package order?", message: "The customer is notified to pay the 50% down payment and sees the payment instructions in their portal.", confirmLabel: "Approve order" });
+            const answer = await UI.confirm({ title: order.price_basis === "standard_size" ? "Approve this order?" : "Approve this package order?", message: "The customer is notified to pay the 50% down payment and sees the payment instructions in their portal.", confirmLabel: "Approve order" });
             if (!answer) return;
-            await submitAction(submit, order, "confirm", { payment_instructions: instructions.value.trim() }, reload, "Package order approved. Down payment requested.");
+            await submitAction(submit, order, "confirm", { payment_instructions: instructions.value.trim() }, reload, "Order approved. Down payment requested.");
         });
         return form;
     }
@@ -2504,6 +2697,7 @@
         const activity = h("div", { className: "activity-list" }, loadingBlock());
         const backupHost = h("div", { className: "backup-panel" }, loadingBlock("Loading backup status…"));
         body.replaceChildren(
+            ...(OPS()?.settingsPanels(opsContext()) || []),
             panel("Database backup & restore", "Download a copy of the shop's data, or restore one downloaded from this admin panel", backupHost),
             h("section", { className: "split-grid" },
                 panel("Display preferences", "Saved in this browser", h("div", { className: "settings-list" },
@@ -2516,6 +2710,8 @@
                     h("li", { text: "A customer's amount spent uses the revenue rule, so customer totals add up to revenue." }),
                     h("li", { text: "Completion duration = completion date − request date, in calendar days (weekends included), on Philippine time." }),
                     h("li", { text: "An order can be marked Completed only after its full amount is recorded as paid." }),
+                    h("li", { text: "Net collections = verified collections − completed refunds. Pending, rejected, and failed refunds are never deducted." }),
+                    h("li", { text: "Packed orders are released for pickup or dispatch only when fully paid." }),
                 )),
             ),
             panel("Recent administrator activity", "Actions recorded in order histories", activity),
@@ -2707,12 +2903,15 @@
         const viewLink = event.target.closest("[data-view]");
         if (viewLink) {
             event.preventDefault();
-            await navigate(viewLink.dataset.view, true, { catalogTab: viewLink.dataset.catalogTarget || "" });
+            await navigate(viewLink.dataset.view, true, { tab: linkSection(viewLink) });
             return;
         }
         const action = event.target.closest("[data-action]");
         if (!action) return;
         switch (action.dataset.action) {
+            case "toggle-nav-group":
+                toggleNavGroup(action);
+                break;
             case "menu": {
                 const sidebar = document.querySelector("#admin-sidebar");
                 const open = !sidebar.classList.contains("open");
@@ -2755,18 +2954,20 @@
 
     document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
-        document.querySelector("#admin-sidebar")?.classList.remove("open");
+        closeSidebar();
         document.querySelectorAll(".profile-menu[open]").forEach((menu) => menu.removeAttribute("open"));
         if (notificationPanelOpen()) {
             closeNotificationPanel();
             document.querySelector('[data-action="toggle-notifications"]')?.focus();
         }
     });
-    // Services & Products tabs: highlight "Package Management" in the sidebar while the Packages tab is open.
-    document.addEventListener("catalog-tab-change", (event) => {
-        if (activeView !== "services") return;
-        markActiveNavigation(CATALOG_SIDEBAR_TABS[event.detail.tab] ? event.detail.tab : "products");
-        document.querySelector("#current-section").textContent = CATALOG_SIDEBAR_TABS[event.detail.tab] || LABELS.services;
+    // In-page tabs that have a sidebar entry (Catalog Management, AI Chatbot): follow the open tab.
+    // Both scripts update the URL hash before dispatching the event.
+    document.addEventListener("catalog-tab-change", () => {
+        if (activeView === "services") markActiveNavigation();
+    });
+    document.addEventListener("chatbot-tab-change", () => {
+        if (activeView === "chatbot") markActiveNavigation();
     });
     dialog.addEventListener("close", () => {
         // The close event is dispatched asynchronously: if another editor was opened in the meantime, keep it.

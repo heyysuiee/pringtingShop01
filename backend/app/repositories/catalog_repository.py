@@ -15,7 +15,16 @@ import secrets
 import sqlite3
 from typing import Any
 
-from backend.app.database.catalog_seed import CATALOG_SEED, INVITATION_MIN_QUANTITY, REMOVED_PRODUCTS, slug
+from backend.app.database.catalog_seed import (
+    CATALOG_SEED,
+    CUSTOM_SIZE_HELP,
+    INVITATION_MIN_QUANTITY,
+    INVITATION_STANDARD_SIZES,
+    LARGE_FORMAT_UPLOAD_HELP,
+    REMOVED_PRODUCTS,
+    invitation_size_help,
+    slug,
+)
 from backend.app.database.connection import connection_scope
 from backend.app.models.catalog import CatalogCategory, CatalogField, CatalogProduct, FieldOption
 from backend.app.utils.clock import now_iso
@@ -35,7 +44,25 @@ SIZE_DROPDOWN_MARKER = "invitation_size_dropdown_v1"
 # Customized invitations use the customer's own design: the "Design customization" choice ("Shop will design
 # it for me", "Use a sample design as reference") is removed and the design file is asked for directly.
 OWN_DESIGN_MARKER = "invitation_own_design_v1"
-FRESH_MARKERS = (FIELD_MIGRATION_MARKER, CLEANUP_MARKER, SIZE_DROPDOWN_MARKER, OWN_DESIGN_MARKER)
+# Each invitation type gets its own standard size (Birthday and Christening 4 x 6 in, Wedding 5 x 7 in). Only a
+# default the administrator has not changed is updated; option prices and other sizes are kept.
+INVITATION_STANDARD_SIZE_MARKER = "invitation_standard_sizes_v1"
+# Tarpaulin products switch from per-square-foot pricing to the standard size price list; width and height are
+# asked only for a custom size (quoted by the shop).
+TARPAULIN_SIZE_MARKER = "tarpaulin_size_pricing_v1"
+# Adds the T-Shirt Printing service (Heat Press Printing and Sublimation Printing) to existing databases.
+TSHIRT_MARKER = "tshirt_printing_v1"
+TSHIRT_CATEGORY_ID = "tshirt-printing"
+LARGE_FORMAT_CATEGORY_ID = "large-format"
+FRESH_MARKERS = (
+    FIELD_MIGRATION_MARKER,
+    CLEANUP_MARKER,
+    SIZE_DROPDOWN_MARKER,
+    OWN_DESIGN_MARKER,
+    INVITATION_STANDARD_SIZE_MARKER,
+    TARPAULIN_SIZE_MARKER,
+    TSHIRT_MARKER,
+)
 
 
 def new_id(prefix: str) -> str:
@@ -144,6 +171,9 @@ def initialize() -> None:
         _cleanup_catalog(connection)
         _migrate_invitation_size_dropdown(connection)
         _migrate_invitation_own_design(connection)
+        _migrate_invitation_standard_sizes(connection)
+        _migrate_tarpaulin_size_pricing(connection)
+        _add_tshirt_printing(connection)
 
 
 def _ensure_columns(connection: sqlite3.Connection) -> None:
@@ -280,6 +310,90 @@ def _migrate_invitation_own_design(connection: sqlite3.Connection) -> None:
                 ("Upload your own design (print-ready file or artwork). JPG, PNG, or PDF · up to 5 MB each.", now_iso(), product["id"]),
             )
     connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (OWN_DESIGN_MARKER, now_iso()))
+
+
+def _migrate_invitation_standard_sizes(connection: sqlite3.Connection) -> None:
+    """Preselect each invitation type's standard size once (keeps sizes, prices, and admin-chosen defaults)."""
+    if _marker_set(connection, INVITATION_STANDARD_SIZE_MARKER):
+        return
+    seeded_defaults = {"", slug("5 x 7 in")}
+    old_help = "5 x 7 in is our standard size. A custom size is quoted by the shop."
+    for product_id, label in INVITATION_STANDARD_SIZES.items():
+        row = connection.execute(
+            "SELECT id, default_value, help_text FROM catalog_fields WHERE product_id = ? AND field_key = 'invitation_size'",
+            (product_id,),
+        ).fetchone()
+        if row is None:
+            continue
+        value = slug(label)
+        option = connection.execute(
+            "SELECT id FROM catalog_field_options WHERE field_id = ? AND value = ?", (row["id"], value)
+        ).fetchone()
+        if option is None:
+            _insert_option(connection, row["id"], {"label": label, "value": value, "sort_order": 0})
+        else:
+            # A hidden standard size would leave the form without its default.
+            connection.execute("UPDATE catalog_field_options SET active = 1 WHERE id = ?", (option["id"],))
+        kind = product_id.split("-", 1)[0]
+        default = value if row["default_value"] in seeded_defaults else row["default_value"]
+        help_text = invitation_size_help(label, kind) if row["help_text"] in ("", old_help) else row["help_text"]
+        connection.execute(
+            "UPDATE catalog_fields SET default_value = ?, help_text = ?, updated_at = ? WHERE id = ?",
+            (default, help_text, now_iso(), row["id"]),
+        )
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (INVITATION_STANDARD_SIZE_MARKER, now_iso()))
+
+
+def _migrate_tarpaulin_size_pricing(connection: sqlite3.Connection) -> None:
+    """Price Tarpaulin products from the standard size list once; width/height only for a custom size."""
+    if _marker_set(connection, TARPAULIN_SIZE_MARKER):
+        return
+    products = connection.execute(
+        "SELECT id FROM catalog_products WHERE category_id = ? AND pricing_mode = 'area'", (LARGE_FORMAT_CATEGORY_ID,)
+    ).fetchall()
+    now = now_iso()
+    labels = {"width": ("Width", "Custom width"), "height": ("Height", "Custom height")}
+    for product in products:
+        connection.execute("UPDATE catalog_products SET pricing_mode = 'size', updated_at = ? WHERE id = ?", (now, product["id"]))
+        for key in ("width", "height", "measurement_unit"):
+            row = connection.execute(
+                "SELECT id, label, help_text, depends_on FROM catalog_fields WHERE product_id = ? AND field_key = ?",
+                (product["id"], key),
+            ).fetchone()
+            if row is None or row["depends_on"]:
+                continue
+            label = row["label"]
+            if key in labels and label == labels[key][0]:
+                label = labels[key][1]
+            help_text = row["help_text"] or (CUSTOM_SIZE_HELP if key == "width" else "")
+            connection.execute(
+                "UPDATE catalog_fields SET depends_on = 'standard_size', depends_values = ?, label = ?, help_text = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(["custom"]), label, help_text, now, row["id"]),
+            )
+        connection.execute(
+            "UPDATE catalog_fields SET help_text = ?, updated_at = ? WHERE product_id = ? AND field_key = 'design_upload' AND help_text = ''",
+            (LARGE_FORMAT_UPLOAD_HELP, now, product["id"]),
+        )
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (TARPAULIN_SIZE_MARKER, now))
+
+
+def _add_tshirt_printing(connection: sqlite3.Connection) -> None:
+    """Add the T-Shirt Printing category and its two services to an existing catalog, once."""
+    if _marker_set(connection, TSHIRT_MARKER):
+        return
+    category = next((item for item in CATALOG_SEED if item["id"] == TSHIRT_CATEGORY_ID), None)
+    if category is not None:
+        if connection.execute("SELECT 1 FROM catalog_categories WHERE id = ?", (TSHIRT_CATEGORY_ID,)).fetchone() is None:
+            row = connection.execute("SELECT MAX(sort_order) FROM catalog_categories").fetchone()
+            order = (row[0] + 1) if row and row[0] is not None else 0
+            _insert_category(connection, {**category, "sort_order": order})
+        for index, product in enumerate(category["products"]):
+            if connection.execute("SELECT 1 FROM catalog_products WHERE id = ?", (product["id"],)).fetchone() is not None:
+                continue
+            _insert_product(connection, {**product, "category_id": TSHIRT_CATEGORY_ID, "sort_order": index})
+            for field_index, field in enumerate(product["fields"]):
+                _insert_field(connection, product["id"], {**field, "sort_order": field_index})
+    connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (TSHIRT_MARKER, now_iso()))
 
 
 def _seed(connection: sqlite3.Connection) -> None:
