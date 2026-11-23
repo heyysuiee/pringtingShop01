@@ -953,24 +953,24 @@ class ServicesProductsConsolidationTests(CatalogTestCase):
             self.assertEqual(page.text.count('data-action="logout"'), 1, view)
             sidebar = page.text[page.text.index('<nav class="sidebar-nav"'):]
             sidebar = sidebar[:sidebar.index("</nav>")]
-            # Notifications are reached from the top-bar bell (with its unread badge), not from the sidebar.
-            self.assertNotIn("/admin/notifications", sidebar, view)
+            # Notifications are available from both the sidebar and the top-bar bell (with its unread badge).
+            self.assertIn("/admin/notifications", sidebar, view)
             self.assertIn('data-action="toggle-notifications"', page.text, view)
             self.assertIn('id="notification-count"', page.text, view)
-            # Seven primary entries (four links, three expandable groups), each with one icon; submenu entries have none.
-            self.assertEqual(sidebar.count('class="nav-icon"'), 7, view)
+            # Eight primary entries (five links, three expandable groups), each with one icon; submenu entries have none.
+            self.assertEqual(sidebar.count('class="nav-icon"'), 8, view)
             for label in ("Dashboard", "Order Management", "Catalog Management", "Customer Management", "Sales &amp; Reports",
-                          "AI Chatbot", "Settings"):
+                          "AI Chatbot", "Notifications", "Settings"):
                 self.assertEqual(sidebar.count(f'<span class="nav-label">{label}</span>'), 1, (view, label))
             self.assertEqual(sidebar.count('data-action="toggle-nav-group"'), 3, view)
             # Exactly one sidebar entry is the current page.
-            self.assertEqual(sidebar.count('aria-current="page"'), 0 if view == "notifications" else 1, view)
+            self.assertEqual(sidebar.count('aria-current="page"'), 1, view)
             # Every sidebar link points at a page that is served (the hash only picks a tab of that page).
             links = sorted(set(re.findall(r'href="(/admin/[^"#]*)', sidebar)))
-            self.assertEqual(links, sorted(f"/admin/{name}" for name in self.ADMIN_PAGES if name != "notifications"), view)
+            self.assertEqual(links, sorted(f"/admin/{name}" for name in self.ADMIN_PAGES), view)
             for link in links:
                 self.assertEqual(admin.get(link).status_code, 200, (view, link))
-        # The notification history page is still served (linked from the bell's dropdown).
+        # The notification history page is still served (linked from the sidebar and the bell's dropdown).
         self.assertEqual(admin.get("/admin/notifications").status_code, 200)
 
     def test_package_and_option_price_apis_used_by_services_products_still_work(self) -> None:

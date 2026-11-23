@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Admin workspace — Dark Glass layer
+   Admin workspace — Light Studio layer
    Loaded after dashboard.css, admin-ui.css (or login.css) and theme.css.
    Only presentation lives here; every class name comes from the existing markup and scripts.
    ========================================================================== */
@@ -12,11 +12,10 @@ body.admin-page {
 
 .sidebar {
     border-right: 1px solid var(--line);
-    background:
-        linear-gradient(180deg, rgba(147, 51, 234, 0.08), transparent 32%),
-        rgba(13, 14, 19, 0.82);
+    background: linear-gradient(180deg, var(--purple-soft), transparent 32%),
+        rgba(250, 248, 244, 0.98);
     color: var(--text-primary);
-    box-shadow: 8px 0 40px rgba(0, 0, 0, 0.35);
+    box-shadow: 8px 0 40px rgba(90, 68, 50, 0.1399);
     -webkit-backdrop-filter: blur(20px) saturate(140%);
     backdrop-filter: blur(20px) saturate(140%);
 }
@@ -26,10 +25,10 @@ body.admin-page {
 .profile-trigger .avatar {
     border: 0;
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-family: var(--font-display);
     font-weight: 800;
-    box-shadow: 0 8px 20px rgba(255, 62, 157, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    box-shadow: 0 8px 20px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.125);
 }
 
 .admin-brand strong {
@@ -82,9 +81,9 @@ body.admin-page {
 
 .sidebar-nav a.active,
 .sidebar-bottom > a.active {
-    background: linear-gradient(90deg, rgba(255, 62, 157, 0.18), rgba(147, 51, 234, 0.08));
+    background: linear-gradient(90deg, var(--accent-soft), var(--purple-soft));
     color: var(--text-primary);
-    box-shadow: inset 0 0 0 1px rgba(255, 62, 157, 0.22);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .sidebar-nav a.active .nav-icon,
@@ -95,19 +94,19 @@ body.admin-page {
 .sidebar-nav a.active::before,
 .sidebar-bottom > a.active::before {
     background: var(--grad-brand);
-    box-shadow: 0 0 12px rgba(255, 62, 157, 0.6);
+    box-shadow: 0 0 12px var(--accent-soft);
 }
 
 .nav-count,
 .sidebar-nav .nav-count:not(:empty) {
     border: 0;
     background: var(--grad-brand-strong);
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(255, 62, 157, 0.3);
+    color: var(--color-on-accent);
+    box-shadow: 0 4px 12px var(--accent-soft);
 }
 
 .logout-button:hover {
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .sidebar-user {
@@ -126,8 +125,8 @@ body.admin-page {
 
 .topbar {
     border-bottom: 1px solid var(--line);
-    background: rgba(10, 11, 16, 0.72);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+    background: rgba(250, 248, 244, 0.98);
+    box-shadow: 0 8px 30px rgba(90, 68, 50, 0.1);
     -webkit-backdrop-filter: blur(18px) saturate(140%);
     backdrop-filter: blur(18px) saturate(140%);
 }
@@ -168,7 +167,7 @@ body.admin-page {
 
 .notification-dot {
     background: var(--accent-pink);
-    box-shadow: 0 0 0 3px rgba(10, 11, 16, 0.9), 0 0 10px rgba(255, 62, 157, 0.8);
+    box-shadow: 0 0 0 3px rgba(90, 68, 50, 0.2), 0 0 10px var(--accent-soft);
 }
 
 /* Profile dropdown */
@@ -196,7 +195,7 @@ body.admin-page {
 
 .profile-trigger:hover,
 .profile-menu[open] .profile-trigger {
-    border-color: rgba(255, 62, 157, 0.4);
+    border-color: var(--line-accent);
     background: var(--glass-2);
 }
 
@@ -291,7 +290,7 @@ body.admin-page {
 }
 
 .profile-menu-list button:hover {
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .profile-menu-list .nav-icon {
@@ -323,7 +322,7 @@ body.admin-page {
 .stat-card {
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    background: var(--glass-tint), rgba(255, 255, 255, 0.025);
+    background: var(--glass-tint), rgba(255, 255, 255, 0.18);
     box-shadow: var(--shadow-sm), var(--glass-highlight);
     -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
     backdrop-filter: blur(var(--blur)) saturate(140%);
@@ -345,7 +344,7 @@ body.admin-page {
     padding: 14px 16px;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     box-shadow: none;
 }
 
@@ -357,7 +356,7 @@ body.admin-page {
 
 .stat-card {
     --stat-accent: var(--accent-pink);
-    --stat-soft: rgba(255, 62, 157, 0.14);
+    --stat-soft: var(--accent-soft);
     position: relative;
     overflow: hidden;
     isolation: isolate;
@@ -365,12 +364,12 @@ body.admin-page {
     transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
-.stat-card.stat-accent-pink   { --stat-accent: #FF3E9D; --stat-soft: rgba(255, 62, 157, 0.16); }
-.stat-card.stat-accent-purple { --stat-accent: #A855F7; --stat-soft: rgba(147, 51, 234, 0.2); }
-.stat-card.stat-accent-cyan   { --stat-accent: #00D6FF; --stat-soft: rgba(0, 214, 255, 0.14); }
-.stat-card.stat-accent-green  { --stat-accent: #22C55E; --stat-soft: rgba(34, 197, 94, 0.15); }
-.stat-card.stat-accent-orange { --stat-accent: #F59E0B; --stat-soft: rgba(245, 158, 11, 0.16); }
-.stat-card.stat-accent-red    { --stat-accent: #F87171; --stat-soft: rgba(248, 113, 113, 0.15); }
+.stat-card.stat-accent-pink   { --stat-accent:var(--accent-soft); --stat-soft:var(--accent-soft); }
+.stat-card.stat-accent-purple { --stat-accent:var(--purple-soft); --stat-soft:var(--purple-soft); }
+.stat-card.stat-accent-cyan   { --stat-accent:var(--color-info-soft); --stat-soft:var(--color-info-soft); }
+.stat-card.stat-accent-green  { --stat-accent:var(--color-success-soft); --stat-soft:var(--color-success-soft); }
+.stat-card.stat-accent-orange { --stat-accent:var(--color-warning-soft); --stat-soft:var(--color-warning-soft); }
+.stat-card.stat-accent-red    { --stat-accent:var(--color-danger-soft); --stat-soft:var(--color-danger-soft); }
 
 /* soft accent glow in the corner and a thin accent line on top */
 .stat-card::before {
@@ -435,11 +434,10 @@ body.admin-page {
 }
 
 .stat-card.stat-highlight {
-    border-color: rgba(255, 62, 157, 0.45);
-    background:
-        linear-gradient(145deg, rgba(255, 62, 157, 0.16), rgba(147, 51, 234, 0.12) 60%, rgba(255, 255, 255, 0.03)),
-        rgba(255, 255, 255, 0.03);
-    box-shadow: var(--shadow-sm), 0 0 32px rgba(255, 62, 157, 0.12);
+    border-color: var(--line-accent);
+    background: linear-gradient(145deg, var(--accent-soft), var(--purple-soft) 60%, rgba(255, 255, 255, 0.18)),
+        rgba(255, 255, 255, 0.18);
+    box-shadow: var(--shadow-sm), 0 0 32px var(--accent-soft);
 }
 
 .stat-card.stat-highlight .stat-value {
@@ -454,7 +452,7 @@ body.admin-page {
 .attention-item {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     color: var(--text-secondary);
     transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
@@ -467,8 +465,8 @@ body.admin-page {
 }
 
 .attention-item.has-items {
-    border-color: rgba(245, 158, 11, 0.35);
-    background: linear-gradient(145deg, rgba(245, 158, 11, 0.1), rgba(255, 255, 255, 0.02));
+    border-color: rgba(154, 106, 18, 0.28);
+    background: linear-gradient(145deg, var(--color-warning-soft), rgba(255, 255, 255, 0.18));
     color: var(--text-primary);
 }
 
@@ -499,7 +497,7 @@ body.admin-page {
 .button:hover:not(:disabled),
 .icon-button:hover,
 .mobile-menu-button:hover {
-    border-color: rgba(255, 255, 255, 0.28);
+    border-color: rgba(139, 94, 60, 0.238);
     background: var(--glass-3);
     color: var(--text-primary);
 }
@@ -508,28 +506,28 @@ body.admin-page {
 .button-primary:hover:not(:disabled) {
     border-color: transparent;
     background: var(--grad-brand);
-    color: #fff;
-    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    color: var(--color-on-accent);
+    box-shadow: 0 8px 22px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.11);
 }
 
 .button-primary:hover:not(:disabled) {
     background: var(--grad-brand-hover);
-    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transform: translateY(-1px);
 }
 
 .button-danger,
 .button-danger-strong {
-    border-color: rgba(248, 113, 113, 0.45);
+    border-color: rgba(181, 74, 74, 0.3);
     background: var(--danger-soft);
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .button-danger:hover:not(:disabled),
 .button-danger-strong:hover:not(:disabled) {
-    border-color: rgba(248, 113, 113, 0.7);
-    background: rgba(248, 113, 113, 0.22);
-    color: #fff;
+    border-color: rgba(181, 74, 74, 0.3);
+    background: var(--color-danger-soft);
+    color: var(--color-on-accent);
 }
 
 button:disabled,
@@ -543,7 +541,7 @@ button:disabled,
 }
 
 .table-link:hover {
-    color: #fff;
+    color: var(--color-text);
 }
 
 /* Toggle switch */
@@ -575,7 +573,7 @@ button:disabled,
 .table-footer select {
     border: 1px solid var(--line-strong);
     border-radius: 12px;
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: rgba(255, 255, 255, 0.24);
     color: var(--text-primary);
     transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
 }
@@ -587,9 +585,9 @@ button:disabled,
 .filter-field input:focus,
 .filter-field select:focus,
 .filter-search input:focus {
-    border-color: rgba(255, 62, 157, 0.65);
-    background-color: rgba(255, 255, 255, 0.06);
-    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.14);
+    border-color: var(--line-accent);
+    background-color: rgba(255, 255, 255, 0.36);
+    box-shadow: 0 0 0 4px var(--accent-soft);
     outline: none;
 }
 
@@ -630,7 +628,7 @@ summary:focus-visible {
 .segmented,
 .tab-list {
     border-color: var(--line);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
 }
 
 .segmented-button,
@@ -647,20 +645,20 @@ summary:focus-visible {
 
 .segmented-button.active,
 .tab-button.active {
-    background: linear-gradient(135deg, rgba(255, 62, 157, 0.22), rgba(147, 51, 234, 0.18));
-    color: #fff;
-    box-shadow: inset 0 0 0 1px rgba(255, 62, 157, 0.35);
+    background: linear-gradient(135deg, var(--accent-soft), var(--purple-soft));
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .segmented-button.active .segmented-count {
     background: var(--accent-pink-strong);
-    color: #fff;
+    color: var(--color-on-accent);
 }
 
 .pager-number.active {
     border-color: transparent;
     background: var(--grad-brand-strong);
-    color: #fff;
+    color: var(--color-on-accent);
 }
 
 /* ---------- Tables ---------- */
@@ -669,13 +667,13 @@ summary:focus-visible {
 .data-table-wrap {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(255, 255, 255, 0.18);
     box-shadow: none;
 }
 
 .data-table th {
     border-bottom: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 255, 255, 0.21);
     color: var(--text-muted);
     font-size: 11.5px;
     letter-spacing: 0.08em;
@@ -683,7 +681,7 @@ summary:focus-visible {
 }
 
 .data-table td {
-    border-bottom-color: rgba(255, 255, 255, 0.06);
+    border-bottom-color: rgba(139, 94, 60, 0.1);
     color: var(--text-secondary);
 }
 
@@ -698,7 +696,7 @@ summary:focus-visible {
 
 .data-table tbody tr:hover,
 .clickable-row:hover td {
-    background: rgba(255, 62, 157, 0.05);
+    background: var(--accent-soft);
 }
 
 .clickable-row:focus-visible td:first-child,
@@ -734,7 +732,7 @@ summary:focus-visible {
 .status-badge.in-production::before,
 .status-badge.ready-for-pickup::before,
 .status-badge.out-for-delivery::before {
-    background: #C084FC !important;
+    background: var(--purple-soft) !important;
 }
 
 .status-badge::before {
@@ -744,14 +742,14 @@ summary:focus-visible {
 /* ---------- Charts ---------- */
 
 .hbar-track {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.36);
     border-radius: 999px;
 }
 
 .hbar-fill {
     border-radius: 999px;
-    background: linear-gradient(90deg, #9333EA, #FF3E9D);
-    box-shadow: 0 0 14px rgba(255, 62, 157, 0.3);
+    background: linear-gradient(90deg, var(--purple-soft), var(--accent-soft));
+    box-shadow: 0 0 14px var(--accent-soft);
 }
 
 .hbar-row {
@@ -762,7 +760,7 @@ summary:focus-visible {
 
 .hbar-row:hover,
 button.hbar-row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.24);
     color: var(--text-primary);
 }
 
@@ -772,7 +770,7 @@ button.hbar-row:hover {
 }
 
 .vchart-gridline {
-    border-color: rgba(255, 255, 255, 0.07);
+    border-color: rgba(139, 94, 60, 0.1);
 }
 
 .vchart-gridline span,
@@ -783,13 +781,13 @@ button.hbar-row:hover {
 
 .vchart-bar {
     border-radius: 8px 8px 3px 3px;
-    background: linear-gradient(180deg, #FF3E9D 0%, #9333EA 100%);
-    box-shadow: 0 0 18px rgba(255, 62, 157, 0.28);
+    background: linear-gradient(180deg, var(--accent-soft) 0%, var(--purple-soft) 100%);
+    box-shadow: 0 0 18px var(--accent-soft);
 }
 
 .vchart-column:hover .vchart-bar,
 .vchart-column:focus-visible .vchart-bar {
-    background: linear-gradient(180deg, #FF7AC0 0%, #A855F7 100%);
+    background: linear-gradient(180deg, var(--purple-soft) 0%, var(--purple-soft) 100%);
 }
 
 .chart-tooltip {
@@ -811,8 +809,7 @@ button.hbar-row:hover {
 .admin-dialog {
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-xl);
-    background:
-        linear-gradient(160deg, rgba(255, 62, 157, 0.06), transparent 40%),
+    background: linear-gradient(160deg, var(--accent-soft), transparent 40%),
         var(--glass-solid);
     color: var(--text-primary);
     box-shadow: var(--shadow-lg), var(--glass-highlight);
@@ -821,7 +818,7 @@ button.hbar-row:hover {
 }
 
 .admin-dialog::backdrop {
-    background: rgba(5, 6, 9, 0.66);
+    background: rgba(41, 39, 37, 0.32);
     -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
 }
@@ -851,7 +848,7 @@ button.hbar-row:hover {
 .notice-card {
     border-color: var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 255, 255, 0.21);
 }
 
 .service-card:hover {
@@ -860,17 +857,17 @@ button.hbar-row:hover {
 }
 
 .service-card.active {
-    border-color: rgba(255, 62, 157, 0.5);
+    border-color: var(--line-accent);
     background: var(--accent-soft);
 }
 
 .notice-warning {
-    border-color: rgba(245, 158, 11, 0.4);
+    border-color: rgba(154, 106, 18, 0.28);
     background: var(--warning-soft);
 }
 
 .notice-success {
-    border-color: rgba(34, 197, 94, 0.4);
+    border-color: rgba(63, 125, 88, 0.28);
     background: var(--success-soft);
 }
 
@@ -892,25 +889,25 @@ button.hbar-row:hover {
 }
 
 .notice-error {
-    border-color: rgba(248, 113, 113, 0.4);
+    border-color: rgba(181, 74, 74, 0.3);
     background: var(--danger-soft);
 }
 
 .timeline li::before {
     background: var(--grad-brand);
-    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.15);
+    box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .gallery-main,
 .gallery-thumb {
     border-color: var(--line);
-    background: rgba(0, 0, 0, 0.35);
+    background: rgba(41, 39, 37, 0.1575);
 }
 
 .viewer-thumb.active,
 .gallery-thumb.active {
     border-color: var(--accent-pink);
-    box-shadow: 0 0 0 2px rgba(255, 62, 157, 0.3);
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .toast {
@@ -954,13 +951,13 @@ button.hbar-row:hover {
 .notification-item.unread {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
 .notification-item.unread {
-    border-color: rgba(255, 62, 157, 0.3);
-    background: linear-gradient(90deg, rgba(255, 62, 157, 0.08), rgba(255, 255, 255, 0.02));
+    border-color: var(--line-accent);
+    background: linear-gradient(90deg, var(--accent-soft), rgba(255, 255, 255, 0.18));
 }
 
 button.notification-item:hover {
@@ -978,7 +975,7 @@ button.notification-item:hover {
 }
 
 .spinner {
-    border-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(139, 94, 60, 0.1275);
     border-top-color: var(--accent-pink);
 }
 
@@ -993,7 +990,7 @@ button.notification-item:hover {
 .catalog-field-item,
 .catalog-options-table input:not([type="checkbox"]),
 .catalog-options-table select {
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 255, 255, 0.21);
     color: var(--text-primary);
 }
 
@@ -1059,10 +1056,9 @@ button.notification-item:hover {
     position: relative;
     overflow: hidden;
     border-right: 1px solid var(--line);
-    background:
-        radial-gradient(600px 420px at 20% 20%, rgba(255, 62, 157, 0.18), transparent 65%),
-        radial-gradient(520px 420px at 80% 90%, rgba(147, 51, 234, 0.22), transparent 65%),
-        rgba(13, 14, 19, 0.6);
+    background: radial-gradient(600px 420px at 20% 20%, var(--accent-soft), transparent 65%),
+        radial-gradient(520px 420px at 80% 90%, var(--purple-soft), transparent 65%),
+        rgba(250, 248, 244, 0.84);
 }
 
 .brand-story h1 {
@@ -1087,7 +1083,7 @@ button.notification-item:hover {
 .login-card {
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-xl);
-    background: var(--glass-tint), rgba(255, 255, 255, 0.03);
+    background: var(--glass-tint), rgba(255, 255, 255, 0.18);
     box-shadow: var(--shadow-lg), var(--glass-highlight);
     -webkit-backdrop-filter: blur(24px) saturate(140%);
     backdrop-filter: blur(24px) saturate(140%);
@@ -1102,13 +1098,13 @@ button.notification-item:hover {
 .login-card input {
     border-color: var(--line-strong);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.24);
     color: var(--text-primary);
 }
 
 .login-card input:focus {
-    border-color: rgba(255, 62, 157, 0.65);
-    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.14);
+    border-color: var(--line-accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
     outline: none;
 }
 
@@ -1116,14 +1112,14 @@ button.notification-item:hover {
     border: 0;
     border-radius: 12px;
     background: var(--grad-brand);
-    color: #fff;
-    box-shadow: 0 10px 26px rgba(255, 62, 157, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    color: var(--color-on-accent);
+    box-shadow: 0 10px 26px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
 .sign-in-button:hover:not(:disabled) {
     background: var(--grad-brand-hover);
-    box-shadow: 0 14px 34px rgba(255, 62, 157, 0.38);
+    box-shadow: 0 14px 34px var(--accent-soft);
     transform: translateY(-1px);
 }
 
@@ -1136,9 +1132,9 @@ button.notification-item:hover {
 }
 
 .login-error {
-    border-color: rgba(248, 113, 113, 0.45);
+    border-color: rgba(181, 74, 74, 0.3);
     background: var(--danger-soft);
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 /* Package inclusion editor */
@@ -1230,7 +1226,7 @@ button.notification-item:hover {
 .report-details {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.025);
+    background: rgba(255, 255, 255, 0.18);
 }
 
 .dashboard-secondary > summary,
@@ -1309,14 +1305,14 @@ button.notification-item:hover {
 }
 
 .order-section-chip:hover {
-    border-color: rgba(255, 62, 157, 0.4);
+    border-color: var(--line-accent);
     color: var(--text-primary);
 }
 
 .order-section-chip.active {
-    border-color: rgba(255, 62, 157, 0.5);
+    border-color: var(--line-accent);
     background: var(--accent-soft);
-    color: #fff;
+    color: var(--color-text);
 }
 
 .order-modal [data-order-section] {
@@ -1358,8 +1354,8 @@ button.notification-item:hover {
 }
 
 .required-action.action-verify {
-    background: rgba(245, 158, 11, 0.16);
-    color: #FCD34D;
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
 }
 
 .required-action.action-action {

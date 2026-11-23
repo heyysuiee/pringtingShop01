@@ -15,7 +15,8 @@ from backend.app.utils.order_number import base_reference, candidate_reference
 
 UPLOAD_DIR = settings.upload_dir
 # JSON columns added for production monitoring, draft history, cancellations, and refunds, with their empty values.
-NEW_JSON_COLUMNS = {"production": "{}", "drafts": "[]", "cancellation_requests": "[]", "refunds": "[]"}
+# work_approval also holds the finished-work preview, the customer's approval timestamp, and revision requests.
+NEW_JSON_COLUMNS = {"production": "{}", "drafts": "[]", "cancellation_requests": "[]", "refunds": "[]", "work_approval": "{}"}
 
 
 def initialize() -> None:
@@ -63,6 +64,12 @@ def initialize() -> None:
         if "completed_at" not in columns:
             # When the administrator marked the order Completed. Used for completion-duration reports.
             connection.execute("ALTER TABLE orders ADD COLUMN completed_at TEXT")
+        if "required_down_payment" not in columns:
+            # Administrator-set down payment. NULL means the original 50% rule is used (older orders).
+            connection.execute("ALTER TABLE orders ADD COLUMN required_down_payment REAL")
+        if "payment_status" not in columns:
+            # Payment progress is tracked separately from the order/work status.
+            connection.execute("ALTER TABLE orders ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'Unpaid'")
         if "payment_option" not in columns:
             # How the customer pays: "down_payment" (50% after the quotation, balance before release)
             # or "cod" (cash on delivery: no down payment, the full amount is paid on delivery/pickup).
@@ -117,6 +124,8 @@ def decode_row(row: sqlite3.Row | None) -> OrderRecord | None:
     for key in ("customer", "product", "customization", "event_details", "payments", "attachments", "history"):
         result[key] = json.loads(result[key])
     result["pricing"] = json.loads(result.get("pricing") or "{}")
+    result["required_down_payment"] = result.get("required_down_payment")
+    result["payment_status"] = result.get("payment_status") or "Unpaid"
     result["fulfillment"] = json.loads(result.get("fulfillment") or "{}")
     result["quotation"] = json.loads(result.get("quotation") or "{}")
     result["payment_submissions"] = json.loads(result.get("payment_submissions") or "[]")
@@ -189,8 +198,9 @@ def create_order(order: dict[str, Any], idempotency_key: str, audit: dict[str, A
                 event_details, has_event, acknowledged, status, total_amount,
                 attachments, history, customer_id, idempotency_key, pricing, payment_option,
                 fulfillment, quotation, payment_submissions, quotation_history,
-                production, drafts, cancellation_requests, refunds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                production, drafts, cancellation_requests, refunds, work_approval,
+                required_down_payment, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reference,
@@ -220,6 +230,9 @@ def create_order(order: dict[str, Any], idempotency_key: str, audit: dict[str, A
                 json.dumps(order.get("drafts") or []),
                 json.dumps(order.get("cancellation_requests") or []),
                 json.dumps(order.get("refunds") or []),
+                json.dumps(order.get("work_approval") or {}),
+                order.get("required_down_payment"),
+                order.get("payment_status") or "Unpaid",
             ),
         )
         if audit:
@@ -287,6 +300,12 @@ def _apply_updates(order: OrderRecord, updates: OrderUpdates) -> None:
         order["cancellation_requests"] = updates["cancellation_requests"]
     if "refunds" in updates:
         order["refunds"] = updates["refunds"]
+    if "work_approval" in updates:
+        order["work_approval"] = updates["work_approval"]
+    if "required_down_payment" in updates:
+        order["required_down_payment"] = updates["required_down_payment"]
+    if "payment_status" in updates:
+        order["payment_status"] = updates["payment_status"]
 
 
 def update_order(
@@ -294,7 +313,7 @@ def update_order(
     updates: OrderUpdates,
     event: str,
     expected_version: int | None = None,
-    audit: dict[str, Any] | None = None,
+    audit: dict[str, Any] | list[dict[str, Any]] | None = None,
     notifications: list[dict[str, Any]] | None = None,
     claim_ops: list[dict[str, Any]] | None = None,
 ) -> OrderRecord | None:
@@ -304,8 +323,10 @@ def update_order(
     changed in the meantime, so a double-submitted or out-of-date action is never applied twice.
 
     ``audit`` ({"action", "actor_type", "actor_id", "details"}) is written to the audit log and each of
-    ``notifications`` to the customer's notifications, in the same transaction. A notification whose
-    ``dedupe_key`` was already used is skipped; each dict gets ``"created": True | False``.
+    ``notifications`` to the customer's notifications, in the same transaction. A list of audit entries
+    writes them all in that same transaction, so an OCR correction and the payment it belongs to cannot
+    be recorded separately. A notification whose ``dedupe_key`` was already used is skipped; each dict
+    gets ``"created": True | False``.
 
     ``claim_ops`` reserves/releases payment, refund and tracking references in the same transaction,
     so a concurrent request can never save the same reference on two orders.
@@ -315,6 +336,10 @@ def update_order(
         current = decode_row(connection.execute("SELECT * FROM orders WHERE reference = ?", (reference,)).fetchone())
         if current is None:
             return None
+        if expected_version is not None and (
+            isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1
+        ):
+            raise StaleOrderError(reference)
         if expected_version is not None and order_version(current) != expected_version:
             raise StaleOrderError(reference)
         if claim_ops:
@@ -351,6 +376,9 @@ def update_order(
             "drafts": json.dumps(current.get("drafts") or []),
             "cancellation_requests": json.dumps(current.get("cancellation_requests") or []),
             "refunds": json.dumps(current.get("refunds") or []),
+            "work_approval": json.dumps(current.get("work_approval") or {}),
+            "required_down_payment": current.get("required_down_payment"),
+            "payment_status": current.get("payment_status") or "Unpaid",
         }
         connection.execute(
             """
@@ -362,20 +390,23 @@ def update_order(
                 payment_option = :payment_option, quotation = :quotation,
                 payment_submissions = :payment_submissions, quotation_history = :quotation_history,
                 fulfillment = :fulfillment, production = :production, drafts = :drafts,
-                cancellation_requests = :cancellation_requests, refunds = :refunds
+                cancellation_requests = :cancellation_requests, refunds = :refunds,
+                work_approval = :work_approval,
+                required_down_payment = :required_down_payment, payment_status = :payment_status
             WHERE reference = :reference
             """,
             {**values, "reference": reference},
         )
-        if audit:
-            details = dict(audit.get("details") or {})
+        audits = audit if isinstance(audit, list) else ([audit] if audit else [])
+        for entry in audits:
+            details = dict(entry.get("details") or {})
             if current["status"] != previous_status:
                 details.setdefault("status_from", previous_status)
                 details.setdefault("status_to", current["status"])
             if current["total_amount"] != previous_total:
                 details.setdefault("total_from", previous_total)
                 details.setdefault("total_to", current["total_amount"])
-            audit_repository.insert(connection, reference, current["updated_at"], {**audit, "details": details})
+            audit_repository.insert(connection, reference, current["updated_at"], {**entry, "details": details})
         for notification in notifications or []:
             notification["created"] = notification_repository.insert(connection, reference, current["updated_at"], notification)
     return current

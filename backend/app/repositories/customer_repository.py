@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import sqlite3
 import uuid
 from datetime import datetime
@@ -9,7 +10,7 @@ from typing import Any, Callable
 from backend.app.database.connection import connection_scope, exclusive_write
 
 
-CUSTOMER_COLUMNS = "id, email, name, phone, messenger, password_hash, created_at, updated_at, email_verified"
+CUSTOMER_COLUMNS = "id, email, name, phone, messenger, password_hash, created_at, updated_at, email_verified, saved_address"
 
 
 def initialize() -> None:
@@ -51,6 +52,10 @@ def initialize() -> None:
         # unverified and are only marked trusted after a code sent to their address is accepted.
         if "email_verified" not in columns:
             connection.execute("ALTER TABLE customer_accounts ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1")
+        if "saved_address" not in columns:
+            # One reusable delivery address per account. Stored as JSON so the shop's delivery fields
+            # can evolve without another schema migration; orders keep their own immutable snapshot.
+            connection.execute("ALTER TABLE customer_accounts ADD COLUMN saved_address TEXT NOT NULL DEFAULT '{}'")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS customer_email_verifications (
@@ -62,6 +67,19 @@ def initialize() -> None:
             )
             """
         )
+
+
+def _decode_customer(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    result = dict(row)
+    try:
+        result["saved_address"] = json.loads(result.get("saved_address") or "{}")
+    except (TypeError, ValueError):
+        result["saved_address"] = {}
+    if not isinstance(result["saved_address"], dict):
+        result["saved_address"] = {}
+    return result
 
 
 def get_session_version(customer_id: str) -> int | None:
@@ -80,7 +98,7 @@ def get_by_email(email: str) -> dict[str, Any] | None:
             f"SELECT {CUSTOMER_COLUMNS} FROM customer_accounts WHERE email = ?",
             (email.strip().lower(),),
         ).fetchone()
-    return dict(row) if row else None
+    return _decode_customer(row)
 
 
 def get_by_id(customer_id: str) -> dict[str, Any] | None:
@@ -89,7 +107,7 @@ def get_by_id(customer_id: str) -> dict[str, Any] | None:
             f"SELECT {CUSTOMER_COLUMNS} FROM customer_accounts WHERE id = ?",
             (customer_id,),
         ).fetchone()
-    return dict(row) if row else None
+    return _decode_customer(row)
 
 
 def create(customer: dict[str, str | None], now: str) -> dict[str, Any]:
@@ -100,8 +118,8 @@ def create(customer: dict[str, str | None], now: str) -> dict[str, Any]:
             connection.execute(
                 """
                 INSERT INTO customer_accounts
-                    (id, email, name, phone, messenger, password_hash, created_at, updated_at, email_verified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, email, name, phone, messenger, password_hash, created_at, updated_at, email_verified, saved_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
                 """,
                 (
                     customer_id,
@@ -204,6 +222,18 @@ def update(customer_id: str, profile: dict[str, str], now: str) -> dict[str, Any
             WHERE id = ?
             """,
             (profile["name"].strip(), profile["phone"].strip(), profile.get("messenger", "").strip(), now, customer_id),
+        )
+        if cursor.rowcount != 1:
+            return None
+    return get_by_id(customer_id)
+
+
+def update_saved_address(customer_id: str, address: dict[str, Any], now: str) -> dict[str, Any] | None:
+    """Save one reusable delivery address in the existing customer record."""
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            "UPDATE customer_accounts SET saved_address = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(address), now, customer_id),
         )
         if cursor.rowcount != 1:
             return None

@@ -151,16 +151,19 @@ class UiUxValidationTests(unittest.TestCase):
         order = self.place_order(shopper, customer["email"])
         admin = self.admin_client()
         url = f"/api/admin/orders/{order['reference']}/status"
-        missing = admin.post(url, json={"status": "Rejected"})
+        version = admin.get(f"/api/admin/orders/{order['reference']}").json()["version"]
+        missing = admin.post(url, json={"status": "Rejected", "expected_version": version})
         self.assertEqual(missing.status_code, 422, missing.text)
         self.assertIn("reason", missing.json()["detail"].lower())
-        accepted = admin.post(url, json={"status": "Rejected", "note": "Artwork does not meet the print specification."})
+        accepted = admin.post(url, json={
+            "status": "Rejected", "note": "Artwork does not meet the print specification.", "expected_version": version,
+        })
         self.assertEqual(accepted.status_code, 200, accepted.text)
         self.assertEqual(accepted.json()["status"], "Rejected")
 
     def test_action_schemas_bound_text_fields(self) -> None:
         with self.assertRaises(ValidationError) as error:
-            AdminOrderStatus(status="Rejected", note="x" * 501)
+            AdminOrderStatus(status="Rejected", note="x" * 501, expected_version=1)
         self.assertIn("Reason", str(error.exception))
 
         # Schema caps must match the service caps they wrap, or valid text fails before the service runs.
@@ -168,21 +171,21 @@ class UiUxValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             CustomerOrderChanges(note="x" * 1001)
 
-        quotation = AdminQuotation(total_amount=1000, payment_instructions="i" * 1000, note="n" * 1000)
+        quotation = AdminQuotation(total_amount=1000, payment_instructions="i" * 1000, note="n" * 1000, expected_version=1)
         self.assertEqual(len(quotation.payment_instructions), 1000)
         self.assertEqual(len(quotation.note), 1000)
         with self.assertRaises(ValidationError):
-            AdminQuotation(payment_instructions="i" * 1001)
+            AdminQuotation(payment_instructions="i" * 1001, expected_version=1)
         with self.assertRaises(ValidationError):
-            AdminQuotation(note="n" * 1001)
+            AdminQuotation(note="n" * 1001, expected_version=1)
 
-        self.assertEqual(len(AdminConfirmation(payment_instructions="i" * 1000).payment_instructions), 1000)
+        self.assertEqual(len(AdminConfirmation(payment_instructions="i" * 1000, expected_version=1).payment_instructions), 1000)
         with self.assertRaises(ValidationError):
-            AdminConfirmation(payment_instructions="i" * 1001)
+            AdminConfirmation(payment_instructions="i" * 1001, expected_version=1)
 
-        self.assertEqual(len(AdminPaymentReference(note="n" * 300).note), 300)
+        self.assertEqual(len(AdminPaymentReference(note="n" * 300, expected_version=1).note), 300)
         with self.assertRaises(ValidationError):
-            AdminPaymentReference(note="n" * 301)
+            AdminPaymentReference(note="n" * 301, expected_version=1)
 
     def test_oversized_inline_upload_body_is_rejected_before_parsing(self) -> None:
         shopper, customer = self.new_customer()

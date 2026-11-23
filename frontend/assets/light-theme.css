@@ -1,0 +1,1176 @@
+/* ==========================================================================
+   ImPRESSion PrintShop — final Light Studio normalization layer.
+   Loaded last on every customer and admin page. This file only refines the
+   light palette; it does not change layouts, markup, or behaviour.
+   ========================================================================== */
+
+:root {
+    /* Legacy variable names used by the original stylesheets */
+    --panel: rgba(255, 255, 255, 0.94);
+    --cream: var(--color-background);
+    --white: var(--color-surface);
+    --primary-hover: #7A4E30;
+    --success: var(--color-success);
+    --header-background: rgba(255, 255, 255, 0.96);
+    --overlay: rgba(41, 39, 37, 0.30);
+    --viz-1: var(--color-primary);
+    --viz-1-soft: var(--accent-soft);
+    --viz-grid: rgba(139, 94, 60, 0.14);
+    --status-good: var(--color-success);
+    --status-warning: var(--color-warning);
+    --status-critical: var(--color-danger);
+    --status-info: var(--color-info);
+    --status-neutral: var(--color-muted);
+    --ui-surface: var(--color-surface);
+    --ui-subtle: var(--color-surface-alt);
+    --ui-text: var(--color-text);
+    --ui-muted: var(--color-muted);
+    --ui-border: var(--color-border);
+    --chat-bg: var(--color-background);
+}
+
+/* ---------- Canvas ---------- */
+html,
+body,
+body.inner-page,
+body.auth-page,
+body.order-system,
+body.portal-system,
+body.admin-page {
+    background-color: var(--color-background);
+    color: var(--color-text);
+}
+
+* {
+    color-scheme: light;
+}
+
+a {
+    color: var(--color-primary);
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+    color: var(--color-text);
+}
+
+/* ---------- Forms: always white inputs with readable labels ---------- */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]), select, textarea),
+.input,
+.auth-input {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--line-strong);
+}
+
+:where(input, select, textarea)::placeholder {
+    color: #9A948C;
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):focus,
+.input:focus,
+.auth-input:focus {
+    background-color: var(--color-surface);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(139, 94, 60, 0.12);
+}
+
+:where(label, .field-label, .field label, .auth-label) {
+    color: var(--color-text);
+}
+
+select option,
+select optgroup {
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+/* ---------- Tables, cards, dropdowns ---------- */
+:where(table, .data-table, .panel, .card, .stat-card, .modal, .dialog, .dropdown-menu, .menu, .popover) {
+    color: var(--color-text);
+}
+
+:where(th, thead th) {
+    color: var(--color-text);
+    background-color: var(--color-surface-alt);
+}
+
+:where(tbody tr:nth-child(even), .data-table tbody tr:nth-child(even)) {
+    background-color: rgba(245, 240, 232, 0.5);
+}
+
+:where(.dropdown-menu, .menu, .popover, .profile-menu-list, .nav-notify-panel) {
+    background: var(--color-surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-md);
+}
+
+/* ---------- Dialogs, overlays, image stages ---------- */
+dialog,
+dialog[open],
+.theme-confirm,
+.sample-dialog,
+.customer-lightbox,
+.admin-modal,
+.modal-card {
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--line);
+}
+
+dialog::backdrop {
+    background: rgba(41, 39, 37, 0.32);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+}
+
+.lightbox-stage,
+.photo-gallery-main,
+.photo-gallery-thumb,
+.gallery-main,
+.gallery-thumb,
+.viewer-stage {
+    background: var(--color-surface-alt);
+}
+
+.photo-gallery-count,
+.design-card-zoom {
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--color-text);
+}
+
+/* ---------- Buttons and links keep the brand palette ---------- */
+:where(.btn-primary, .button-primary, .auth-button, .hero-btn-primary, .btn-cta-primary,
+       .sign-in-button, .showcase-btn, .mp-home-footer-button, .confirmation .btn-dark,
+       .order-system .btn-dark, .order-system .btn-gold, .portal-system .btn-dark,
+       .stepper-item.active .stepper-num, .timeline-step.is-current .timeline-dot,
+       .confirm-badge, .tab-button.active, .pager-number.active, .order-section-chip.active) {
+    background: var(--grad-brand);
+    color: var(--color-on-accent);
+    border-color: transparent;
+}
+
+:where(.btn-primary:hover, .button-primary:hover, .auth-button:hover, .hero-btn-primary:hover,
+       .btn-cta-primary:hover, .sign-in-button:hover, .showcase-btn:hover,
+       .mp-home-footer-button:hover, .portal-system .btn-dark:hover,
+       .order-system .btn-dark:hover, .order-system .btn-gold:hover) {
+    background: var(--grad-brand-hover);
+    color: var(--color-on-accent);
+}
+
+:where(.btn-secondary, .btn-ghost-dark, .hero-btn-secondary, .btn-cta-secondary,
+       .portfolio-filter, .order-history-card .btn, .portal-system .order-history-card .btn-dark) {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    border: 1px solid var(--line-strong);
+}
+
+:where(.btn-secondary:hover, .btn-ghost-dark:hover, .hero-btn-secondary:hover,
+       .btn-cta-secondary:hover, .portfolio-filter:hover, .order-history-card .btn:hover,
+       .portal-system .order-history-card .btn-dark:hover) {
+    background: var(--color-surface-alt);
+    color: var(--color-primary);
+    border-color: var(--line-accent);
+}
+
+/* ---------- Status, badges, notices and alerts ---------- */
+:where(.notice, .alert, .toast, .status-banner, .status-badge, .order-status-pill, .badge) {
+    color: var(--color-text);
+}
+
+:where(.field-error, .order-error, .auth-field-error, .error-text) {
+    color: var(--color-danger);
+}
+
+:where(.field-error, .order-error) {
+    background: var(--color-danger-soft);
+    border-color: rgba(181, 74, 74, 0.25);
+}
+
+/* ---------- Charts ---------- */
+.hbar-fill,
+.vchart-bar {
+    background: var(--color-primary);
+}
+
+.vchart-gridline {
+    border-top-color: var(--viz-grid);
+}
+
+.chart-tooltip {
+    background: var(--color-surface);
+    color: var(--color-text);
+    border-color: var(--line);
+    box-shadow: var(--shadow-md);
+}
+
+/* ---------- Hero copy sits on the warm canvas ---------- */
+.hero-copy h1,
+.hero-copy h1 span,
+.page-hero h1,
+.page-hero h1 span {
+    color: var(--color-text);
+}
+
+.hero-copy h1 em,
+.page-hero h1 em,
+.order-system .page-hero h1 em,
+.portal-system .page-hero h1 em {
+    background: var(--grad-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+}
+
+/* ---------- Admin shell ---------- */
+body.admin-page .sidebar,
+body.admin-page .topbar {
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+body.admin-page .sidebar-nav a.active,
+body.admin-page .sidebar-bottom > a.active {
+    background: var(--accent-soft);
+    color: var(--color-primary);
+}
+
+body.admin-page .sidebar-nav a.active .nav-icon {
+    color: var(--color-primary);
+}
+
+/* ---------- Theme toggle (injected by /assets/theme-toggle.js) ---------- */
+/* Minimal icon control so the existing buttons and page layouts keep their
+   original look; the full label stays available to assistive technology. */
+.theme-toggle {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--color-surface);
+    color: var(--color-primary);
+    font: inherit;
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
+                color var(--dur) var(--ease);
+}
+
+.theme-toggle:hover {
+    background: var(--color-surface-alt);
+    border-color: var(--line-accent);
+}
+
+.theme-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+.theme-toggle-icon {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: inherit;
+}
+
+.theme-icon {
+    width: 17px;
+    height: 17px;
+}
+
+.theme-icon-sun {
+    display: none;
+}
+
+:root[data-theme="dark"] .theme-icon-sun {
+    display: block;
+}
+
+:root[data-theme="dark"] .theme-icon-moon {
+    display: none;
+}
+
+.theme-toggle-label {
+    display: none;
+}
+
+.login-card > .theme-toggle,
+.auth-card > .theme-toggle {
+    margin-bottom: 18px;
+}
+
+/* ==========================================================================
+   Original Dark Glass palette — opt-in through html[data-theme="dark"].
+   Light remains the default; the dark toggle brings back the original
+   #08090D canvas with the pink / purple / cyan accent system.
+   ========================================================================== */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    /* Core palette — original Dark Glass values */
+    --color-background: #08090D;
+    --color-surface: #101116;
+    --color-surface-alt: #171922;
+    --color-text: #FFFFFF;
+    --color-muted: #D1D5DB;
+    --color-primary: #FF3E9D;
+    --color-secondary: #C084FC;
+    --color-secondary-ink: #FF7AC0;
+    --color-secondary-soft: rgba(255, 62, 157, 0.14);
+    --color-border: rgba(255, 255, 255, 0.09);
+
+    --color-success: #22C55E;
+    --color-success-soft: rgba(34, 197, 94, 0.13);
+    --color-warning: #F59E0B;
+    --color-warning-soft: rgba(245, 158, 11, 0.14);
+    --color-danger: #F87171;
+    --color-danger-soft: rgba(248, 113, 113, 0.13);
+    --color-info: #00D6FF;
+    --color-info-soft: rgba(0, 214, 255, 0.12);
+    --color-on-accent: #FFFFFF;
+
+    /* Surfaces and legacy aliases */
+    --bg-primary: var(--color-background);
+    --bg-secondary: #101116;
+    --bg-elevated: #171922;
+    --glass-1: rgba(255, 255, 255, 0.05);
+    --glass-2: rgba(255, 255, 255, 0.08);
+    --glass-3: rgba(255, 255, 255, 0.12);
+    --glass-hover: rgba(255, 255, 255, 0.1);
+    --glass-solid: rgba(23, 25, 34, 0.9);
+    --glass-tint: linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
+
+    --accent-pink: #FF3E9D;
+    --accent-pink-light: #FF7AC0;
+    --accent-pink-strong: #D81B78;
+    --accent-purple: #9333EA;
+    --accent-purple-light: #C084FC;
+    --accent-cyan: #00D6FF;
+    --accent-green: #22C55E;
+    --accent-orange: #F59E0B;
+    --danger: #F87171;
+
+    --accent-soft: rgba(255, 62, 157, 0.14);
+    --purple-soft: rgba(147, 51, 234, 0.16);
+    --cyan-soft: rgba(0, 214, 255, 0.12);
+    --success-soft: var(--color-success-soft);
+    --warning-soft: var(--color-warning-soft);
+    --danger-soft: var(--color-danger-soft);
+
+    --grad-brand: linear-gradient(135deg, #FF3E9D 0%, #C026D3 52%, #9333EA 100%);
+    --grad-brand-hover: linear-gradient(135deg, #FF5AAD 0%, #D13FE3 52%, #A24BF0 100%);
+    --grad-brand-strong: linear-gradient(135deg, #D81B78 0%, #7E22CE 100%);
+    --grad-text: linear-gradient(110deg, #FF7AC0 0%, #E879F9 45%, #A78BFA 100%);
+
+    --text-primary: #FFFFFF;
+    --text-secondary: #D1D5DB;
+    --text-muted: #9CA3AF;
+    --text-on-accent: #FFFFFF;
+
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --line-accent: rgba(255, 62, 157, 0.5);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+    --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.32);
+    --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.42);
+    --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.55);
+    --shadow-glow: 0 10px 30px rgba(255, 62, 157, 0.28);
+
+    /* Legacy variable names used by the older stylesheets */
+    --bg: var(--color-background);
+    --bg-deep: var(--color-background);
+    --bg-card: var(--color-surface);
+    --bg-card-hover: var(--color-surface-alt);
+    --primary: var(--color-primary);
+    --primary-hover: #FF5AAD;
+    --border-color: var(--color-border);
+    --border: var(--color-border);
+    --border-subtle: var(--color-border);
+    --soft-border: var(--color-border);
+    --page-canvas: var(--color-background);
+    --surface: var(--color-surface);
+    --surface-raised: var(--color-surface-alt);
+    --text-strong: var(--color-text);
+    --text-subtle: var(--color-muted);
+    --border-soft: var(--color-border);
+    --shadow-soft: var(--shadow-sm);
+    --shadow-raised: var(--shadow-md);
+    --panel: rgba(8, 9, 13, 0.72);
+    --cream: var(--color-background);
+    --white: var(--color-surface);
+    --beige: var(--color-surface-alt);
+    --gray: var(--color-surface-alt);
+    --header-background: rgba(8, 9, 13, 0.78);
+    --overlay: rgba(8, 9, 13, 0.72);
+    --viz-1: var(--color-primary);
+    --viz-1-soft: rgba(255, 62, 157, 0.18);
+    --viz-grid: rgba(255, 255, 255, 0.07);
+    --status-good: var(--color-success);
+    --status-warning: var(--color-warning);
+    --status-critical: var(--color-danger);
+    --status-info: var(--color-info);
+    --status-neutral: var(--color-muted);
+    --ui-surface: var(--color-surface);
+    --ui-subtle: var(--color-surface-alt);
+    --ui-text: var(--color-text);
+    --ui-muted: var(--color-muted);
+    --ui-border: var(--color-border);
+    --chat-bg: var(--color-background);
+    --page: var(--color-background);
+    --panel-raised: var(--color-surface-alt);
+    --admin-canvas: var(--color-background);
+    --admin-surface: var(--color-surface);
+    --admin-border: var(--color-border);
+    --admin-text: var(--color-text);
+    --admin-muted: var(--color-muted);
+    --admin-accent: var(--color-primary);
+    --admin-shadow: var(--shadow-sm);
+    --admin-shadow-raised: var(--shadow-md);
+    --admin-forest: var(--color-surface-alt);
+    --admin-green: var(--color-primary);
+    --admin-gold: var(--color-primary);
+    --ink: var(--color-text);
+    --muted: var(--color-muted);
+    --brown: var(--color-primary);
+    --dark-brown: var(--color-text);
+    --green: var(--color-success);
+    --green-soft: var(--color-success-soft);
+    --gold: var(--color-primary);
+    --pink: var(--color-surface-alt);
+    --success: var(--color-success);
+}
+
+:root[data-theme="dark"] *,
+:root[data-theme="dark"] *::before,
+:root[data-theme="dark"] *::after {
+    color-scheme: dark;
+}
+
+:root[data-theme="dark"] html {
+    background-color: var(--color-background);
+    background-image:
+        radial-gradient(1100px 620px at 8% -8%, rgba(147, 51, 234, 0.16), transparent 62%),
+        radial-gradient(900px 560px at 100% 0%, rgba(255, 62, 157, 0.11), transparent 60%),
+        radial-gradient(900px 700px at 50% 115%, rgba(0, 214, 255, 0.05), transparent 60%);
+}
+
+:root[data-theme="dark"] :where(body, body.inner-page, body.auth-page,
+                                body.order-system, body.portal-system, body.admin-page) {
+    background-color: var(--color-background);
+    color: var(--color-text);
+}
+
+:root[data-theme="dark"] a {
+    color: var(--color-primary);
+}
+
+:root[data-theme="dark"] :where(h1, h2, h3, h4, h5, h6) {
+    color: var(--color-text);
+}
+
+/* Forms stay readable in every nested panel. */
+:root[data-theme="dark"] :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]),
+                                 select, textarea, .input, .auth-input,
+                                 .backup-card input[type="file"],
+                                 .catalog-options-table input:not([type="checkbox"]),
+                                 .catalog-options-table select) {
+    background: var(--color-surface) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line-strong) !important;
+}
+
+:root[data-theme="dark"] :where(input, select, textarea)::placeholder {
+    color: var(--text-muted) !important;
+}
+
+:root[data-theme="dark"] :where(input[readonly], input:disabled, select:disabled, textarea:disabled) {
+    background: var(--color-surface-alt) !important;
+    color: var(--color-muted) !important;
+}
+
+:root[data-theme="dark"] select option,
+:root[data-theme="dark"] select optgroup {
+    background: var(--color-surface) !important;
+    color: var(--color-text) !important;
+}
+
+:root[data-theme="dark"] input[type="file"] {
+    background: var(--color-surface) !important;
+    color: var(--color-muted) !important;
+    border-color: var(--line-strong) !important;
+}
+
+:root[data-theme="dark"] input[type="file"]::file-selector-button {
+    background: var(--color-surface-alt) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line-strong) !important;
+}
+
+:root[data-theme="dark"] :where(input:-webkit-autofill,
+                                 input:-webkit-autofill:hover,
+                                 input:-webkit-autofill:focus) {
+    -webkit-text-fill-color: var(--color-text) !important;
+    -webkit-box-shadow: 0 0 0 1000px #1b1d27 inset !important;
+    caret-color: var(--color-text) !important;
+}
+
+/* Cards, panels, tables, dropdowns, and legacy light surfaces. */
+:root[data-theme="dark"] :where(.panel, .card, .stat-card, .modal, .dialog, .dropdown-menu,
+                                 .menu, .popover, .profile-menu-list, .nav-notify-panel,
+                                 .notification-panel, .notification-item, .settings-row,
+                                 .attention-item, .fact-card, .actions-card, .mini-stat,
+                                 .service-card, .notice-card, .catalog-field-item,
+                                 .dashboard-secondary, .report-details, .table-wrap,
+                                 .data-table-wrap, .backup-card, .viewer-frame,
+                                 .viewer-frame:fullscreen, .viewer-toolbar, .ipc-panel,
+                                 .ipc-root.ipc-open .ipc-panel, .ipc-bubble, .ipc-chip,
+                                 .ipc-composer, .ipc-inquiry, .ipc-button.ipc-ghost,
+                                 .order-detail, .portal-system .order-detail,
+                                 .order-detail-head .order-ref, .snapshot-card,
+                                 .order-progress-section, .portal-system .customer-panel,
+                                 .portal-system .detail-toggle-secondary,
+                                 .portal-system .customer-panel-embedded .request-toggle,
+                                 .main-footer, .process-card, .spec-card, .faq-item,
+                                 .faq-item:has(.faq-question[aria-expanded="true"]),
+                                 .mp-home-services-head-actions, .mp-proof-item,
+                                 .proof-icon-wrap, .spec-icon-box,
+                                 .pay-pill, .guarantee-box, .page-hero,
+                                 .order-system .page-hero, .portal-system .page-hero,
+                                 .sample-work-page .page-main, .service-page-main,
+                                 .service-page .service-category, .service-category-block,
+                                 .service-jump-link, .service-row-tag, .service-package-link,
+                                 .service-row-thumb, .service-row-thumb-empty,
+                                 .sample-card, .order-history-card, .order-system .order-card,
+                                 .my-orders-search, .portal-account, .service-catalog-shortcuts,
+                                 .card .card, .portal-account .card,
+                                 .portal-account .order-history-card, .card .order-history-card,
+                                 .product-option-body, .package-card, .order-mode-card,
+                                 .payment-option-body, .choice-chip-body, .choice,
+                                 .package-addon, .estimate-panel, .upload-zone,
+                                 .upload-preview, .order-system .order-summary,
+                                 .order-instructions, .order-acknowledgement,
+                                 .sample-card-image, .service-page .sample-card-image,
+                                 .sample-work-page .sample-card-image, .auth-card,
+                                 .top-bar, .nav, .inner-page .top-bar, .inner-page .nav,
+                                 .sidebar, .topbar, .detail-toggle-icon,
+                                 .dialog-close, .lightbox-close, .photo-gallery-count,
+                                 .design-card-zoom, .gallery-kind, .gallery-zoom-hint) {
+    background: var(--color-surface) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] :where(.stat-card.stat-highlight, .attention-item.has-items,
+                                 .notification-item.unread, .wallet-card) {
+    background: var(--accent-soft) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line-accent) !important;
+}
+
+:root[data-theme="dark"] :where(.stat-card.stat-highlight, .attention-item.has-items,
+                                 .notification-item.unread, .wallet-card) strong,
+:root[data-theme="dark"] :where(.stat-card.stat-highlight, .attention-item.has-items,
+                                 .notification-item.unread, .wallet-card) h3 {
+    color: var(--color-primary) !important;
+}
+
+:root[data-theme="dark"] :where(th, thead th, .data-table th) {
+    background: var(--color-surface-alt) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] :where(tbody tr:nth-child(even), .data-table tbody tr:nth-child(even)) {
+    background: rgba(255, 255, 255, 0.025) !important;
+    color: var(--color-text) !important;
+}
+
+:root[data-theme="dark"] :where(.segmented, .tab-list, .hbar-track, .upload-progress-track) {
+    background: var(--color-surface-alt) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] :where(.stepper-item, .timeline-step,
+                                 .order-system .stepper-item,
+                                 .portal-system .timeline-step,
+                                 .portal-system .tracking-timeline .timeline-step)::before {
+    background: var(--color-surface-alt) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] :where(.hbar-row:hover, button.hbar-row:hover,
+                                 .service-row:hover, .service-row:focus-within,
+                                 .product-option:hover .product-option-body,
+                                 .package-card:hover, .order-mode-card:hover:not(:disabled),
+                                 .payment-option-card:hover .payment-option-body,
+                                 .choice-chip:hover .choice-chip-body,
+                                 .portal-system .detail-toggle-secondary > .detail-toggle-summary:hover,
+                                 .mp-home-services-head-actions:hover) {
+    background: var(--color-surface-alt) !important;
+    color: var(--color-text) !important;
+}
+
+:root[data-theme="dark"] :where(.dialog-close:hover, .lightbox-close:hover,
+                                 .viewer-button:hover, .viewer-button:focus-visible) {
+    background: var(--color-surface-alt) !important;
+    color: var(--color-text) !important;
+}
+
+:root[data-theme="dark"] :where(.admin-brand-mark, .avatar, .nav-count) {
+    background: var(--color-surface-alt) !important;
+    color: var(--color-primary) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] .brand-panel {
+    background:
+        radial-gradient(600px 420px at 20% 20%, rgba(255, 62, 157, 0.18), transparent 65%),
+        radial-gradient(520px 420px at 80% 90%, rgba(147, 51, 234, 0.22), transparent 65%),
+        rgba(13, 14, 19, 0.6) !important;
+    color: var(--color-text) !important;
+}
+
+:root[data-theme="dark"] .login-card {
+    background: var(--glass-tint) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] .hero-slideshow::after {
+    background:
+        radial-gradient(700px 420px at 18% 60%, rgba(147, 51, 234, 0.28), transparent 70%),
+        linear-gradient(90deg, rgba(8, 9, 13, 0.94) 0%, rgba(8, 9, 13, 0.72) 48%, rgba(8, 9, 13, 0.35) 100%),
+        linear-gradient(180deg, transparent 60%, rgba(8, 9, 13, 0.9) 100%) !important;
+}
+
+/* Dialogs, scrims, and image viewers. */
+:root[data-theme="dark"] :where(dialog, dialog[open], .theme-confirm,
+                                 .sample-dialog, .customer-lightbox,
+                                 .admin-modal, .modal-card) {
+    background: var(--color-surface) !important;
+    color: var(--color-text) !important;
+    border-color: var(--line) !important;
+}
+
+:root[data-theme="dark"] :where(dialog, .admin-dialog, .customer-lightbox)::backdrop,
+:root[data-theme="dark"] .modal-backdrop {
+    background: rgba(5, 6, 9, 0.66) !important;
+}
+
+:root[data-theme="dark"] .image-viewer::backdrop {
+    background: rgba(8, 9, 13, 0.92) !important;
+}
+
+:root[data-theme="dark"] :where(.lightbox-stage, .photo-gallery-main, .photo-gallery-thumb,
+                                 .gallery-main, .gallery-thumb, .viewer-stage) {
+    background: var(--color-surface-alt) !important;
+}
+
+/* Brand-colored actions keep strong contrast against the dark canvas. */
+:root[data-theme="dark"] :where(.btn-primary, .button-primary, .auth-button,
+                                 .hero-btn-primary, .btn-cta-primary, .sign-in-button,
+                                 .showcase-btn, .mp-home-footer-button,
+                                 .confirmation .btn-dark, .order-system .btn-dark,
+                                 .order-system .btn-gold, .portal-system .btn-dark,
+                                 .stepper-item.active .stepper-num,
+                                 .timeline-step.is-current .timeline-dot,
+                                 .confirm-badge, .tab-button.active, .pager-number.active,
+                                 .order-section-chip.active, .segmented-button.active,
+                                 .ipc-launcher, .ipc-user .ipc-bubble) {
+    background: var(--grad-brand) !important;
+    color: var(--color-on-accent) !important;
+    border-color: transparent !important;
+}
+
+:root[data-theme="dark"] :where(.btn-primary:hover, .button-primary:hover,
+                                 .auth-button:hover, .hero-btn-primary:hover,
+                                 .btn-cta-primary:hover, .sign-in-button:hover,
+                                 .showcase-btn:hover, .mp-home-footer-button:hover,
+                                 .portal-system .btn-dark:hover, .order-system .btn-dark:hover,
+                                 .order-system .btn-gold:hover, .ipc-launcher:hover) {
+    background: var(--grad-brand-hover) !important;
+    color: var(--color-on-accent) !important;
+}
+
+:root[data-theme="dark"] .segmented-button.active .segmented-count {
+    background: rgba(0, 0, 0, 0.16) !important;
+    color: var(--color-on-accent) !important;
+}
+
+:root[data-theme="dark"] :where(.btn-secondary, .btn-ghost-dark, .hero-btn-secondary,
+                                 .btn-cta-secondary, .portfolio-filter,
+                                 .order-history-card .btn,
+                                 .portal-system .order-history-card .btn-dark,
+                                 .btn.btn-ghost-dark, .order-system .btn.btn-ghost-dark,
+                                 .portal-system .btn.btn-ghost-dark,
+                                 .hero-btn-secondary:hover, .btn-cta-secondary:hover,
+                                 .btn-ghost-dark:hover, .portfolio-filter:hover,
+                                 .order-history-card .btn:hover,
+                                 .portal-system .order-history-card .btn-dark:hover) {
+    background: var(--color-surface) !important;
+    color: var(--color-primary) !important;
+    border-color: var(--line-strong) !important;
+}
+
+:root[data-theme="dark"] :where(.status-badge.in-production, .status-badge.ready-for-pickup,
+                                 .status-badge.out-for-delivery, .order-status-pill.in-production,
+                                 .order-status-pill.ready-for-pickup,
+                                 .order-status-pill.out-for-delivery,
+                                 .status-banner.in-production, .status-banner.ready-for-pickup,
+                                 .status-banner.out-for-delivery) {
+    background: var(--color-secondary-soft) !important;
+    color: var(--color-secondary-ink) !important;
+    border-color: var(--line-accent) !important;
+}
+
+:root[data-theme="dark"] :where(.portal-system .tracking-timeline .timeline-dot) {
+    background: var(--color-surface-alt) !important;
+    border-color: var(--line-strong) !important;
+}
+
+:root[data-theme="dark"] :where(.portal-system .tracking-timeline .timeline-step.is-current .timeline-dot,
+                                 .portal-system .tracking-timeline .timeline-step.is-done .timeline-dot) {
+    background: var(--grad-brand) !important;
+    border-color: transparent !important;
+}
+
+/* ---------- Printed documents stay ink-on-paper ---------- */
+@media print {
+    body,
+    body.admin-page {
+        background: #FFFFFF !important;
+        color: #111111 !important;
+    }
+}
+
+/* ==========================================================================
+   Unified UX refinement layer — design audit implementation
+   --------------------------------------------------------------------------
+   This final layer does not rename selectors or replace any rendering logic.
+   It normalises hierarchy, density, focus, states and responsive behaviour
+   across the customer storefront, the customer portal and the admin workspace.
+   Values are expressed through design tokens so light and dark themes stay in
+   sync. Component class names used by JavaScript are intentionally preserved.
+   ========================================================================== */
+
+:root {
+    /* Deliberate, repeated design decisions instead of one-off values. */
+    --ux-control-h: 42px;
+    --ux-control-h-compact: 34px;
+    --ux-row-h: 48px;
+    --ux-focus-width: 3px;
+    --ux-content-max: 1440px;
+}
+
+/* ---------- Predictable keyboard navigation (all pages) ---------- */
+:where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: var(--ux-focus-width) solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+}
+
+/* Component-specific focus rules must not weaken the shared 3px ring. */
+.nav-notify-button:focus-visible {
+    outline: var(--ux-focus-width) solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* Scrollable data regions must be reachable by keyboard as well as touch. */
+:where(.table-wrap, .data-table-wrap, .tracking-timeline-wrap, .order-progress-section):focus-visible {
+    outline: var(--ux-focus-width) solid var(--color-primary);
+    outline-offset: -2px;
+}
+
+.skip-link:focus-visible {
+    outline-offset: 4px;
+}
+
+/* ---------- Consistent type hierarchy ---------- */
+:where(.page-heading h1, .page-hero h1, .auth-card h1, .login-card h1) {
+    font-size: clamp(1.65rem, 2.6vw, 2.25rem);
+    line-height: 1.18;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+:where(.page-heading p, .page-hero p, .dialog-subtitle) {
+    color: var(--color-muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    max-width: 68ch;
+}
+
+:where(.section-title, .panel-title, .panel h2, .card h2, .order-detail-title, .dialog-heading) {
+    font-size: clamp(1.05rem, 1.5vw, 1.25rem);
+    line-height: 1.3;
+    letter-spacing: -0.015em;
+    font-weight: 700;
+}
+
+:where(.overview-label, .section-label, .eyebrow, .order-step-kicker) {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+}
+
+:where(.field-hint, .field-note, .table-secondary, .snapshot-label, .detail-toggle-sub) {
+    color: var(--color-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+/* ---------- Controls: one predictable size and shape ---------- */
+:where(.btn, .button, .hero-btn-primary, .hero-btn-secondary,
+       .btn-cta-primary, .btn-cta-secondary, .action-form button[type="submit"]) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: var(--ux-control-h);
+    padding: 9px 18px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: 0.88rem;
+    font-weight: 600;
+    line-height: 1.2;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color var(--dur) var(--ease),
+                border-color var(--dur) var(--ease),
+                color var(--dur) var(--ease),
+                transform var(--dur) var(--ease);
+}
+
+:where(.btn, .button):active {
+    transform: translateY(1px);
+}
+
+:where(.btn-compact, .btn-small, .button-small, .table-link, .text-button) {
+    min-height: var(--ux-control-h-compact);
+    padding: 6px 12px;
+    font-size: 0.8rem;
+}
+
+/* A page should have one obvious primary action; quiet secondary actions
+   keep their border but never compete with the filled button. */
+:where(.btn-secondary, .btn-ghost-dark, .hero-btn-secondary,
+       .btn-cta-secondary, .button:not(.button-primary)) {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    border: 1px solid var(--line-strong);
+}
+
+/* ---------- Forms: labels, help text and errors read as one unit ---------- */
+:where(.field, .form-field) {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+:where(.field-label, .form-field label, .draft-revision > span:first-child) {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+       select, textarea, .input) {
+    min-height: var(--ux-control-h);
+    padding: 9px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    font-size: 0.88rem;
+    line-height: 1.45;
+}
+
+:where(input::placeholder, textarea::placeholder) {
+    color: var(--color-muted);
+    opacity: 1;
+}
+
+:where(.field-error, .field-error:not(:empty), [role="alert"]) {
+    color: var(--color-danger);
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+/* ---------- Cards, panels and dialogs ---------- */
+:where(.card, .panel, .customer-panel, .customer-draft, .order-history-card,
+       .snapshot-card, .attention-grid .attention-item) {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
+}
+
+:where(.card, .panel, .customer-panel, .customer-draft) {
+    padding: clamp(16px, 2vw, 24px);
+}
+
+:where(.admin-dialog, .sample-dialog, .customer-lightbox) {
+    width: min(960px, calc(100vw - 32px));
+    max-height: min(88vh, 900px);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: var(--shadow-lg);
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+:where(.admin-dialog .dialog-frame, .dialog-actions) {
+    max-width: 100%;
+}
+
+/* ---------- Status always carries a text label, never colour alone ---------- */
+:where(.status-badge, .order-status-pill, .status-banner, .action-badge,
+       .verification-status, .ocr-confidence) {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+/* ---------- Tables: scannable rows and a sticky header ---------- */
+:where(.data-table) th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-surface-alt);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+:where(.data-table) td,
+:where(.data-table) th {
+    min-height: var(--ux-row-h);
+    padding: 11px 14px;
+    vertical-align: middle;
+}
+
+:where(.table-wrap, .data-table-wrap) {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow: auto;
+    max-width: 100%;
+}
+
+:where(.empty-state, .loading-block, .table-error, .chart-empty) {
+    padding: 28px 18px;
+    color: var(--color-muted);
+    text-align: center;
+}
+
+/* ---------- Progressive disclosure is discoverable ---------- */
+:where(details.detail-toggle, details.dashboard-secondary, details.order-activity) {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+}
+
+:where(details.detail-toggle > summary, details.dashboard-secondary > summary,
+       details.order-activity > summary) {
+    min-height: 44px;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+:where(details.detail-toggle[open] > summary, details.dashboard-secondary[open] > summary,
+       details.order-activity[open] > summary) {
+    border-bottom: 1px solid var(--color-border);
+}
+
+/* ---------- Customer portal: one action area, not two ---------- */
+.portal-system .customer-action-strip {
+    border: 1px solid var(--line-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-alt);
+}
+
+.portal-system .action-strip-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+}
+
+.portal-system .action-strip-item.is-urgent {
+    border-left: 3px solid var(--color-warning);
+}
+
+/* ---------- Admin workspace: room to scan, sticky orientation ---------- */
+.admin-page .main-content {
+    width: 100%;
+    max-width: var(--ux-content-max);
+    margin-inline: auto;
+}
+
+.admin-page .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 25;
+}
+
+.admin-page .stats-grid {
+    gap: 12px;
+}
+
+.admin-page .stat-card {
+    padding: 14px 16px;
+}
+
+.admin-page .dashboard-secondary {
+    border-style: dashed;
+}
+
+/* Rarely used filters are collected under a single, labelled disclosure. */
+.admin-page .filter-more {
+    grid-column: 1 / -1;
+    border: 0;
+    background: transparent;
+}
+
+.admin-page .filter-more > summary {
+    min-height: 34px;
+    padding: 4px 0;
+    color: var(--color-primary);
+    font-size: 0.8rem;
+}
+
+.admin-page .filter-more-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+    padding-top: 10px;
+}
+
+/* ---------- Responsive adaptation (not a shrunken desktop layout) ---------- */
+@media (max-width: 1080px) {
+    .admin-page .filter-bar {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 10px;
+    }
+
+    .admin-page .filter-bar > * {
+        min-width: 0;
+    }
+}
+
+@media (max-width: 840px) {
+    :where(.stats-grid, .snapshot-grid, .payment-snapshot) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    :where(.od-grid, .verification-modal-grid, .revenue-summary) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    :where(.card, .panel, .customer-panel, .customer-draft) {
+        padding: 16px;
+    }
+}
+
+@media (max-width: 680px) {
+    /* Every visible link or button stays at least 24 x 24 CSS pixels on touch screens.
+       Larger primary controls override this below. */
+    :where(body a, body button):not([hidden]) {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        min-width: 24px;
+    }
+
+    :where(.btn, .button, .hero-btn-primary, .hero-btn-secondary,
+           .btn-cta-primary, .btn-cta-secondary) {
+        min-height: 44px;
+        padding-inline: 14px;
+    }
+
+    :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+           select, textarea, .input) {
+        min-height: 44px;
+        font-size: 16px; /* prevents iOS auto-zoom on focus */
+    }
+
+    :where(.data-table) {
+        min-width: 520px;
+    }
+
+    /* Navigation and footer links are primary touch targets on small screens. */
+    body:not(.admin-page) :where(.nav a, .nav-menu a, footer a) {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+
+    /* Column sort buttons stay compact but remain at least 24 x 24 CSS pixels. */
+    body.admin-page :where(.data-table thead button) {
+        min-height: 28px;
+        min-width: 28px;
+    }
+
+    :where(.admin-dialog, .sample-dialog, .customer-lightbox) {
+        width: calc(100vw - 16px);
+        max-height: 92vh;
+        border-radius: var(--radius-md);
+    }
+
+    .admin-page .topbar {
+        padding-inline: 12px;
+    }
+
+    :where(.page-heading, .page-hero) {
+        padding-block: 18px;
+    }
+
+    .top-bar {
+        display: none;
+    }
+
+    .home-cta-banner .cta-actions {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+    }
+}
+
+@media (max-width: 440px) {
+    :where(.stats-grid, .snapshot-grid, .payment-snapshot) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    :where(.action-strip-item) {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}
+
+/* Decorative motion should never obstruct a task. */
+@media (prefers-reduced-motion: reduce) {
+    :where(.btn, .button, .card, .panel, .nav-menu a, details > summary) {
+        transition: none;
+    }
+}

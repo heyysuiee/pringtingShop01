@@ -54,14 +54,15 @@ MINDANAO_PROVINCES = {
 }
 DEFAULT_SETTINGS: dict[str, Any] = {
     "delivery_enabled": True,
-    # Fees start at 0 because the shop has not published delivery fees; set them in Admin → Settings.
+    # Initial official shipping rates. Administrators can change them in Admin → Settings →
+    # Delivery & couriers; existing orders keep the fee snapshotted on the order itself.
     "areas": [
-        {"id": "luzon", "label": "Luzon (including Metro Manila)", "region": "luzon", "provinces": [], "fee": 0.0,
-         "estimate_min_days": 3, "estimate_max_days": 7, "active": True},
-        {"id": "visayas", "label": "Visayas", "region": "visayas", "provinces": [], "fee": 0.0,
+        {"id": "luzon", "label": "Luzon (including Metro Manila)", "region": "luzon", "provinces": [], "fee": 58.0,
+         "estimate_min_days": 3, "estimate_max_days": 5, "active": True},
+        {"id": "visayas", "label": "Visayas", "region": "visayas", "provinces": [], "fee": 100.0,
          "estimate_min_days": 5, "estimate_max_days": 10, "active": True},
-        {"id": "mindanao", "label": "Mindanao", "region": "mindanao", "provinces": [], "fee": 0.0,
-         "estimate_min_days": None, "estimate_max_days": None, "active": True},
+        {"id": "mindanao", "label": "Mindanao", "region": "mindanao", "provinces": [], "fee": 105.0,
+         "estimate_min_days": 5, "estimate_max_days": 10, "active": True},
     ],
     "couriers": [
         # No live J&T tracking API is integrated: tracking numbers are entered by the administrator. Add a
@@ -477,9 +478,16 @@ def public_fulfillment_options() -> dict[str, Any]:
 
 
 def region_of(province: str) -> str:
-    # The PSGC snapshot is authoritative for known provinces. The legacy sets below still cover old
-    # free-text orders and province names that are not in the current dataset.
-    known = location_services.region_for_province(province)
+    """Legacy region lookup for old free-text orders.
+
+    New orders never use this fallback: :func:`delivery_quote` resolves the province through the
+    Province API and refuses an unknown one. Reports about older records still work when the lookup is
+    temporarily unavailable, because the legacy province sets below need no external data.
+    """
+    try:
+        known = location_services.region_for_province(province)
+    except HTTPException:
+        known = None
     if known in REGIONS:
         return known
     # Use the same canonical key as address validation so legacy aliases keep working in the fee
@@ -502,13 +510,21 @@ def estimate_text(area: dict[str, Any]) -> str:
 
 
 def delivery_quote(province: str, area_id: Any = None) -> dict[str, Any]:
-    """The delivery area, fee, and estimated courier period for an address. Calculated only on the server."""
+    """The delivery area, fee, and estimated courier period for an address. Calculated only on the server.
+
+    The province is resolved through the PSGC-backed Province API first. An unknown province or a failed
+    lookup is rejected here, so no order can be charged with a guessed island group.
+    """
     settings = fulfillment_settings()
     if not settings["delivery_enabled"]:
         raise _bad("Delivery is not available right now. Choose Store Pickup.")
+    resolved = location_services.resolve_province(province)
+    island_group = resolved["island_group"]
+    if island_group not in REGIONS:
+        raise _bad(f"Delivery to {resolved['province']} is not available. Contact the shop.")
     active = [area for area in settings["areas"] if area["active"]]
     # Both sides use the PSGC key, so “Cavite Province”, “Province of Cavite” and “Cavite” all match.
-    province_key = location_services.province_key(province)
+    key = location_services.province_key(resolved["province"])
     area = None
     if area_id not in (None, ""):
         area = next((item for item in active if item["id"] == area_id), None)
@@ -516,23 +532,51 @@ def delivery_quote(province: str, area_id: Any = None) -> dict[str, Any]:
             raise _bad("Choose an available delivery area.")
         # The chosen area must fit the address, so a cheaper area cannot be picked for a farther province.
         listed = {location_services.province_key(value) for value in area["provinces"]}
-        if (listed and province_key not in listed) or (not listed and region_of(province) != area["region"]):
-            raise _bad(f"{province} is not in the {area['label']} delivery area. Choose the area that matches the address.")
+        if area["region"] != island_group or (listed and key not in listed):
+            raise _bad(f"{resolved['province']} is not in the {area['label']} delivery area. Choose the area that matches the address.")
     else:
-        area = next((item for item in active if province_key in {location_services.province_key(value) for value in item["provinces"]}), None)
+        area = next(
+            (item for item in active if item["region"] == island_group and key in {location_services.province_key(value) for value in item["provinces"]}),
+            None,
+        )
         if area is None:
-            region = region_of(province)
-            area = next((item for item in active if item["region"] == region and not item["provinces"]), None)
+            area = next((item for item in active if item["region"] == island_group and not item["provinces"]), None)
         if area is None:
-            raise _bad(f"Delivery to {province} is not available. Choose Store Pickup or contact the shop.")
+            raise _bad(f"Delivery to {resolved['province']} is not available. Choose Store Pickup or contact the shop.")
     return {
         "area_id": area["id"],
         "area_label": area["label"],
-        "region": area["region"],
+        "province": resolved["province"],
+        "region": island_group,
+        "region_label": REGIONS[island_group],
+        "destination_region": REGIONS[island_group],
         "delivery_fee": area["fee"],
         "estimate_min_days": area["estimate_min_days"],
         "estimate_max_days": area["estimate_max_days"],
         "estimate_text": estimate_text(area),
+    }
+
+
+def shipping_quote(province: Any, city: Any = None, area_id: Any = None) -> dict[str, Any]:
+    """The live checkout quote for an address, using the exact rules used when the order is submitted.
+
+    The city is validated against the selected province when present. Both the live quote and the saved
+    order use the authoritative PSGC island group, so a stale or wrong region can never produce a fee.
+    """
+    if city in (None, ""):
+        resolved = location_services.resolve_province(province)
+        canonical_city = ""
+    else:
+        resolved = location_services.resolve_address(province, city)
+        canonical_city = resolved["city"]
+    quote = delivery_quote(resolved["province"], area_id)
+    return {
+        **quote,
+        "city": canonical_city,
+        "delivery_province": resolved["province"],
+        "destination_region": quote["destination_region"],
+        "shipping_fee": quote["delivery_fee"],
+        "estimated_delivery": quote["estimate_text"],
     }
 
 

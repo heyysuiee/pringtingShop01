@@ -51,5 +51,24 @@ The repository already runs on SQLite locally and Turso in production, not MySQL
 ## 7. Verification
 
 - New `backend/tests/test_ocr_payment_verification.py` covering all 14 required scenarios with OCR and provider calls stubbed, including failed OCR and provider-unavailable cases.
+- `backend/tests/test_payment_verification_results.py` covers the customer-facing result codes, the server-calculated money figures, the admin payment table fields/filters, the verification modal source, successful/insufficient/duplicate/mismatched/unreadable receipts, overpayment, and accumulating partial payments.
 - Re-run the full backend suite, `node --check` on changed JavaScript, page/static smoke checks, and static reference scan.
 - Document the OCR engine configuration and remaining limitations in the implementation report.
+
+## 8. Result statuses and the payment verification record
+
+The internal `status` codes (`verified`, `pending`, `admin_review`, `possible_duplicate`, `rejected`) are preserved for older submissions and reports. New submissions also carry a first-class `result` code and label:
+
+| Result code | Label | Meaning |
+| --- | --- | --- |
+| `verified` | Verified | An independent provider confirmed the transaction (or an admin explicitly recorded the money). |
+| `ocr_checked_pending` | OCR-checked · pending manual verification | OCR read the receipt cleanly; no money has been credited. |
+| `insufficient_payment` | Insufficient Payment | The extracted amount is below the server-calculated amount due. |
+| `reference_mismatch` | Reference Number Mismatch | The reference on the receipt differs from the customer's submitted reference. |
+| `duplicate_reference` | Duplicate Reference Number | The reference or receipt file was already used on another payment/submission. |
+| `needs_manual_review` | Needs Manual Review | OCR was unreadable, incomplete, inconsistent, or the engine failed. |
+| `rejected` | Rejected | The receipt reports a failed transaction or the provider explicitly denied it. |
+
+`build_verification()` stores a `down_payment` calculation with every new OCR result. The figures are recomputed from the confirmed order total and earlier verified payments (never from browser input): total order amount, required down payment (50% or the admin-set amount), stage amount due, actual amount paid, previously paid, cumulative paid, remaining down payment, remaining balance, insufficient by, excess, payment percentage, down payment percentage, and whether the down payment has been met. Older records are recomputed when read.
+
+Every row in the admin payments table opens a dedicated verification modal. It shows the original receipt beside the extracted reference, amount, date/time, sender, provider, recipient, status and confidence, followed by the automatic down payment calculation, validation checks, and the receipt-vs-system comparison. Only verified payments have `counts_as_paid = true`; partial admin confirmations accumulate, and a submission can never be credited twice. OCR alone never sets `auto_confirm`.

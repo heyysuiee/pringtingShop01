@@ -15,20 +15,42 @@ from typing import Any
 from urllib.parse import urlparse
 
 from backend.app.core.config import settings
+from backend.app.models.order import DOWN_PAYMENT_RATE
 
 
+# Internal workflow states are kept for backwards compatibility with older submissions and reports. The
+# ``result_*`` codes below are the customer-facing verification outcomes shown in the admin payment table.
+# Nothing here moves money: only the existing admin confirmation or an independent provider confirmation
+# can create a payment record.
 VERIFIED = "verified"
 PENDING = "pending"
 ADMIN_REVIEW = "admin_review"
 REJECTED = "rejected"
 DUPLICATE = "possible_duplicate"
 
+RESULT_VERIFIED = "verified"
+RESULT_OCR_PENDING = "ocr_checked_pending"
+RESULT_INSUFFICIENT = "insufficient_payment"
+RESULT_REFERENCE_MISMATCH = "reference_mismatch"
+RESULT_DUPLICATE = "duplicate_reference"
+RESULT_MANUAL_REVIEW = "needs_manual_review"
+RESULT_REJECTED = "rejected"
+
 STATUS_LABELS = {
     VERIFIED: "Verified",
     PENDING: "Pending Verification",
-    ADMIN_REVIEW: "For Admin Review",
+    ADMIN_REVIEW: "Needs Manual Review",
     REJECTED: "Rejected",
-    DUPLICATE: "Possible Duplicate",
+    DUPLICATE: "Duplicate Reference Number",
+}
+RESULT_LABELS = {
+    RESULT_VERIFIED: "Verified",
+    RESULT_OCR_PENDING: "OCR-checked · pending manual verification",
+    RESULT_INSUFFICIENT: "Insufficient Payment",
+    RESULT_REFERENCE_MISMATCH: "Reference Number Mismatch",
+    RESULT_DUPLICATE: "Duplicate Reference Number",
+    RESULT_MANUAL_REVIEW: "Needs Manual Review",
+    RESULT_REJECTED: "Rejected",
 }
 CHECK_STATES = {"match", "missing", "inconsistent", "pending"}
 
@@ -44,21 +66,105 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def down_payment_calculation(
+    order: Mapping[str, Any],
+    stage_required: float,
+    extracted_amount: float | None,
+    already_paid: float = 0.0,
+) -> dict[str, Any]:
+    """The money arithmetic the admin no longer has to do by hand.
+
+    ``stage_required`` is the server-calculated amount due for this submission (the rest of the down payment,
+    or the remaining balance). ``extracted_amount`` is the actual amount OCR read from the receipt. Earlier
+    verified payments are included so multiple partial payments accumulate correctly: a new payment is added
+    to, never substituted for, the confirmed total. Every figure is recomputed from the order, never from a
+    value supplied by the customer's browser.
+
+    The status describes what would happen *if the administrator confirms this amount*. OCR alone never
+    credits the payment.
+    """
+    from backend.app.services import order_services
+
+    total = _number(order.get("total_amount")) or 0.0
+    stored = _number(order.get("required_down_payment"))
+    required_down = stored if stored is not None and 0 < stored <= total + 0.005 else round(total * DOWN_PAYMENT_RATE, 2)
+    paid_before = round(max(0.0, _number(already_paid) or 0.0), 2)
+    actual = _number(extracted_amount)
+    paid_after = round(paid_before + (actual or 0.0), 2)
+    due = round(max(0.0, _number(stage_required) or 0.0), 2)
+    shortfall = round(max(0.0, due - actual), 2) if actual is not None and due > actual + 0.005 else 0.0
+    stage_excess = round(actual - due, 2) if actual is not None and actual > due + 0.005 else 0.0
+    remaining_down = round(max(0.0, required_down - paid_after), 2)
+    # Excess is money above the whole order, not merely above one stage. Stage excess is kept separately so
+    # the admin can still see that a receipt paid more than the current instalment.
+    excess = round(max(0.0, paid_after - total), 2)
+    return {
+        "total_order_amount": round(total, 2),
+        "required_down_payment": round(required_down, 2),
+        "stage_amount_due": due,
+        "actual_amount_paid": actual,
+        "previously_paid": paid_before,
+        "cumulative_paid": paid_after,
+        "remaining_down_payment": remaining_down,
+        "remaining_balance": round(max(0.0, total - paid_after), 2),
+        "remaining_balance_exact": round(total - paid_after, 2),
+        "excess_amount": excess,
+        "stage_excess_amount": stage_excess,
+        "down_payment_shortfall": remaining_down,
+        "additional_needed_for_down_payment": remaining_down,
+        "insufficient_by": shortfall,
+        "payment_status": order_services.payment_status_from_amounts(
+            round(total, 2), round(required_down, 2), paid_after
+        ),
+        "payment_percentage": round((paid_after / total) * 100, 1) if total > 0 else 0.0,
+        "down_payment_percentage": round((min(paid_after, required_down) / required_down) * 100, 1) if required_down > 0 else 0.0,
+        "down_payment_met": bool(total > 0 and paid_after >= required_down - 0.005),
+    }
+
+
+_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3, "apr": 4, "april": 4,
+    "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8, "sep": 9, "sept": 9,
+    "september": 9, "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+
+
 def parse_date(value: str) -> datetime | None:
     """Best-effort parsing of the common receipt date formats (naive values are treated as local time)."""
     text = str(value or "").strip()
     if not text:
         return None
+    month_name = (
+        r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+    )
+    named_patterns = (
+        (rf"\b({month_name})\.?\s+(\d{{1,2}}),?\s+(20\d{{2}})\b", "mdy"),
+        (rf"\b(\d{{1,2}})\s+({month_name})\.?,?\s+(20\d{{2}})\b", "dmy"),
+    )
     for pattern, order in (
         (r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", "ymd"),
         (r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", "dmy"),
+        *named_patterns,
     ):
-        match = re.search(pattern, text)
+        match = re.search(pattern, text, re.I)
         if not match:
             continue
-        first, second, third = (int(item) for item in match.groups())
-        year, month, day = (first, second, third) if order == "ymd" else (third, second, first)
         try:
+            groups = match.groups()
+            if order == "ymd":
+                year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+            elif order == "mdy":
+                month = _MONTHS.get(str(groups[0]).casefold()[:4], _MONTHS.get(str(groups[0]).casefold(), 0))
+                day, year = int(groups[1]), int(groups[2])
+            elif order == "dmy" and isinstance(groups[1], str) and not groups[1].isdigit():
+                day = int(groups[0])
+                month = _MONTHS.get(str(groups[1]).casefold()[:4], _MONTHS.get(str(groups[1]).casefold(), 0))
+                year = int(groups[2])
+            else:
+                day, month, year = int(groups[0]), int(groups[1]), int(groups[2])
+            if not month:
+                continue
             time_match = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?", text)
             hour = minute = second_value = 0
             if time_match:
@@ -71,7 +177,7 @@ def parse_date(value: str) -> datetime | None:
                     hour = 0
             return datetime(year, month, day, hour, minute, second_value)
         except ValueError:
-            return None
+            continue
     return None
 
 
@@ -314,12 +420,51 @@ def build_verification(
         check("duplicate", "Duplicate reference or receipt", "match", "Unique reference and receipt", "Not seen before", "No earlier payment or submission uses this reference or receipt.")
 
     ocr_amount = _number(fields.get("amount"))
+    already_paid = round(sum(
+        max(0.0, _number(payment.get("amount")) or 0.0)
+        for payment in (order.get("payments") or []) if isinstance(payment, Mapping)
+    ), 2)
+    calculation = down_payment_calculation(order, required_amount, ocr_amount, already_paid)
     if ocr_amount is None:
         check("amount", "Transaction amount", "missing", f"PHP {required_amount:,.2f}", "", "OCR could not read an amount from the receipt.")
     elif abs(ocr_amount - required_amount) <= 0.005:
         check("amount", "Transaction amount", "match", f"PHP {required_amount:,.2f}", f"PHP {ocr_amount:,.2f}", "The extracted amount matches the amount due for this stage.")
+    elif ocr_amount < required_amount - 0.005:
+        check("amount", "Transaction amount", "inconsistent", f"PHP {required_amount:,.2f}", f"PHP {ocr_amount:,.2f}",
+              f"Insufficient payment: the receipt is short by PHP {calculation['insufficient_by']:,.2f}.")
     else:
-        check("amount", "Transaction amount", "inconsistent", f"PHP {required_amount:,.2f}", f"PHP {ocr_amount:,.2f}", "The extracted amount does not match the amount due.")
+        detail = (
+            f"PHP {calculation['stage_excess_amount']:,.2f} more than the amount due for this stage; "
+            "the full amount will still be credited when the shop confirms it."
+        )
+        if calculation["excess_amount"] > 0.005:
+            detail += (
+                f" PHP {calculation['excess_amount']:,.2f} is above the whole order and needs admin review."
+            )
+        check("amount", "Transaction amount", "inconsistent", f"PHP {required_amount:,.2f}", f"PHP {ocr_amount:,.2f}", detail)
+
+    # Cross-check the receipt against the customer's submitted record as well as the server-calculated amount.
+    submitted_amount = _number(submission.get("amount"))
+    if ocr_amount is None or submitted_amount is None:
+        check("receipt_vs_submission", "Receipt vs submitted amount", "missing", "Both amounts readable", "", "One of the amounts could not be read.")
+    elif abs(ocr_amount - submitted_amount) <= 0.005:
+        check("receipt_vs_submission", "Receipt vs submitted amount", "match", f"PHP {submitted_amount:,.2f}", f"PHP {ocr_amount:,.2f}",
+              "The receipt amount agrees with the amount on the customer's payment record.")
+    else:
+        check("receipt_vs_submission", "Receipt vs submitted amount", "inconsistent", f"PHP {submitted_amount:,.2f}", f"PHP {ocr_amount:,.2f}",
+              "The receipt amount differs from the amount on the customer's payment record.")
+
+    # The 50% down payment itself (not just this stage) is checked with earlier verified payments included.
+    if ocr_amount is None:
+        check("down_payment", "Required down payment", "missing", f"PHP {calculation['required_down_payment']:,.2f}", "",
+              "OCR could not read the amount, so the down payment progress cannot be calculated.")
+    elif calculation["remaining_down_payment"] <= 0.005:
+        check("down_payment", "Required down payment", "match", f"PHP {calculation['required_down_payment']:,.2f}",
+              f"PHP {calculation['cumulative_paid']:,.2f} paid in total", "Verified payments cover the required down payment.")
+    else:
+        check("down_payment", "Required down payment", "inconsistent",
+              f"PHP {calculation['required_down_payment']:,.2f}", f"PHP {calculation['cumulative_paid']:,.2f} paid in total",
+              f"PHP {calculation['remaining_down_payment']:,.2f} of the down payment is still due.")
 
     extracted_recipient = str(fields.get("recipient") or "").strip()
     if not recipient_expected:
@@ -397,10 +542,39 @@ def build_verification(
     else:
         status = PENDING
 
+    check_states = {item["key"]: item["state"] for item in checks}
+    issues: list[str] = []
+    if duplicates:
+        issues.append(RESULT_DUPLICATE)
+    if invalid_status or (provider["attempted"] and provider["detail"].startswith("The provider did not confirm")):
+        issues.append(RESULT_REJECTED)
+    if check_states.get("reference") == "inconsistent":
+        issues.append(RESULT_REFERENCE_MISMATCH)
+    if calculation["insufficient_by"] > 0 and check_states.get("amount") == "inconsistent":
+        issues.append(RESULT_INSUFFICIENT)
+    if (
+        "inconsistent" in states or "missing" in states
+        or "engine_unavailable" in flags or "unreadable" in flags or "ocr_error" in flags
+    ):
+        issues.append(RESULT_MANUAL_REVIEW)
+    result = next(
+        (code for code in (RESULT_DUPLICATE, RESULT_REJECTED, RESULT_REFERENCE_MISMATCH, RESULT_INSUFFICIENT, RESULT_MANUAL_REVIEW) if code in issues),
+        RESULT_VERIFIED if provider["confirmed"] and status == VERIFIED else RESULT_OCR_PENDING,
+    )
+    basis = "provider_api" if provider["attempted"] else "ocr_only"
+    basis_label = (
+        "Independently confirmed by the payment provider"
+        if result == RESULT_VERIFIED and provider["confirmed"]
+        else "OCR-checked · pending manual verification"
+    )
+
     auto_confirm = status == VERIFIED and not duplicates and provider["attempted"]
     detail = {
         "status": status,
         "status_label": STATUS_LABELS[status],
+        "result": result,
+        "result_label": RESULT_LABELS[result],
+        "issues": list(dict.fromkeys(issues)),
         "checks": checks,
         "confidence": round(confidence, 2),
         "engine": engine,
@@ -408,6 +582,9 @@ def build_verification(
         "notes": notes,
         "receipt_hash": str(submission.get("receipt_hash") or ""),
         "verification_method": "provider_api" if provider["attempted"] else "manual",
+        "verification_basis": basis,
+        "verification_basis_label": basis_label,
+        "down_payment": calculation,
         "provider": provider,
         "auto_confirm": bool(auto_confirm),
         "requires_admin": status in {ADMIN_REVIEW, DUPLICATE, REJECTED} or (status == PENDING and not provider["attempted"]),
@@ -446,5 +623,11 @@ def comparison_view(order: Mapping[str, Any], submission: Mapping[str, Any], ver
         "receipt_url": str((submission.get("proof") or {}).get("url") or "") if isinstance(submission.get("proof"), Mapping) else "",
         "verification_status": verification.get("status", ""),
         "verification_label": verification.get("status_label", ""),
+        "verification_result": verification.get("result", ""),
+        "verification_result_label": verification.get("result_label", verification.get("status_label", "")),
+        "verification_basis_label": verification.get("verification_basis_label", ""),
+        "reviewed_at": verification.get("reviewed_at"),
+        "reviewed_by": str(verification.get("reviewed_by") or ""),
+        "down_payment": verification.get("down_payment", {}),
         "confidence": verification.get("confidence", 0.0),
     }

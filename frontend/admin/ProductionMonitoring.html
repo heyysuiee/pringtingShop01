@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#08090D">
+    <meta name="theme-color" content="#FAF8F4">
     <meta name="robots" content="noindex, nofollow">
     <link rel="icon" href="data:,">
     <title>Production Monitoring — ImPRESSion PrintShop Admin</title>
@@ -18,6 +18,8 @@
     <link rel="stylesheet" href="/assets/admin/chatbot-admin.css">
     <link rel="stylesheet" href="/assets/admin/operations-admin.css">
     <link rel="stylesheet" href="/assets/admin/admin-nav.css">
+    <link rel="stylesheet" href="/assets/light-theme.css">
+    <script src="/assets/theme-toggle.js"></script>
 </head>
 <body class="admin-page" data-admin-view="production">
     <a class="skip-link" href="#view-root">Skip to content</a>
@@ -36,14 +38,14 @@
                         <a href="/admin/orders" data-view="orders"><span class="nav-label">All Orders</span><span class="nav-count" id="pending-count"></span></a>
                         <a href="/admin/production" data-view="production" class="active" aria-current="page"><span class="nav-label">Production Monitoring</span><span class="nav-count" id="production-count"></span></a>
                         <a href="/admin/fulfillment" data-view="fulfillment"><span class="nav-label">Fulfillment &amp; Delivery</span><span class="nav-count" id="fulfillment-count"></span></a>
-                        <a href="/admin/payments" data-view="payments"><span class="nav-label">Payments &amp; Verification</span><span class="nav-count" id="payment-count"></span></a>
-                        <a href="/admin/refunds" data-view="refunds"><span class="nav-label">Cancellations &amp; Refunds</span><span class="nav-count" id="refund-count"></span></a>
+                        <a href="/admin/payments" data-view="payments"><span class="nav-label">Payments &amp; Transactions</span><span class="nav-count" id="payment-count"></span></a>
+                        <a href="/admin/refunds" data-view="refunds"><span class="nav-label">Cancellation &amp; Refunds</span><span class="nav-count" id="refund-count"></span></a>
                     </div>
                 </div>
                 <div class="nav-group" data-nav-group="catalog">
                     <button class="nav-group-toggle" type="button" aria-expanded="false" aria-controls="nav-group-catalog" data-action="toggle-nav-group"><span class="nav-icon" aria-hidden="true" data-icon="shopping-bag">▧</span><span class="nav-label">Catalog Management</span><span class="nav-count nav-group-count" data-group-count></span><span class="nav-chevron" aria-hidden="true" data-icon="chevron-down" data-icon-size="16">▾</span></button>
                     <div class="nav-submenu" id="nav-group-catalog" hidden>
-                        <a href="/admin/services" data-view="services" data-catalog-target="products"><span class="nav-label">Products &amp; Services</span></a>
+                        <a href="/admin/services" data-view="services" data-catalog-target="products"><span class="nav-label">Services &amp; Products</span></a>
                         <a href="/admin/services#categories" data-view="services" data-catalog-target="categories"><span class="nav-label">Service Categories</span></a>
                         <a href="/admin/services#packages" data-view="services" data-catalog-target="packages"><span class="nav-label">Packages</span></a>
                         <a href="/admin/services#designs" data-view="services" data-catalog-target="designs"><span class="nav-label">Designs</span></a>
@@ -62,6 +64,7 @@
                         <a href="/admin/chatbot#settings" data-view="chatbot" data-chatbot-target="settings"><span class="nav-label">Configuration</span></a>
                     </div>
                 </div>
+                <a href="/admin/notifications" data-view="notifications"><span class="nav-icon" aria-hidden="true" data-icon="bell">♧</span><span class="nav-label">Notifications</span></a>
                 <a href="/admin/settings" data-view="settings"><span class="nav-icon" aria-hidden="true" data-icon="settings">⚙</span><span class="nav-label">Settings</span></a>
             </nav>
             <div class="sidebar-bottom">

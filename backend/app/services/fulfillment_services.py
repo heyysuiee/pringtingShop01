@@ -140,6 +140,12 @@ def _require_status(order: Mapping[str, Any], *statuses: str) -> None:
 
 
 def _require_paid(order: Mapping[str, Any], what: str) -> None:
+    pending_excess = order_services.pending_excess_amount(order)
+    if pending_excess > order_services.MONEY_TOLERANCE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Resolve the flagged excess of PHP {pending_excess:,.2f} before {what}. Unreviewed money is never treated as paid.",
+        )
     if not order_services.is_fully_paid(order):
         breakdown = order_services.payment_breakdown(order)
         raise HTTPException(
@@ -829,6 +835,7 @@ def _row(order: OrderRecord, services: Any) -> dict[str, Any]:
     row = report_services.order_row(order, services)
     record = order_services.production(order)
     stored = order_services.fulfillment(order)
+    shipping = order_services.shipping_view(order)
     row.update({
         "version": order_repository.order_version(order),
         "progress": record.get("progress", 0),
@@ -843,6 +850,9 @@ def _row(order: OrderRecord, services: Any) -> dict[str, Any]:
         "scheduled_date": stored.get("scheduled_date"),
         "area_label": stored.get("area_label", ""),
         "delivery_fee": order_services.delivery_fee(order),
+        "delivery_province": shipping["delivery_province"],
+        "destination_region": shipping["destination_region"],
+        "estimated_delivery": shipping["estimated_delivery"],
         "recipient": stored.get("recipient_name", "") or order["customer"].get("name", ""),
         "address": ", ".join(str(stored.get(key)) for key in ("street", "barangay", "city", "province") if stored.get(key)),
         "pickup_location": (stored.get("pickup_location") or {}).get("name", ""),

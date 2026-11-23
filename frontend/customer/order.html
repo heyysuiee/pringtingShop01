@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#08090D">
+    <meta name="theme-color" content="#FAF8F4">
     <meta name="description"
         content="Place a custom print order online. Choose your product, upload artwork or request design help, and submit for proof approval.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,6 +15,8 @@
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
     <link rel="stylesheet" href="/assets/chatbot.css">
+    <link rel="stylesheet" href="/assets/light-theme.css">
+    <script src="/assets/theme-toggle.js"></script>
     <title>Place an Order — Printing Shop</title>
 </head>
 
@@ -32,10 +34,10 @@
         <div class="nav-brand">
             <a class="brand-link" href="/home" aria-label="ImPRESSion PrintShop home"><span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word">ImPRESSion <span>PrintShop</span></span></a>
         </div>
-        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="navMenu" aria-label="Open menu">
             <span></span><span></span><span></span>
         </button>
-        <div class="nav-menu">
+        <div class="nav-menu" id="navMenu">
             <a href="/home">Home</a>
             <a href="/services">Services</a>
             <a href="/order" class="active" aria-current="page">Order</a>
@@ -99,7 +101,7 @@
                 <!-- 01 · Product -->
                 <section class="wizard-step active" data-step="1" data-wizard-section="product" aria-labelledby="step1-title">
                     <a class="text-button service-change-link" href="/order">← Choose a different service</a>
-                    <p class="order-step-kicker">01 · Start with a product</p>
+                    <p class="order-step-kicker">Start with a product</p>
                     <h2 id="step1-title" class="step-title">What would you like printed?</h2>
                     <p class="order-step-lead">Choose a service and product. The next step shows the options for that
                         exact product. Your selection stays with you from Services or Sample Work.</p>
@@ -122,7 +124,7 @@
 
                 <!-- 02 · Ordering option: a package or a customized order (every product) -->
                 <section class="wizard-step" data-step="2" data-wizard-section="option" aria-labelledby="step2-title">
-                    <p class="order-step-kicker">02 · Choose how to order</p>
+                    <p class="order-step-kicker">Choose how to order</p>
                     <h2 id="step2-title" class="step-title">How would you like your <span id="step2-product">order</span>?</h2>
                     <p class="order-step-lead" id="order-mode-lead">Choose a ready-made package with a fixed price and
                         inclusions, or customize the order yourself. The shop confirms the final amount before payment
@@ -156,7 +158,7 @@
 
                 <!-- Customize Order with shop designs: choose a design and personalize it in one step (no design upload) -->
                 <section class="wizard-step" data-step="9" data-wizard-section="personalize" aria-labelledby="step9-title">
-                    <p class="order-step-kicker">03 · Customize your design</p>
+                    <p class="order-step-kicker">Customize your design</p>
                     <h2 id="step9-title" class="step-title">Choose your design and add your details</h2>
                     <p class="order-step-lead">Pick one of the shop's designs, then fill in only what should appear on
                         it. The shop places your details on the design and sends you a draft to approve before
@@ -186,7 +188,7 @@
                 <section class="wizard-step" data-step="8" data-wizard-section="details" aria-labelledby="step8-title">
                     <div id="general-customize">
                         <p class="own-design-note" id="general-own-design-note" hidden></p>
-                        <p class="order-step-kicker">03 · Make it yours</p>
+                        <p class="order-step-kicker">Make it yours</p>
                         <h2 class="step-title" id="step8-title"><span id="general-step-title">Customize your</span>
                             <span id="step2-general-product">product</span></h2>
                         <p class="order-step-lead" id="general-step-lead">Only the options for this product are shown.
@@ -241,7 +243,7 @@
 
                 <!-- 03 · Configure (Invitation only) -->
                 <section class="wizard-step" data-step="3" data-wizard-section="configure" aria-labelledby="step3-title">
-                    <p class="order-step-kicker">03 · Build your invitation</p>
+                    <p class="order-step-kicker">Build your invitation</p>
                     <h2 id="step3-title" class="step-title">Set the details</h2>
                     <p class="order-step-lead" id="configure-lead"></p>
 
@@ -294,7 +296,7 @@
 
                 <!-- 04 · Event details & files (Invitation only) -->
                 <section class="wizard-step" data-step="4" data-wizard-section="event-files" aria-labelledby="step4-title">
-                    <p class="order-step-kicker">04 · Event details &amp; files</p>
+                    <p class="order-step-kicker">Event details &amp; files</p>
                     <h2 id="step4-title" class="step-title">Tell us about the celebration</h2>
                     <p class="order-step-lead">Fill in the celebrant's name, event date, time, and location. These
                         appear on your invitation ; everything is reviewed by the shop before
@@ -314,7 +316,7 @@
 
                 <!-- 06 · Contact & payment -->
                 <section class="wizard-step" data-step="5" data-wizard-section="contact" aria-labelledby="step5-title">
-                    <p class="order-step-kicker" id="step5-kicker">05 · Contact &amp; payment</p>
+                    <p class="order-step-kicker" id="step5-kicker">Contact &amp; payment</p>
                     <h2 id="step5-title" class="step-title">Contact, delivery &amp; payment</h2>
                     <div class="form-grid">
                         <div class="field"><label for="name" class="field-label">Full name</label><input id="name"
@@ -374,6 +376,11 @@
                                 </span>
                             </label>
                         </div>
+                        <p class="field-hint" id="saved-address-note" hidden>
+                            Your saved delivery address has been filled in below. Change any field and the shipping
+                            calculation updates automatically.
+                            <button class="text-button" type="button" id="use-saved-address">Use saved address again</button>
+                        </p>
                         <div class="delivery-fields" id="delivery-fields" hidden>
                             <div class="form-grid">
                                 <div class="field"><label for="delivery-name" class="field-label">Customer
@@ -417,6 +424,10 @@
                             <div class="field"><label for="delivery-area" class="field-label">Delivery area</label><select
                                     id="delivery-area" class="input" data-delivery-field="area_id"></select>
                                 <p class="field-hint" id="delivery-quote" aria-live="polite"></p></div>
+                            <div class="field" id="shipping-summary-field">
+                                <span class="field-label">Shipping calculation</span>
+                                <dl class="payment-breakdown" id="shipping-summary" aria-live="polite"></dl>
+                            </div>
                         </div>
                         <div class="delivery-fields" id="pickup-fields">
                             <div class="form-grid">
@@ -456,31 +467,20 @@
 
                 <!-- 06 · Review -->
                 <section class="wizard-step" data-step="6" data-wizard-section="review" aria-labelledby="step6-title">
-                    <p class="order-step-kicker">06 · Check before you send</p>
+                    <p class="order-step-kicker">Check before you send</p>
                     <h2 id="step6-title" class="step-title">Review your order request</h2>
                     <button class="text-button" type="button" id="edit-order">← Edit order options</button>
                     <div class="order-summary-groups" id="summary"></div>
                     <section class="order-instructions" aria-labelledby="instructions-title">
                         <h3 id="instructions-title">Before you place your order</h3>
                         <ol>
-                            <li>Send your original, high-quality picture to <strong>printImpress@gmail.com</strong> for
-                                better print quality.</li>
-                            <li>Provide the celebrant’s name and any applicable event details.</li>
-                            <li>Include the event date, time, and location when applicable.</li>
-                            <li>Package orders use the package's published price. Customized and shop design orders are
-                                priced by the administrator's quotation, which you accept or decline in the customer
-                                portal before any payment.</li>
-                            <li>Every order requires a 50% down payment of the confirmed amount; the remaining 50% is
-                                paid before release. Choose one of <span class="payment-methods-label">the shop's
-                                    available e-wallets</span> in the customer portal, enter its reference number, and
-                                upload the screenshot or receipt. Your order is confirmed only after the shop verifies
-                                the down payment. The account details and instructions for each method are shown in
-                                your portal.</li>
-                            <li>We will send a draft layout via chat for you to check and approve.</li>
-                            <li class="approval-rule">NO APPROVAL, NO PRINT.</li>
-                            <li>Order processing takes approximately 2–5 days. This is processing time, not a guaranteed
-                                delivery date.</li>
+                            <li>Add the celebrant’s name and any event date, time, and location that applies.</li>
+                            <li>Upload your design and reference files here, or choose one of the shop’s designs. No files need to be emailed.</li>
+                            <li>Package prices are fixed. Customized and shop-design orders are quoted by the shop; you accept or decline the quotation in your portal before paying.</li>
+                            <li>Every order needs a 50% down payment. In your portal, choose an available payment method, enter its reference number, and upload the receipt. The order is confirmed only after the shop verifies it.</li>
+                            <li class="approval-rule">NO APPROVAL, NO PRINT. Review the draft in your portal before printing begins.</li>
                         </ol>
+                        <p class="field-hint">Processing usually takes 2–5 business days after artwork approval. This is not a guaranteed delivery date.</p>
                     </section>
                     <label class="order-acknowledgement"><input id="acknowledge" type="checkbox" required><span>I have
                             reviewed my details and understand the order instructions, including how payment is

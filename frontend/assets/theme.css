@@ -1,77 +1,99 @@
 /* ==========================================================================
-   ImPRESSion PrintShop — Dark Glass design system
+   ImPRESSion PrintShop — Light Studio design system
    Shared by the storefront, the customer portal, and the admin workspace.
-   Load order on every page: legacy page CSS → theme.css → theme-site.css or admin/theme-admin.css.
-   Legacy stylesheets reference these tokens, so palette changes belong here.
+   Load order on every page: legacy page CSS → theme.css → theme-site.css or
+   admin/theme-admin.css → light-theme.css (final normalization layer).
+   Every palette value is a token here; page layers reference these tokens.
    ========================================================================== */
 
 :root {
-    color-scheme: dark;
+    color-scheme: light;
 
-    /* Surfaces */
-    --bg-primary: #08090D;
-    --bg-secondary: #101116;
-    --bg-elevated: #171922;
-    --glass-1: rgba(255, 255, 255, 0.05);
-    --glass-2: rgba(255, 255, 255, 0.08);
-    --glass-3: rgba(255, 255, 255, 0.12);
-    --glass-hover: rgba(255, 255, 255, 0.1);
-    --glass-solid: rgba(23, 25, 34, 0.9);      /* menus, dialogs, sticky bars: readable over busy content */
-    --glass-tint: linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
+    /* ---------- Core palette (requested brand tokens) ---------- */
+    --color-background: #FAF8F4;
+    --color-surface: #FFFFFF;
+    --color-surface-alt: #F5F0E8;
+    --color-text: #292725;
+    --color-muted: #77736E;
+    --color-primary: #8B5E3C;
+    --color-secondary: #D9A6A0;
+    --color-secondary-ink: #A2636A;
+    --color-border: #EAE4DB;
 
-    /* Accents */
-    --accent-pink: #FF3E9D;
-    --accent-purple: #9333EA;
-    --accent-cyan: #00D6FF;
-    --accent-green: #22C55E;
-    --accent-orange: #F59E0B;
-    --danger: #F87171;
-    --accent-pink-light: #FF7AC0;
-    --accent-pink-strong: #D81B78;   /* white text on small pink chips stays readable (4.8:1) */
-    --grad-brand-strong: linear-gradient(135deg, #D81B78 0%, #7E22CE 100%);
-    --accent-purple-light: #C084FC;
+    --color-success: #3F7D58;
+    --color-success-soft: #E9F4EC;
+    --color-warning: #9A6A12;
+    --color-warning-soft: #FCF3DF;
+    --color-danger: #B54A4A;
+    --color-danger-soft: #FBECEC;
+    --color-info: #4F7396;
+    --color-info-soft: #ECF2F8;
+    --color-on-accent: #FFFFFF;
 
-    --accent-soft: rgba(255, 62, 157, 0.14);
-    --purple-soft: rgba(147, 51, 234, 0.16);
-    --cyan-soft: rgba(0, 214, 255, 0.12);
-    --success-soft: rgba(34, 197, 94, 0.13);
-    --warning-soft: rgba(245, 158, 11, 0.14);
-    --danger-soft: rgba(248, 113, 113, 0.13);
+    /* ---------- Surfaces ---------- */
+    --bg-primary: var(--color-background);
+    --bg-secondary: var(--color-surface);
+    --bg-elevated: var(--color-surface);
+    --glass-1: rgba(255, 255, 255, 0.78);
+    --glass-2: rgba(255, 255, 255, 0.92);
+    --glass-3: rgba(245, 240, 232, 0.96);
+    --glass-hover: rgba(245, 240, 232, 0.9);
+    --glass-solid: rgba(255, 255, 255, 0.98);
+    --glass-tint: linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(250, 248, 244, 0.82));
 
-    --grad-brand: linear-gradient(135deg, #FF3E9D 0%, #C026D3 52%, #9333EA 100%);
-    --grad-brand-hover: linear-gradient(135deg, #FF5AAD 0%, #D13FE3 52%, #A24BF0 100%);
-    --grad-text: linear-gradient(110deg, #FF7AC0 0%, #E879F9 45%, #A78BFA 100%);
+    /* ---------- Accents (legacy token names kept for every existing page) ---------- */
+    --accent-pink: var(--color-primary);
+    --accent-pink-light: var(--color-secondary-ink);
+    --accent-pink-strong: #7A4E30;
+    --accent-purple: var(--color-secondary-ink);
+    --accent-purple-light: var(--color-secondary);
+    --accent-cyan: var(--color-info);
+    --accent-green: var(--color-success);
+    --accent-orange: var(--color-warning);
+    --danger: var(--color-danger);
 
-    /* Text */
-    --text-primary: #FFFFFF;
-    --text-secondary: #D1D5DB;
-    --text-muted: #9CA3AF;
-    --text-on-accent: #FFFFFF;
+    --accent-soft: rgba(139, 94, 60, 0.1);
+    --purple-soft: rgba(162, 99, 106, 0.1);
+    --cyan-soft: var(--color-info-soft);
+    --success-soft: var(--color-success-soft);
+    --warning-soft: var(--color-warning-soft);
+    --danger-soft: var(--color-danger-soft);
 
-    /* Lines */
-    --line: rgba(255, 255, 255, 0.09);
-    --line-strong: rgba(255, 255, 255, 0.16);
-    --line-accent: rgba(255, 62, 157, 0.5);
-    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    --grad-brand: linear-gradient(135deg, #8B5E3C 0%, #A26A47 55%, #B8767D 100%);
+    --grad-brand-hover: linear-gradient(135deg, #7A4E30 0%, #8B5E3C 55%, #A2636A 100%);
+    --grad-brand-strong: linear-gradient(135deg, #7A4E30 0%, #A2636A 100%);
+    --grad-text: linear-gradient(110deg, #7A4E30 0%, #A2636A 58%, #8B5E3C 100%);
 
-    /* Shape & depth */
+    /* ---------- Text ---------- */
+    --text-primary: var(--color-text);
+    --text-secondary: var(--color-muted);
+    --text-muted: #8A857E;
+    --text-on-accent: var(--color-on-accent);
+
+    /* ---------- Lines ---------- */
+    --line: var(--color-border);
+    --line-strong: #DCD4C8;
+    --line-accent: rgba(139, 94, 60, 0.45);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+    /* ---------- Shape & depth ---------- */
     --radius-xs: 6px;
     --radius-sm: 10px;
     --radius-md: 14px;
     --radius-lg: 18px;
     --radius-xl: 24px;
     --radius-pill: 999px;
-    --shadow-sm: 0 4px 18px rgba(0, 0, 0, 0.32);
-    --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.42);
-    --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.55);
-    --shadow-glow: 0 10px 30px rgba(255, 62, 157, 0.28);
-    --blur: 18px;
+    --shadow-sm: 0 2px 10px rgba(90, 68, 50, 0.06);
+    --shadow-md: 0 10px 28px rgba(90, 68, 50, 0.1);
+    --shadow-lg: 0 22px 55px rgba(90, 68, 50, 0.16);
+    --shadow-glow: 0 10px 26px rgba(139, 94, 60, 0.2);
+    --blur: 14px;
 
-    /* Type */
+    /* ---------- Type ---------- */
     --font-sans: "Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-    --font-display: "Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-display: "Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
 
-    /* Motion */
+    /* ---------- Motion ---------- */
     --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
     --dur: 180ms;
 }
@@ -80,11 +102,10 @@
 
 html {
     min-height: 100%;
-    background-color: var(--bg-primary);
+    background-color: var(--color-background);
     background-image:
-        radial-gradient(1100px 620px at 8% -8%, rgba(147, 51, 234, 0.16), transparent 62%),
-        radial-gradient(900px 560px at 100% 0%, rgba(255, 62, 157, 0.11), transparent 60%),
-        radial-gradient(900px 700px at 50% 115%, rgba(0, 214, 255, 0.05), transparent 60%);
+        radial-gradient(1000px 620px at 4% -10%, rgba(217, 166, 160, 0.14), transparent 62%),
+        radial-gradient(820px 520px at 100% -4%, rgba(139, 94, 60, 0.07), transparent 60%);
     background-attachment: fixed;
     background-repeat: no-repeat;
 }
@@ -96,7 +117,7 @@ body.order-system,
 body.portal-system,
 body.admin-page {
     background: transparent;
-    color: var(--text-primary);
+    color: var(--color-text);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -108,63 +129,63 @@ body.admin-page {
 }
 
 ::selection {
-    background: rgba(255, 62, 157, 0.35);
-    color: #fff;
+    background: rgba(139, 94, 60, 0.2);
+    color: var(--color-text);
 }
 
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
-    outline: 2px solid var(--accent-pink);
+    outline: 2px solid var(--color-primary);
     outline-offset: 2px;
 }
 
 * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    scrollbar-color: rgba(139, 94, 60, 0.28) transparent;
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(139, 94, 60, 0.22);
     border: 2px solid transparent;
     border-radius: 999px;
     background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.24); }
+::-webkit-scrollbar-thumb:hover { background-color: rgba(139, 94, 60, 0.38); }
 
-/* ---------- Form controls (low specificity: page rules still win) ---------- */
+/* ---------- Form controls ---------- */
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]), select, textarea) {
-    color: var(--text-primary);
-    background-color: rgba(255, 255, 255, 0.04);
+    color: var(--color-text);
+    background-color: var(--color-surface);
     border-color: var(--line-strong);
 }
 
 :where(input, select, textarea)::placeholder {
-    color: rgba(209, 213, 219, 0.5);
+    color: #A29C94;
 }
 
 :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):focus {
-    border-color: rgba(255, 62, 157, 0.65);
-    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.14);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 4px rgba(139, 94, 60, 0.12);
     outline: none;
 }
 
 select option,
 select optgroup {
-    background-color: var(--bg-elevated);
-    color: var(--text-primary);
+    background-color: var(--color-surface);
+    color: var(--color-text);
 }
 
 input[type="checkbox"],
 input[type="radio"],
 input[type="range"],
 progress {
-    accent-color: var(--accent-pink);
+    accent-color: var(--color-primary);
 }
 
 input[type="file"] {
-    color: var(--text-secondary);
+    color: var(--color-muted);
 }
 
 input[type="file"]::file-selector-button {
@@ -172,8 +193,8 @@ input[type="file"]::file-selector-button {
     padding: 8px 14px;
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-pill);
-    background: var(--glass-2);
-    color: var(--text-primary);
+    background: var(--color-surface);
+    color: var(--color-text);
     font: inherit;
     font-weight: 600;
     cursor: pointer;
@@ -188,28 +209,23 @@ input[type="file"]::file-selector-button:hover {
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
-    -webkit-text-fill-color: var(--text-primary);
-    -webkit-box-shadow: 0 0 0 1000px #1b1d27 inset;
-    caret-color: var(--text-primary);
+    -webkit-text-fill-color: var(--color-text);
+    -webkit-box-shadow: 0 0 0 1000px #FFFFFF inset;
+    caret-color: var(--color-text);
     transition: background-color 9999s ease-out 0s;
 }
 
 /* ==========================================================================
    Reusable components
-   New markup uses these class names; theme-site.css and admin/theme-admin.css
-   map the existing page classes onto the same look.
    ========================================================================== */
 
-/* Glass surface */
 .glass {
-    background: var(--glass-tint), var(--glass-1);
+    background: var(--color-surface);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-sm), var(--glass-highlight);
-    -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
-    backdrop-filter: blur(var(--blur)) saturate(140%);
+    box-shadow: var(--shadow-sm);
 }
-/* Brand mark */
+
 .brand-mark {
     display: inline-grid;
     place-items: center;
@@ -218,15 +234,15 @@ input:-webkit-autofill:focus {
     height: 38px;
     border-radius: 12px;
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-family: var(--font-display);
     font-size: 0.95rem;
     font-weight: 800;
     font-style: normal;
     letter-spacing: -0.03em;
-    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    box-shadow: 0 6px 16px rgba(139, 94, 60, 0.2);
 }
-/* Buttons */
+
 .btn {
     display: inline-flex;
     align-items: center;
@@ -236,8 +252,8 @@ input:-webkit-autofill:focus {
     padding: 0 20px;
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-pill);
-    background: var(--glass-2);
-    color: var(--text-primary);
+    background: var(--color-surface);
+    color: var(--color-text);
     font: inherit;
     font-size: 0.92rem;
     font-weight: 600;
@@ -247,9 +263,10 @@ input:-webkit-autofill:focus {
 }
 
 .btn:hover {
-    background: var(--glass-3);
-    border-color: rgba(255, 255, 255, 0.26);
+    background: var(--color-surface-alt);
+    border-color: var(--line-accent);
 }
+
 .btn:disabled,
 .btn[aria-disabled="true"] {
     opacity: 0.5;
@@ -258,23 +275,21 @@ input:-webkit-autofill:focus {
     box-shadow: none;
 }
 
-/* Status badges: one colour per meaning */
 .badge {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 4px 10px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line);
     border-radius: var(--radius-pill);
-    background: var(--glass-2);
-    color: var(--text-secondary);
+    background: var(--color-surface-alt);
+    color: var(--color-muted);
     font-size: 0.75rem;
     font-weight: 700;
     line-height: 1.3;
     white-space: nowrap;
 }
-/* Order and payment status colours, shared by the admin tables, the customer portal and order pages.
-   Scripts add the status as a slug class: "Pending Confirmation" → .pending-confirmation */
+
 .status-badge,
 .order-status-pill {
     display: inline-flex;
@@ -282,10 +297,10 @@ input:-webkit-autofill:focus {
     gap: 6px;
     width: fit-content;
     padding: 4px 11px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line);
     border-radius: var(--radius-pill);
-    background: var(--glass-2);
-    color: var(--text-secondary);
+    background: var(--color-surface-alt);
+    color: var(--color-muted);
     font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.01em;
@@ -314,9 +329,9 @@ input:-webkit-autofill:focus {
 .status-banner.accepted-by-the-customer,
 .status-banner.available,
 .status-banner.shown {
-    border-color: rgba(34, 197, 94, 0.38);
-    background: var(--success-soft);
-    color: #4ADE80;
+    border-color: rgba(63, 125, 88, 0.25);
+    background: var(--color-success-soft);
+    color: var(--color-success);
 }
 
 .status-badge.under-review,
@@ -337,9 +352,9 @@ input:-webkit-autofill:focus {
 .status-banner.approved-for-printing,
 .status-banner.quotation-sent,
 .status-banner.waiting-for-the-customer {
-    border-color: rgba(0, 214, 255, 0.34);
-    background: var(--cyan-soft);
-    color: #67E8F9;
+    border-color: rgba(79, 115, 150, 0.25);
+    background: var(--color-info-soft);
+    color: var(--color-info);
 }
 
 .status-badge.in-production,
@@ -351,9 +366,9 @@ input:-webkit-autofill:focus {
 .status-banner.in-production,
 .status-banner.ready-for-pickup,
 .status-banner.out-for-delivery {
-    border-color: rgba(168, 85, 247, 0.42);
-    background: var(--purple-soft);
-    color: #D8B4FE;
+    border-color: rgba(162, 99, 106, 0.25);
+    background: #F8EDEF;
+    color: var(--color-secondary-ink);
 }
 
 .status-badge.pending-confirmation,
@@ -380,9 +395,9 @@ input:-webkit-autofill:focus {
 .status-banner.awaiting-verification,
 .status-banner.partially-paid,
 .status-banner.pending {
-    border-color: rgba(245, 158, 11, 0.4);
-    background: var(--warning-soft);
-    color: #FBBF24;
+    border-color: rgba(154, 106, 18, 0.25);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
 }
 
 .status-badge.quotation-declined,
@@ -400,9 +415,9 @@ input:-webkit-autofill:focus {
 .status-banner.rejected,
 .status-banner.cancelled,
 .status-banner.unpaid {
-    border-color: rgba(248, 113, 113, 0.4);
-    background: var(--danger-soft);
-    color: #FCA5A5;
+    border-color: rgba(181, 74, 74, 0.25);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
 }
 
 /* Shared motion */
@@ -426,11 +441,11 @@ input:-webkit-autofill:focus {
     to { opacity: 1; transform: none; }
 }
 
-/* Native dialogs everywhere get the glass frame and an animated, blurred backdrop */
-dialog::backdrop {
-    background: rgba(5, 6, 9, 0.66);
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
+dialog::backdrop,
+.modal-backdrop {
+    background: rgba(41, 39, 37, 0.34);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
     animation: theme-backdrop-in 200ms ease both;
 }
 
@@ -438,20 +453,16 @@ dialog[open] {
     animation: theme-dialog-in 220ms var(--ease) both;
 }
 
-/* Confirmation dialog (confirm-dialog.js) */
+/* Confirmation dialog */
 .theme-confirm {
     width: min(440px, calc(100vw - 32px));
     margin: auto;
     padding: 26px;
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--line);
     border-radius: var(--radius-xl);
-    background:
-        linear-gradient(160deg, rgba(255, 62, 157, 0.08), transparent 45%),
-        var(--glass-solid);
-    color: var(--text-primary);
-    box-shadow: var(--shadow-lg), var(--glass-highlight);
-    -webkit-backdrop-filter: blur(24px);
-    backdrop-filter: blur(24px);
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: var(--shadow-lg);
 }
 
 .theme-confirm h2 {
@@ -462,7 +473,7 @@ dialog[open] {
 
 .theme-confirm p {
     margin: 0;
-    color: var(--text-secondary);
+    color: var(--color-muted);
     line-height: 1.6;
 }
 
@@ -476,17 +487,16 @@ dialog[open] {
 
 .btn-danger,
 .btn.btn-danger {
-    border: 1px solid rgba(248, 113, 113, 0.5);
-    background: rgba(220, 38, 38, 0.85);
-    color: #fff;
-    box-shadow: 0 8px 22px rgba(220, 38, 38, 0.25);
+    border: 1px solid rgba(181, 74, 74, 0.35);
+    background: var(--color-danger);
+    color: var(--color-on-accent);
+    box-shadow: 0 6px 16px rgba(181, 74, 74, 0.18);
 }
 
 .btn-danger:hover,
 .btn.btn-danger:hover {
-    background: #DC2626;
-    color: #fff;
-    box-shadow: 0 10px 26px rgba(220, 38, 38, 0.35);
+    background: #9E3F3F;
+    color: var(--color-on-accent);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -343,16 +343,32 @@ def approve_cancellation(reference: str, request_id: str, payload: Mapping[str, 
         }
         all_refunds.append(refund)
         request["refund_id"] = refund["id"]
+    updates: dict[str, Any] = {
+        "cancellation_requests": requests, "refunds": all_refunds, "status": "Cancelled", "admin_notes": remarks or order["admin_notes"],
+    }
+    # A reprint still in production can never finish on a cancelled order: close it in the same save,
+    # so reports stop counting the order as completed and no dangling "in progress" reprint remains.
+    reprint = order_services.active_reprint(order)
+    reprint_note = ""
+    if reprint:
+        record = order_services.production(order)
+        record["reprint"] = {
+            **reprint, "status": "cancelled", "cancelled_at": now, "cancelled_by": actor,
+            "cancellation_request_id": request_id,
+        }
+        updates["production"] = record
+        reprint_note = f" The in-progress reprint {reprint['id']} was closed with the cancellation."
     return _save(
         order,
-        {"cancellation_requests": requests, "refunds": all_refunds, "status": "Cancelled", "admin_notes": remarks or order["admin_notes"]},
+        updates,
         f"Administrator approved cancellation request {request_id} at stage {order['status']}. The order is cancelled."
         + (f" Deductions PHP {total_deductions:,.2f} ({justification})." if total_deductions else "")
         + (f" Refund approved: PHP {refund_amount:,.2f} ({request.get('refund_id')})." if refund_amount > 0 else " No refund is due.")
-        + (f" Remarks: {remarks}" if remarks else ""),
+        + (f" Remarks: {remarks}" if remarks else "") + reprint_note,
         payload.get("expected_version"),
         admin=True,
-        audit=_audit("cancellation.approved", ADMIN, actor, request=request_id, refund=refund_amount, deductions=total_deductions),
+        audit=_audit("cancellation.approved", ADMIN, actor, request=request_id, refund=refund_amount, deductions=total_deductions,
+                     **({"reprint": reprint["id"], "reprint_status": "cancelled"} if reprint else {})),
         notifications=notifications,
         claim_ops=[_refund_claim(refund["id"])] if refund_amount > 0 else [],
     )

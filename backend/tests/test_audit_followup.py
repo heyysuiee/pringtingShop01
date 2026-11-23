@@ -65,12 +65,13 @@ class AuditTestCase(operations.OperationsTestCase):
 class ReprintTests(AuditTestCase):
     def test_free_reprint_restarts_production_and_keeps_history(self) -> None:
         reference = self.delivered_order()
+        expected_total = float(stored_order(reference)["total_amount"])
         completed = self.admin_post(reference, "status", {"status": "Completed"})
         first_completed_at = stored_order(reference)["completed_at"]
         original_payments = completed["payments"]
         first_tracking = completed["fulfillment"]["tracking_number"]
         revenue_before = report_services.confirmed_revenue(stored_order(reference))
-        self.assertEqual(revenue_before, 1000.0)
+        self.assertEqual(revenue_before, expected_total)
 
         self.admin_post(reference, "reprint", {"reason": "Faded", "authorized": False}, expect=422)
         self.admin_post(reference, "reprint", {"authorized": True}, expect=422)  # reason required
@@ -85,7 +86,7 @@ class ReprintTests(AuditTestCase):
         self.assertTrue(started["production"]["previous_cycles"][0]["quality_passed"])
         # Original payments, total, and the first delivery are kept; no new payment is due for a free reprint.
         self.assertEqual(started["payments"], original_payments)
-        self.assertEqual((started["total_amount"], started["payment"]["balance"], started["payment"]["next_payment"]), (1000.0, 0.0, None))
+        self.assertEqual((started["total_amount"], started["payment"]["balance"], started["payment"]["next_payment"]), (expected_total, 0.0, None))
         previous = started["fulfillment"]["previous_cycles"][0]
         self.assertEqual(previous["attempts"][0]["tracking_number"], first_tracking)
         self.assertEqual(started["fulfillment"]["attempts"], [])
@@ -93,7 +94,7 @@ class ReprintTests(AuditTestCase):
         # Duplicate reprints are refused while one is in progress.
         self.admin_post(reference, "reprint", self.reprint_body(), expect=409)
         # Reports keep the original completion and revenue while the reprint is in progress.
-        self.assertEqual(report_services.confirmed_revenue(stored_order(reference)), 1000.0)
+        self.assertEqual(report_services.confirmed_revenue(stored_order(reference)), expected_total)
         row = report_services.order_row(stored_order(reference), report_services.ServiceIndex())
         self.assertTrue(row["reported_completed"] and row["reprint_in_progress"])
 
@@ -152,6 +153,44 @@ class ReprintTests(AuditTestCase):
         self.assertEqual(approved["status"], "Approved for Printing")
         self.assertEqual(len(approved["drafts"]), 2)
 
+    def test_cancellation_during_chargeable_reprint_closes_the_reprint(self) -> None:
+        reference = self.delivered_order(1000)
+        self.admin_post(reference, "reprint", self.reprint_body(chargeable=True, charge_amount=300, customer_agreed=True))
+        request_id = self.customer_post(reference, "cancellation-request", {
+            "reason": "change_of_mind", "acknowledged": True, **operations.RECIPIENT,
+        })["cancellation_requests"][0]["id"]
+        # The unpaid reprint charge is not refundable: only verified payments are.
+        self.admin_post(reference, f"cancellations/{request_id}/approve", {"refund_amount": 1300}, expect=422)
+        approved = self.admin_post(reference, f"cancellations/{request_id}/approve", {"refund_amount": 1000})
+        self.assertEqual(approved["status"], "Cancelled")
+        reprint = approved["production"]["reprint"]
+        self.assertEqual((reprint["status"], reprint["cancellation_request_id"]), ("cancelled", request_id))
+        self.assertTrue(reprint["cancelled_at"])
+        self.assertEqual(approved["refunds"][0]["amount"], 1000.0)
+        # A cancelled order must not stay "completed" in reports through a dangling in-progress reprint.
+        stored = stored_order(reference)
+        self.assertFalse(report_services.is_confirmed_revenue(stored))
+        self.assertEqual(report_services.confirmed_revenue(stored), 0.0)
+        self.assertIsNone(report_services.completion_date(stored))
+        row = report_services.order_row(stored, report_services.ServiceIndex())
+        self.assertFalse(row["reprint_in_progress"])
+        self.assertFalse(row["reported_completed"])
+
+    def test_customer_report_keeps_completion_during_reprint(self) -> None:
+        reference = self.delivered_order(1000)
+        self.admin_post(reference, "status", {"status": "Completed"})
+        customer_id = stored_order(reference)["customer_id"]
+        before = report_services.customer_detail(customer_id)
+        self.admin_post(reference, "reprint", self.reprint_body(chargeable=True, charge_amount=300, customer_agreed=True))
+        # The customer report uses the same completion rule as the order report and the revenue it shows.
+        after = report_services.customer_detail(customer_id)
+        completed = lambda detail: sum(item["completed"] for item in detail["service_history"])
+        self.assertEqual(after["customer"]["completed_orders"] - before["customer"]["completed_orders"], 0)
+        self.assertEqual(completed(after) - completed(before), 0)
+        # Revenue is unchanged until the reprint is completed; the new charge is not revenue yet.
+        self.assertEqual(round(after["customer"]["total_spent"] - before["customer"]["total_spent"], 2), 0.0)
+        self.assertEqual(round(after["customer"]["total_paid"] - before["customer"]["total_paid"], 2), 0.0)
+
 
 # ====================================================================== financial accuracy
 
@@ -163,12 +202,64 @@ class FinancialAccuracyTests(AuditTestCase):
         self.assertEqual((first["status"], first["payment"]["down_payment_remaining"], first["payment"]["balance"]), ("Awaiting Down Payment", 300.25, 800.75))
         second = self.admin_post(reference, "payments", {"amount": 300.25, "method": "GCash", "reference": workflow.unique_reference(), "received": True})
         self.assertEqual((second["status"], second["payment"]["balance"]), ("Confirmed", 500.5))
-        self.admin_post(reference, "payments", {"amount": 500.51, "method": "Cash", "received": True}, expect=422)  # cannot overpay
+        # An excess is accepted only as received money flagged for review; it is covered in its own test
+        # below so it cannot change the expected totals for this ordinary two-payment order.
         third = self.admin_post(reference, "payments", {"amount": 500.5, "method": "Cash", "received": True})
         self.assertEqual((third["payment"]["balance"], third["payment"]["next_payment"]), (0.0, None))
         self.submit_payment(reference, expect=409)  # nothing left to pay
         summary = report_services.payment_summary([stored_order(reference)], [], None, None)
         self.assertEqual((summary["verified_collections"], summary["down_payments"], summary["balance_payments"]), (1001.0, 500.5, 500.5))
+
+    def test_admin_overpayment_is_held_for_review_and_not_counted(self) -> None:
+        reference = self.accept(self.customized_order(1000))["reference"]
+        self.admin_post(reference, "payments", {"amount": 500, "method": "Cash", "received": True})
+
+        over = self.admin_post(reference, "payments", {"amount": 500.51, "method": "Cash", "received": True})
+        payment = over["payments"][-1]
+        # The full receipt is kept for the audit trail, but only the remaining balance is credited.
+        self.assertEqual(payment["amount"], 500.51)
+        self.assertEqual(payment["applied_amount"], 500.0)
+        self.assertEqual(payment["excess_amount"], 0.51)
+        self.assertTrue(payment["requires_admin_review"])
+        self.assertEqual(payment["excess_review_status"], "pending")
+        self.assertTrue(payment["verification"]["admin_review_required"])
+        self.assertEqual(payment["verification"]["status"], "verified")
+
+        self.assertEqual(over["payment"]["amount_paid"], 1000.0)
+        self.assertEqual(over["payment"]["payment_status"], "Excess Payment")
+        self.assertEqual(over["payment"]["excess_amount"], 0.51)
+        self.assertEqual(over["payment"]["balance"], 0.0)
+        self.assertEqual(over["payment"]["remaining_balance_exact"], 0.0)
+        self.assertTrue(any(
+            "EXCESS of PHP 0.51 was held for admin review; only PHP 500.00 was credited." in entry["text"]
+            for entry in stored_order(reference)["history"]
+        ))
+
+        # The excess is not cash-flow revenue, and another payment cannot be added while it is unresolved.
+        summary = report_services.payment_summary([stored_order(reference)], [], None, None)
+        self.assertEqual(summary["received_total"], 1000.0)
+        self.admin_post(reference, "payments", {"amount": 1, "method": "Cash", "received": True}, expect=409)
+
+    def test_excess_must_be_resolved_before_completion(self) -> None:
+        reference = self.delivered_order(1000)
+        over = self.admin_post(reference, "payments", {"amount": 100, "method": "Cash", "received": True})
+        payment_number = len(over["payments"])
+        order_total = float(over["payment"]["total_amount"])
+        self.assertEqual(over["payment"]["payment_status"], "Excess Payment")
+        self.admin_post(reference, "status", {"status": "Completed"}, expect=409)
+
+        resolved = self.admin_post(
+            reference,
+            f"payments/{payment_number}/excess",
+            {"resolution": "returned", "note": "Returned the extra PHP 100 at the counter."},
+        )
+        payment = resolved["payments"][-1]
+        self.assertEqual(payment["excess_review_status"], "resolved")
+        self.assertEqual(payment["amount"], 100.0)
+        self.assertEqual(payment["applied_amount"], 0.0)
+        self.assertEqual(resolved["payment"]["amount_paid"], order_total)
+        self.assertEqual(resolved["payment"]["payment_status"], "Fully Paid")
+        self.assertEqual(self.admin_post(reference, "status", {"status": "Completed"})["status"], "Completed")
 
     def test_duplicate_payment_reference_is_refused_across_orders(self) -> None:
         shared = workflow.unique_reference()
@@ -176,6 +267,28 @@ class FinancialAccuracyTests(AuditTestCase):
         second = self.accept(self.customized_order(500))["reference"]
         self.submit_payment(first, payment_reference=shared)
         self.submit_payment(second, payment_reference=shared.lower(), expect=409)
+
+    def test_same_receipt_file_cannot_credit_two_orders(self) -> None:
+        shared_receipt = {"name": "gcash.png", "dataUrl": PNG}
+        first = self.accept(self.customized_order(1000))["reference"]
+        second = self.accept(self.customized_order(1000))["reference"]
+        self.customer_post(first, "payments", {
+            "reference": workflow.unique_reference(), "proof": shared_receipt,
+        })
+        self.customer_post(second, "payments", {
+            "reference": workflow.unique_reference(), "proof": shared_receipt,
+        })
+        self.assertEqual(len(self.admin_view(first)["payment_submissions"]), 1)
+        self.assertEqual(len(self.admin_view(second)["payment_submissions"]), 1)
+
+        verified = self.verify(first)
+        self.assertEqual(verified["payment"]["amount_paid"], 500.0)
+        second_submission = self.pending_submission(second)
+        self.admin_post(second, f"payment-submissions/{second_submission['id']}/verify", {"received": True}, expect=409)
+        blocked = self.admin_view(second)
+        self.assertEqual(blocked["payments"], [])
+        self.assertEqual(blocked["payment"]["amount_paid"], 0.0)
+        self.assertEqual(second_submission["status"], "pending")
 
     def test_refunds_reduce_net_collections_only_when_completed(self) -> None:
         reference = self.confirmed_order(1000)["reference"]

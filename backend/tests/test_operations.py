@@ -170,8 +170,8 @@ class DeliveryFeeTests(OperationsTestCase):
         # Fixed-price orders include the fee in their published total.
         package = self.place_package(25, fulfillment=CEBU)
         self.assertEqual((package["total_amount"], package["payment"]["delivery_fee"]), (375.0 + 150.0, 150.0))
-        # Luzon has no fee configured here.
-        self.assertEqual(self.place(fulfillment=workflow.DELIVERY)["fulfillment"]["delivery_fee"], 0.0)
+        # Luzon uses the official default fee when the administrator has not overridden it.
+        self.assertEqual(self.place(fulfillment=workflow.DELIVERY)["fulfillment"]["delivery_fee"], 58.0)
         # A cheaper area cannot be chosen for an address outside it.
         self.place(fulfillment={**CEBU, "area_id": "luzon"}, expect=422)
         self.assertEqual(self.place(fulfillment={**CEBU, "area_id": "visayas"})["fulfillment"]["delivery_fee"], 150.0)

@@ -4,6 +4,10 @@ The dataset is a bundled snapshot of the Philippine Standard Geographic Code (PS
 National Statistics Office (psgc.gitlab.io/api). It contains every province and its cities/municipalities,
 plus Metro Manila's cities. It is reference data only: no application data or settings are stored here,
 and the order continues to store the plain province/city strings customers have always used.
+
+The bundled snapshot is the application's Province API. A failed or unreadable lookup is reported as a
+503: callers must never fall back to guessing an island group, because a guessed group would charge the
+wrong shipping fee.
 """
 from __future__ import annotations
 
@@ -16,12 +20,23 @@ from typing import Any
 from fastapi import HTTPException
 
 DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "philippine_locations.json"
+PROVINCE_UNAVAILABLE = "The province lookup service is unavailable right now. Try again later."
 
 
 @lru_cache(maxsize=1)
 def dataset() -> dict[str, Any]:
     with DATA_FILE.open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _safe_dataset() -> dict[str, Any]:
+    """The Province API boundary: any lookup failure becomes a clear 503, never a default region."""
+    try:
+        return dataset()
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=PROVINCE_UNAVAILABLE) from error
 
 
 def _key(value: Any) -> str:
@@ -43,7 +58,7 @@ def city_key(value: Any) -> str:
 
 def public_locations() -> dict[str, Any]:
     """The dependent dropdown data: regions, provinces, and each province's cities/municipalities."""
-    data = dataset()
+    data = _safe_dataset()
     return {
         "source": data["source"],
         "regions": data["regions"],
@@ -70,17 +85,51 @@ def canonical_province(value: Any) -> str | None:
     key = province_key(value)
     if not key:
         return None
-    match = next((item for item in dataset()["provinces"] if province_key(item["name"]) == key), None)
+    match = next((item for item in _safe_dataset()["provinces"] if province_key(item["name"]) == key), None)
     return str(match["name"]) if match else None
 
 
 def region_for_province(province: Any) -> str | None:
     """Island group of a known province, or None for legacy/free-text values."""
     key = province_key(province)
-    for item in dataset()["provinces"]:
+    for item in _safe_dataset()["provinces"]:
         if province_key(item["name"]) == key:
             return item["island_group"]
     return None
+
+
+def _province_match(data: dict[str, Any], province: Any) -> dict[str, Any]:
+    text = str(province or "").strip()
+    match = next(
+        (item for item in data["provinces"] if province_key(item["name"]) == province_key(text)),
+        None,
+    )
+    if match is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Province: “{text or 'blank'}” is not a recognized Philippine province. Choose one from the list.",
+        )
+    return match
+
+
+def _province_view(match: dict[str, Any]) -> dict[str, str]:
+    group = str(match["island_group"]).casefold()
+    return {
+        "province": str(match["name"]),
+        "region": str(match["region"]),
+        "region_code": str(match["region_code"]),
+        "island_group": group,
+        "region_label": group.capitalize(),
+    }
+
+
+def resolve_province(province: Any) -> dict[str, str]:
+    """Resolve a province through the Province API without ever guessing its island group.
+
+    The returned ``island_group`` is the shipping region key (luzon/visayas/mindanao), ``region`` is
+    the named PSGC region, and ``region_label`` is the island group's display name.
+    """
+    return _province_view(_province_match(_safe_dataset(), province))
 
 
 def resolve_address(province: Any, city: Any) -> dict[str, str]:
@@ -88,24 +137,12 @@ def resolve_address(province: Any, city: Any) -> dict[str, str]:
 
     Error messages name the field the customer must correct, so the order form can show them inline.
     """
-    province_text = str(province or "").strip()
+    match = _province_match(_safe_dataset(), province)
     city_text = str(city or "").strip()
-    match = next((item for item in dataset()["provinces"] if province_key(item["name"]) == province_key(province_text)), None)
-    if match is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Province: “{province_text or 'blank'}” is not a recognized Philippine province. Choose one from the list.",
-        )
     city_match = next((item for item in match["cities"] if city_key(item["name"]) == city_key(city_text)), None)
     if city_match is None:
         raise HTTPException(
             status_code=422,
             detail=f"City / Municipality: “{city_text or 'blank'}” is not in {match['name']}. Choose one from the list for the selected province.",
         )
-    return {
-        "province": match["name"],
-        "city": city_match["name"],
-        "region": match["region"],
-        "region_code": match["region_code"],
-        "island_group": match["island_group"],
-    }
+    return {**_province_view(match), "city": str(city_match["name"])}

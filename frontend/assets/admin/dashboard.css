@@ -311,7 +311,7 @@ button {
     font-size: 19px;
 }
 .dialog-close:hover {
-    background: rgba(255, 255, 255, 0.074);
+    background: rgba(255, 255, 255, 0.4439);
 }
 
 .page-heading {
@@ -823,7 +823,7 @@ button {
     height: 16px;
     border-radius: 50%;
     background: var(--glass-1);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 1px 3px rgba(90, 68, 50, 0.2);
     content: "";
     transition: transform 160ms ease;
 }
@@ -899,8 +899,8 @@ button {
 }
 
 @keyframes toast-in {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity:0; transform:translateY(6px); }
+    to { opacity:1; transform:translateY(0); }
 }
 
 @media (max-width: 1180px) {
@@ -987,7 +987,7 @@ button {
         z-index: 30;
         width: 258px;
         align-items: stretch;
-        box-shadow: 12px 0 28px rgba(0, 0, 0, 0.416);
+        box-shadow: 12px 0 28px rgba(90, 68, 50, 0.1664);
         transform: translateX(-105%);
         transition: transform 200ms ease;
     }
@@ -1154,7 +1154,7 @@ button {
     }
 }
 .sidebar {
-    border-right-color: rgba(255, 255, 255, 0.08);
+    border-right-color: rgba(139, 94, 60, 0.1);
 }
 
 .admin-brand {
@@ -1162,8 +1162,8 @@ button {
 }
 
 .admin-brand-mark {
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(139, 94, 60, 0.153);
+    background: rgba(255, 255, 255, 0.54);
     color: var(--text-secondary);
 }
 
@@ -1190,17 +1190,17 @@ button {
 }
 
 .nav-count {
-    background: rgba(255, 255, 255, 0.09);
+    background: rgba(255, 255, 255, 0.54);
     color: var(--text-secondary);
 }
 
 .sidebar-user {
-    border-top-color: rgba(255, 255, 255, 0.13);
+    border-top-color: rgba(139, 94, 60, 0.1105);
 }
 
 .avatar {
-    border-color: rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(139, 94, 60, 0.153);
+    background: rgba(255, 255, 255, 0.6);
     color: var(--text-secondary);
 }
 
@@ -1257,7 +1257,7 @@ button {
 }
 
 .stat-card:hover {
-    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.288);
+    box-shadow: 0 16px 34px rgba(90, 68, 50, 0.1152);
     transform: translateY(-2px);
 }
 
@@ -1313,7 +1313,7 @@ button {
 .form-field select:focus,
 .form-field textarea:focus {
     border-color: var(--green);
-    outline: 3px solid rgba(255, 255, 255, 0.126);
+    outline: 3px solid rgba(139, 94, 60, 0.1071);
     outline-offset: 1px;
 }
 
@@ -1401,7 +1401,7 @@ button {
     border-right: 1px solid var(--admin-border);
     background: var(--admin-surface);
     color: var(--admin-text);
-    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.224);
+    box-shadow: 4px 0 18px rgba(90, 68, 50, 0.0896);
 }
 
 .admin-brand strong,
@@ -1451,8 +1451,8 @@ button {
 
 .topbar {
     border-bottom: 1px solid var(--admin-border);
-    background: rgba(16, 17, 22, 0.92);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.192);
+    background: rgba(250, 248, 244, 0.98);
+    box-shadow: 0 2px 12px rgba(90, 68, 50, 0.0768);
 }
 
 .breadcrumb,
@@ -1536,7 +1536,7 @@ button {
     border: 1px solid var(--admin-border);
     border-radius: 12px;
     background: var(--admin-surface);
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.192);
+    box-shadow: 0 3px 12px rgba(90, 68, 50, 0.0768);
 }
 
 .data-table th {
@@ -1572,7 +1572,7 @@ button {
     border-radius: var(--admin-control-radius);
     color: var(--admin-text);
     font-size: 14px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.224);
+    box-shadow: 0 2px 6px rgba(90, 68, 50, 0.0896);
 }
 
 .button {
@@ -1633,7 +1633,7 @@ button {
 .search-control input::placeholder,
 .form-field input::placeholder,
 .form-field textarea::placeholder {
-    color: rgba(255, 255, 255, 0.65);
+    color: rgba(41, 39, 37, 0.65);
     opacity: 1;
 }
 
@@ -1642,7 +1642,7 @@ button {
 .form-field select:focus,
 .form-field textarea:focus {
     border-color: var(--line-accent);
-    outline: 3px solid rgba(255, 255, 255, 0.144);
+    outline: 3px solid rgba(139, 94, 60, 0.1223);
     outline-offset: 2px;
 }
 
@@ -1691,11 +1691,11 @@ input[type="radio"] {
     border-radius: 18px;
     background: var(--glass-1);
     color: var(--admin-text);
-    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 24px 70px rgba(90, 68, 50, 0.2);
 }
 
 .admin-dialog::backdrop {
-    background: rgba(8, 9, 13, 0.52);
+    background: rgba(250, 248, 244, 0.82);
     backdrop-filter: blur(3px);
 }
 
@@ -1717,7 +1717,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-    outline: 3px solid rgba(255, 255, 255, 0.18);
+    outline: 3px solid rgba(139, 94, 60, 0.153);
     outline-offset: 2px;
 }
 
@@ -2113,16 +2113,16 @@ textarea:focus-visible {
 }
 
 .ocr-match .ocr-state {
-    color: #2e7d46;
+    color: var(--color-success);
 }
 
 .ocr-inconsistent .ocr-state {
-    color: #b42d2d;
+    color: var(--color-danger);
 }
 
 .ocr-missing .ocr-state,
 .ocr-pending .ocr-state {
-    color: #8a6410;
+    color: var(--color-warning);
 }
 
 .ocr-checks {
@@ -2151,11 +2151,157 @@ textarea:focus-visible {
 
 .ocr-confidence.low {
     background: rgba(180, 45, 45, 0.12);
-    color: #b42d2d;
+    color: var(--color-danger);
+}
+
+/* ---------- Integrated Confirm Received Payment modal ---------- */
+
+.confirm-sections {
+    display: grid;
+    gap: 12px;
+}
+
+.confirm-section {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--white);
+}
+
+.confirm-section > h5 {
+    margin: 0 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    color: var(--dark-brown);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.confirm-section .notice-card {
+    margin: 0 0 10px;
+}
+
+.receipt-preview {
+    display: grid;
+    gap: 8px;
+}
+
+.receipt-preview-image {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    max-height: 340px;
+    padding: 0;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--white);
+    cursor: zoom-in;
+}
+
+.receipt-preview-image img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.receipt-preview-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.verify-statuses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.verify-status {
+    display: inline-block;
+    padding: 3px 8px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.verify-success,
+.verify-info {
+    background: rgba(46, 125, 70, 0.1);
+    color: var(--color-success);
+}
+
+.verify-info {
+    background: var(--accent-soft);
+    color: var(--text-primary);
+}
+
+.verify-warning {
+    background: rgba(180, 130, 20, 0.12);
+    color: var(--color-warning);
+}
+
+.verify-danger {
+    background: rgba(180, 45, 45, 0.11);
+    color: var(--color-danger);
+}
+
+/* ---------- Payment verification details modal ---------- */
+
+.verification-modal-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+    gap: 12px;
+    align-items: start;
+    margin: 12px 0;
+}
+
+.verify-pane {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--white);
+}
+
+.verify-pane > h3 {
+    margin: 0 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    color: var(--dark-brown);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.verify-pane .receipt-preview-image {
+    max-width: 100%;
+}
+
+.verify-calculation {
+    grid-column: 1 / -1;
+    background: var(--accent-soft);
+}
+
+.verify-calculation > h3 {
+    border-bottom-color: var(--line);
+}
+
+.confirm-payment-form.ocr-locked .form-field input[readonly],
+.confirm-payment-form.ocr-locked .form-field select:disabled {
+    background: var(--accent-soft);
+    color: var(--muted);
 }
 
 @media (max-width: 900px) {
-    .ocr-compare {
+    .ocr-compare,
+    .verification-modal-grid {
         grid-template-columns: 1fr;
     }
 }

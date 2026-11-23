@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#08090D">
+    <meta name="theme-color" content="#FAF8F4">
     <meta name="description" content="Thoughtfully made prints, invitations, Sintra boards, souvenirs, and keepsakes for life's special moments.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,6 +13,8 @@
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
     <link rel="stylesheet" href="/assets/chatbot.css">
+    <link rel="stylesheet" href="/assets/light-theme.css">
+    <script src="/assets/theme-toggle.js"></script>
     <title>Printing Shop — Made for your moments</title>
 </head>
 
@@ -20,14 +22,6 @@
     <!-- Top Information Bar -->
     <div class="top-bar">
         <div class="top-bar-content">
-            <p data-home-field="contact_info">
-                <svg class="top-bar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-                (555) 123-4567 • (0949) 157-4778
-            </p>
-            <p data-home-field="address">
-                <svg class="top-bar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                123 Main Street, Anytown, USA
-            </p>
             <p data-home-field="email">
                 <svg class="top-bar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
                 printImpress@gmail.com • Mon–Sat 8AM–6PM
@@ -46,7 +40,7 @@
             <span></span><span></span><span></span>
         </button>
         <div class="nav-menu" id="navLinks">
-            <a href="/home" class="active">Home</a>
+            <a href="/home" class="active" aria-current="page">Home</a>
             <a href="/services">Services</a>
             <a href="/order">Order</a>
             <a href="/sample-work">Sample Work</a>
@@ -400,62 +394,62 @@
 
             <div class="faq-accordion">
                 <div class="faq-item">
-                    <button class="faq-question" type="button" aria-expanded="false">
+                    <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-1">
                         <span>What file formats and image resolutions do you accept?</span>
                         <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <div class="faq-answer">
+                    <div class="faq-answer" id="faq-answer-1" role="region" hidden>
                         <p>We accept PDF, PNG, JPG, TIFF, PSD (Photoshop), and Canva shared links. For the sharpest results, we recommend a resolution of 300 DPI for hand-held prints (invitations, mugs, stickers) and at least 150 DPI at actual size for large tarpaulins.</p>
                     </div>
                 </div>
 
                 <div class="faq-item">
-                    <button class="faq-question" type="button" aria-expanded="false">
+                    <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-2">
                         <span>How long does production take, and do you offer rush orders?</span>
                         <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <div class="faq-answer">
-                        <p>Our standard production turnaround is 2 to 4 business days upon artwork approval. If you are on a tight deadline, we offer an expedited Rush Service (24 to 48-hour dispatch) for an additional rush fee depending on the product volume.</p>
+                    <div class="faq-answer" id="faq-answer-2" role="region" hidden>
+                        <p>Our standard production turnaround is 2 to 5 business days upon artwork approval. If you are on a tight deadline, we offer an expedited Rush Service (24 to 48-hour dispatch) for an additional rush fee depending on the product volume.</p>
                     </div>
                 </div>
 
                 <div class="faq-item">
-                    <button class="faq-question" type="button" aria-expanded="false">
+                    <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-3">
                         <span>Do you have a Minimum Order Quantity (MOQ)?</span>
                         <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <div class="faq-answer">
+                    <div class="faq-answer" id="faq-answer-3" role="region" hidden>
                         <p>No MOQ is required for Sintra boards, tarpaulins, canvas tote bags, and individual photo mugs — you can order as little as 1 piece! For invitations, party favors, and ref magnets, minimum orders start at 20 to 30 pieces to give you the most economical pricing per item.</p>
                     </div>
                 </div>
 
                 <div class="faq-item">
-                    <button class="faq-question" type="button" aria-expanded="false">
+                    <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-4">
                         <span>Can you help me design if I don't have finished artwork?</span>
                         <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <div class="faq-answer">
+                    <div class="faq-answer" id="faq-answer-4" role="region" hidden>
                         <p>Yes, absolutely! Our in-house layout artists can help turn your photos, themes, and wording into professional layouts. Simply share your event details, colors, and inspirations when placing your order, and we will send a layout draft for your review.</p>
                     </div>
                 </div>
 
                 <div class="faq-item">
-                    <button class="faq-question" type="button" aria-expanded="false">
+                    <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-5">
                         <span>Are the Sintra boards and outdoor banners truly waterproof?</span>
                         <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <div class="faq-answer">
+                    <div class="faq-answer" id="faq-answer-5" role="region" hidden>
                         <p>Yes. Our Sintra boards are made from solid high-density PVC topped with anti-fade laminates that won't warp or smudge when wiped with a damp cloth. Our tarpaulins are printed with heavy-duty eco-solvent inks engineered for outdoor rain and sun exposure.</p>
                     </div>
                 </div>
 
                 <div class="faq-item">
-                    <button class="faq-question" type="button" aria-expanded="false">
+                    <button class="faq-question" type="button" aria-expanded="false" aria-controls="faq-answer-6">
                         <span>What payment methods do you accept, and how do I receive my order?</span>
                         <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
-                    <div class="faq-answer">
-                        <p>We accept GCash, Maya, Bank Transfer (BDO, BPI), and cash on local store pick-up. For orders outside our local area, we ship securely via nationwide courier services with bubble wrap and sturdy box packaging to prevent bent corners.</p>
+                    <div class="faq-answer" id="faq-answer-6" role="region" hidden>
+                        <p>A 50% down payment is required for every order. Available e-wallets, account details, and any delivery fee are shown in your customer portal after the shop reviews your request. We ship securely with protective packaging when delivery is selected.</p>
                     </div>
                 </div>
             </div>
@@ -470,8 +464,8 @@
                 <h2>Let's print something extraordinary together</h2>
                 <p>Whether you need wedding invitations, high-definition photo boards, or bulk event souvenirs, our team is ready to bring your vision to life.</p>
                 <div class="cta-actions">
-                    <a href="/order" class="btn-cta-primary">
-                        <span>Place an Order Online</span>
+                    <a href="/sample-work" class="btn-cta-primary">
+                        <span>See sample work</span>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </a>
                     <a href="mailto:printImpress@gmail.com" class="btn-cta-secondary">
@@ -492,8 +486,6 @@
                     <span class="footer-brand"><span class="brand-mark" aria-hidden="true">iP</span>ImPRESSion PrintShop</span>
                     <p class="footer-tagline">imPRESSions Print Works — Thoughtfully made prints and keepsakes tailored for life's most cherished memories.</p>
                     <div class="footer-contact-details">
-                        <p>📍 123 Main Street, Anytown, USA</p>
-                        <p>📞 (555) 123-4567 • (0949) 157-4778</p>
                         <p>✉️ printImpress@gmail.com</p>
                         <p>🕒 Mon - Sat: 8:00 AM - 6:00 PM</p>
                     </div>
@@ -530,13 +522,7 @@
                 <!-- Col 4: Payments & Guarantee -->
                 <div class="footer-col">
                     <h4 class="footer-title">Payments & Trust</h4>
-                    <p class="footer-subtext">We accept secure cashless payments and local pickups:</p>
-                    <div class="payment-pills">
-                        <span class="pay-pill">GCash</span>
-                        <span class="pay-pill">Maya</span>
-                        <span class="pay-pill">Bank Transfer</span>
-                        <span class="pay-pill">Cash on Pickup</span>
-                    </div>
+                    <p class="footer-subtext">Payment details are confirmed after your order is reviewed. The active e-wallets and account details are shown in your customer portal.</p>
                     <div class="guarantee-box">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                         <span>100% Quality & Pre-Flight Check Guarantee</span>

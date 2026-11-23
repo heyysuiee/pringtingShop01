@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#08090D">
+    <meta name="theme-color" content="#FAF8F4">
     <meta name="description" content="Explore invitation, souvenir, sticker, Sintra board, party needs, tarpaulin, and T-shirt printing services.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,6 +13,8 @@
     <link rel="stylesheet" href="/assets/theme.css">
     <link rel="stylesheet" href="/assets/theme-site.css">
     <link rel="stylesheet" href="/assets/chatbot.css">
+    <link rel="stylesheet" href="/assets/light-theme.css">
+    <script src="/assets/theme-toggle.js"></script>
     <title>Services — Printing Shop</title>
 </head>
 
@@ -28,10 +30,10 @@
         <div class="nav-brand">
             <a class="brand-link" href="/home" aria-label="ImPRESSion PrintShop home"><span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word">ImPRESSion <span>PrintShop</span></span></a>
         </div>
-        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="navMenu" aria-label="Open menu">
             <span></span><span></span><span></span>
         </button>
-        <div class="nav-menu">
+        <div class="nav-menu" id="navMenu">
             <a href="/home">Home</a>
             <a href="/services" class="active" aria-current="page">Services</a>
             <a href="/order">Order</a>
@@ -60,11 +62,6 @@
                 </header>
 
                 <div class="service-categories" id="service-categories" aria-live="polite"></div>
-
-                <nav class="service-catalog-shortcuts" aria-label="More printing information">
-                    <span>Looking for more inspiration?</span>
-                    <a href="/sample-work">Browse all sample designs <span aria-hidden="true">→</span></a>
-                </nav>
             </section>
         </div>
     </main>

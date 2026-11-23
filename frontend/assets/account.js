@@ -10,6 +10,10 @@
     const signedOut = document.querySelector("#account-signed-out");
     const message = document.querySelector("#account-message");
     const profileForm = document.querySelector("#customer-profile-form");
+    const addressForm = document.querySelector("#customer-address-form");
+    const addressProvince = document.querySelector("#address-province");
+    const addressCity = document.querySelector("#address-city");
+    const addressRegion = document.querySelector("#address-region");
     const ordersContainer = document.querySelector("#account-orders");
     const notificationsList = document.querySelector("#account-notifications");
     const notificationCount = document.querySelector("#notification-count");
@@ -22,6 +26,8 @@
     if (!panel) return;
 
     let activeCustomer = null;
+    let locationData = { provinces: [] };
+    let pendingSavedAddress = null;
 
     function setNotificationsOpen(open) {
         if (!notifyPanel || !notifyToggle) return;
@@ -54,6 +60,66 @@
         const digits = String(value || "").replace(/\D/g, "");
         return /^(?:0|63)9\d{9}$/.test(digits) || /^0\d{7,9}$/.test(digits);
     }
+
+    // PSGC names can appear with a "(Province)" suffix; match on the normalized key used by the server.
+    const locationKey = (value) => String(value || "").toLowerCase().replace(/\s*\([^)]*\)/g, "")
+        .replace(/^province of\s+/, "").replace(/\s+province$/, "").trim();
+    const selectedAddressProvince = () => locationData.provinces.find(
+        (item) => locationKey(item.name) === locationKey(addressProvince?.value),
+    ) || null;
+
+    /** Keep the city list dependent on the province; the server repeats this check before saving. */
+    function syncAddressCities(preferredCity = "") {
+        if (!addressCity) return;
+        const province = selectedAddressProvince();
+        addressCity.replaceChildren(
+            new Option(province ? "Select city / municipality" : "Select province first", ""),
+            ...(province?.cities || []).map((name) => new Option(name, name)),
+        );
+        if (preferredCity) {
+            const match = (province?.cities || []).find((name) => locationKey(name) === locationKey(preferredCity));
+            if (match) addressCity.value = match;
+        }
+        if (addressRegion) {
+            addressRegion.textContent = province
+                ? `${province.region} · ${province.island_group.charAt(0).toUpperCase()}${province.island_group.slice(1)}`
+                : "";
+        }
+    }
+
+    /** Load the PSGC dropdown data, then fill any saved address that arrived before it. */
+    async function loadLocationOptions() {
+        if (!addressProvince) return;
+        try {
+            locationData = await request("/api/locations");
+            addressProvince.replaceChildren(
+                new Option("Select province", ""),
+                ...locationData.provinces.map((item) => new Option(item.name, item.name)),
+            );
+            syncAddressCities();
+            const saved = pendingSavedAddress || activeCustomer?.saved_address;
+            if (saved) applySavedAddress(saved);
+        } catch (error) {
+            if (addressRegion) addressRegion.textContent = "The address list is unavailable. Refresh the page to try again.";
+            handleFailure(error, "The address list could not be loaded.");
+        }
+    }
+
+    /** Populate the saved-address form from the account; checkout prefills from this same record. */
+    function applySavedAddress(saved) {
+        if (!saved || !addressForm || !locationData.provinces.length) {
+            pendingSavedAddress = saved || null;
+            return;
+        }
+        for (const [name, value] of Object.entries(saved)) {
+            const input = addressForm.elements.namedItem(name);
+            if (input) input.value = value || "";
+        }
+        syncAddressCities(saved.city || "");
+        pendingSavedAddress = null;
+    }
+
+    addressProvince?.addEventListener("change", () => syncAddressCities());
 
     function showMessage(text, isError = false) {
         if (!message) return;
@@ -132,6 +198,7 @@
             const input = profileForm.elements.namedItem(name);
             if (input) input.value = value || "";
         }
+        applySavedAddress(customer.saved_address);
         void loadOrders();
         void loadNotifications();
     }
@@ -275,6 +342,8 @@
     document.addEventListener("customer-session-ended", sessionEnded);
 
     profileForm?.elements.phone?.addEventListener("input", () => profileForm.elements.phone.setCustomValidity(""));
+    addressForm?.elements.namedItem("contact_number")?.addEventListener("input", (event) => event.currentTarget.setCustomValidity(""));
+    addressForm?.elements.namedItem("city")?.addEventListener("input", (event) => event.currentTarget.setCustomValidity(""));
 
     profileForm?.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -311,6 +380,54 @@
         }
     });
 
+    addressForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const contactField = addressForm.elements.namedItem("contact_number");
+        const cityField = addressForm.elements.namedItem("city");
+        contactField.setCustomValidity("");
+        cityField.setCustomValidity("");
+        if (!validPhone(contactField.value)) {
+            contactField.setCustomValidity("Enter a valid Philippine mobile or landline number.");
+            contactField.reportValidity();
+            return;
+        }
+        const province = selectedAddressProvince();
+        const city = (province?.cities || []).find((name) => locationKey(name) === locationKey(cityField.value));
+        if (!province || !city) {
+            cityField.setCustomValidity("Choose a city or municipality in the selected province.");
+            cityField.reportValidity();
+            return;
+        }
+        if (!addressForm.reportValidity() || !activeCustomer) return;
+        showMessage("");
+        const button = addressForm.querySelector('[type="submit"]');
+        button.disabled = true;
+        const values = new FormData(addressForm);
+        try {
+            const result = await request("/api/account/delivery-address", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    recipient_name: String(values.get("recipient_name") || "").trim(),
+                    contact_number: String(values.get("contact_number") || "").trim(),
+                    street: String(values.get("street") || "").trim(),
+                    barangay: String(values.get("barangay") || "").trim(),
+                    province: province.name,
+                    city,
+                    landmark: String(values.get("landmark") || "").trim(),
+                    delivery_instructions: String(values.get("delivery_instructions") || "").trim(),
+                }),
+            });
+            activeCustomer = result.customer;
+            applySavedAddress(result.customer.saved_address);
+            showMessage("Your delivery address was saved. It will be filled in at checkout.");
+        } catch (error) {
+            handleFailure(error, "Your delivery address could not be saved.");
+        } finally {
+            button.disabled = false;
+        }
+    });
+
     document.querySelector("#customer-logout")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
         button.disabled = true;
@@ -328,4 +445,5 @@
     request("/api/customer/session")
         .then((result) => renderCustomer(result.customer))
         .catch(showSignedOut);
+    void loadLocationOptions();
 })();

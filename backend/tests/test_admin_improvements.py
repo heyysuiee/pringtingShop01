@@ -120,7 +120,7 @@ class PaymentReferenceTests(AdminTestCase):
         payment = view["payments"][0]
         self.assertEqual(payment["reference"], "GC-9001-2026")
         self.assertEqual(payment["reference_type"], "transaction")
-        self.assertEqual(report_services.payment_status(stored_order(reference)), "Partially Paid")
+        self.assertEqual(report_services.payment_status(stored_order(reference)), "Down Payment Paid")
         self.assertEqual(view["status"], "Confirmed")
         # A reference can be used once across all orders.
         other = make_order(make_customer(), status="Awaiting Down Payment", total=600)
@@ -143,7 +143,7 @@ class PaymentReferenceTests(AdminTestCase):
         reference = make_order(make_customer(), status="Ready for Pickup", total=700)
         with self.assertRaises(HTTPException):
             order_services.update_order_status(reference, "Completed")
-        self.assertEqual(report_services.payment_status(stored_order(reference)), "Unpaid")
+        self.assertEqual(report_services.payment_status(stored_order(reference)), "No Payment")
 
     def test_customer_views_hide_who_verified_payments(self) -> None:
         reference = make_order(make_customer(), status="Ready for Pickup", total=400)
@@ -159,13 +159,20 @@ class PaymentReferenceTests(AdminTestCase):
         self.assertEqual(rows["total"], 1)
         self.assertEqual(rows["items"][0]["verification_status"], "Reference Missing")
         admin = admin_client()
-        refused = admin.post(f"/api/admin/orders/{reference}/payments/1/reference", json={"reference": "GC-LEGACY-777"})
+        version = admin.get(f"/api/admin/orders/{reference}").json()["version"]
+        refused = admin.post(f"/api/admin/orders/{reference}/payments/1/reference", json={
+            "reference": "GC-LEGACY-777", "expected_version": version,
+        })
         self.assertEqual(refused.status_code, 422, refused.text)
-        saved = admin.post(f"/api/admin/orders/{reference}/payments/1/reference", json={"reference": "GC-LEGACY-777", "confirmed": True})
+        saved = admin.post(f"/api/admin/orders/{reference}/payments/1/reference", json={
+            "reference": "GC-LEGACY-777", "confirmed": True, "expected_version": version,
+        })
         self.assertEqual(saved.status_code, 200, saved.text)
         payment = saved.json()["payments"][0]
         self.assertEqual((payment["reference"], payment["amount"]), ("GC-LEGACY-777", 300))
-        again = admin.post(f"/api/admin/orders/{reference}/payments/1/reference", json={"reference": "GC-OTHER-1", "confirmed": True})
+        again = admin.post(f"/api/admin/orders/{reference}/payments/1/reference", json={
+            "reference": "GC-OTHER-1", "confirmed": True, "expected_version": saved.json()["version"],
+        })
         self.assertEqual(again.status_code, 409)
         self.assertEqual(report_services.payment_list({"search": reference, "verification": "missing"})["total"], 0)
 

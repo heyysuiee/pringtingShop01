@@ -108,6 +108,21 @@ class CustomerProfileUpdate(_ContactDetails):
     pass
 
 
+class CustomerDeliveryAddress(BaseModel):
+    """A reusable address saved on the customer account, validated by auth_services/PSGC."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    recipient_name: str = Field(min_length=1, max_length=120)
+    contact_number: str = Field(min_length=7, max_length=40)
+    street: str = Field(min_length=1, max_length=200)
+    barangay: str = Field(min_length=1, max_length=120)
+    city: str = Field(min_length=1, max_length=120)
+    province: str = Field(min_length=1, max_length=120)
+    landmark: str = Field(default="", max_length=200)
+    delivery_instructions: str = Field(default="", max_length=500)
+
+
 class EmailVerificationRequest(_EmailModel):
     pass
 

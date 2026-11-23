@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin, require_session
@@ -21,6 +21,24 @@ def _body(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="Invalid request.")
     return payload
+
+
+def _admin_body(payload: Any) -> dict[str, Any]:
+    """An admin order action always carries the order version shown on screen.
+
+    Customer actions do not have a version to send. Raw-body admin endpoints have no Pydantic schema,
+    so the same positive-integer rule is enforced here before a service can save anything.
+    """
+    body = _body(payload)
+    version = body.get("expected_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise HTTPException(status_code=422, detail="Order version must be a positive whole number.")
+    return body
+
+
+def admin_claims(request: Request) -> dict[str, Any]:
+    """Authenticate before body parsing so unauthenticated admin writes still answer 401, not 422."""
+    return require_admin(request)
 
 
 # ================================================================== public
@@ -47,6 +65,12 @@ def fulfillment_options() -> dict[str, Any]:
 def locations() -> dict[str, Any]:
     """Read-only PSGC provinces, their cities/municipalities, and island groups for the address form."""
     return location_services.public_locations()
+
+
+@router.get("/api/shipping-quote")
+def shipping_quote(province: str = "", city: str = "", area_id: str | None = None) -> dict[str, Any]:
+    """Server-calculated shipping fee and estimate for the address currently selected at checkout."""
+    return shop_settings_services.shipping_quote(province, city, area_id)
 
 
 # ================================================================== customer actions
@@ -119,9 +143,13 @@ ORDER_ACTIONS = {
 def _order_action(action: str):
     handler = ORDER_ACTIONS[action]
 
-    def endpoint(reference: str, request: Request, payload: Any = Body(default=None)) -> dict[str, Any]:
-        admin = require_admin(request)
-        return handler(reference, _body(payload), actor=admin["sub"])
+    def endpoint(
+        reference: str,
+        request: Request,
+        payload: Any = Body(default=None),
+        admin: dict[str, Any] = Depends(admin_claims),
+    ) -> dict[str, Any]:
+        return handler(reference, _admin_body(payload), actor=admin["sub"])
 
     endpoint.__name__ = f"admin_{action.replace('/', '_').replace('-', '_')}"
     return endpoint
@@ -132,25 +160,42 @@ for _action in ORDER_ACTIONS:
 
 
 @router.post("/api/admin/orders/{reference}/issues/{issue_id}/resolve")
-def resolve_issue(reference: str, issue_id: str, request: Request, payload: Any = Body(default=None)) -> dict[str, Any]:
-    admin = require_admin(request)
-    return fulfillment_services.resolve_issue(reference, issue_id, _body(payload), actor=admin["sub"])
+def resolve_issue(
+    reference: str,
+    issue_id: str,
+    request: Request,
+    payload: Any = Body(default=None),
+    admin: dict[str, Any] = Depends(admin_claims),
+) -> dict[str, Any]:
+    return fulfillment_services.resolve_issue(reference, issue_id, _admin_body(payload), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/cancellations/{request_id}/{decision}")
-def decide_cancellation(reference: str, request_id: str, decision: str, request: Request, payload: Any = Body(default=None)) -> dict[str, Any]:
-    admin = require_admin(request)
+def decide_cancellation(
+    reference: str,
+    request_id: str,
+    decision: str,
+    request: Request,
+    payload: Any = Body(default=None),
+    admin: dict[str, Any] = Depends(admin_claims),
+) -> dict[str, Any]:
     if decision == "approve":
-        return refund_services.approve_cancellation(reference, request_id, _body(payload), actor=admin["sub"])
+        return refund_services.approve_cancellation(reference, request_id, _admin_body(payload), actor=admin["sub"])
     if decision == "reject":
-        return refund_services.reject_cancellation(reference, request_id, _body(payload), actor=admin["sub"])
+        return refund_services.reject_cancellation(reference, request_id, _admin_body(payload), actor=admin["sub"])
     raise HTTPException(status_code=404, detail="Not found.")
 
 
 @router.post("/api/admin/orders/{reference}/refunds/{refund_id}/{action}")
-def refund_action(reference: str, refund_id: str, action: str, request: Request, payload: Any = Body(default=None)) -> dict[str, Any]:
-    admin = require_admin(request)
-    body, actor = _body(payload), admin["sub"]
+def refund_action(
+    reference: str,
+    refund_id: str,
+    action: str,
+    request: Request,
+    payload: Any = Body(default=None),
+    admin: dict[str, Any] = Depends(admin_claims),
+) -> dict[str, Any]:
+    body, actor = _admin_body(payload), admin["sub"]
     if action == "approve":
         return refund_services.approve_refund(reference, refund_id, body, actor=actor)
     if action == "reject":

@@ -38,7 +38,15 @@ STATUS_GROUPS = {
     "completed": {"Completed"},
     "cancelled": CANCELLED_STATUSES,
 }
-PAYMENT_STATUSES = ("Fully Paid", "Partially Paid", "Unpaid", "Not Quoted")
+PAYMENT_STATUSES = (
+    "Fully Paid",
+    "Partially Paid",
+    "Down Payment Paid",
+    "Insufficient Down Payment",
+    "No Payment",
+    "Excess Payment",
+    "Not Quoted",
+)
 PAGE_SIZES = (10, 25, 50, 100)
 OTHER_SERVICE = {"id": "other", "label": "Other / unassigned"}
 # Older orders saved only the category label. These words map them to the seeded service ids.
@@ -190,13 +198,10 @@ is_fully_paid = order_services.is_fully_paid
 
 
 def payment_status(order: Mapping[str, Any]) -> str:
+    """Report label for one order, using the same confirmed-money rules as the customer and admin views."""
     if order["total_amount"] is None:
         return "Not Quoted"
-    if is_fully_paid(order):
-        return "Fully Paid"
-    if paid_amount(order) > 0:
-        return "Partially Paid"
-    return "Unpaid"
+    return order_services.payment_status(order)
 
 
 def is_confirmed_revenue(order: Mapping[str, Any]) -> bool:
@@ -255,6 +260,7 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
     customization = order.get("customization") or {}
     package = customization.get("package") if isinstance(customization.get("package"), dict) else {}
     breakdown = order_services.payment_breakdown(order)
+    shipping = order_services.shipping_view(order)
     return {
         "reference": order["reference"],
         "customer_id": order.get("customer_id"),
@@ -277,17 +283,32 @@ def order_row(order: OrderRecord, services: ServiceIndex) -> dict[str, Any]:
         "total_amount": money(total) if total is not None else None,
         "estimated_total": estimate if isinstance(estimate, (int, float)) else None,
         "amount_paid": paid,
-        "balance": money(total - paid) if total is not None else None,
+        "balance": money(max(0.0, total - paid)) if total is not None else None,
+        "remaining_balance_exact": money(total - paid) if total is not None else None,
+        "excess_amount": breakdown["excess_amount"],
+        "additional_needed_for_down_payment": breakdown["additional_needed_for_down_payment"],
+        "payment_calculation": breakdown["payment_calculation"],
         "payment_status": payment_status(order),
+        # Order-level progress, separate from production status and from the legacy report label above.
+        "order_payment_status": order_services.payment_status(order),
+        "work_status": order_services.work_status(order),
+        "work_approved": order_services.work_approved(order),
+        "final_payment_lock": breakdown["final_payment_lock"],
         "payment_option": breakdown["payment_option"],
         "payment_option_label": breakdown["payment_option_label"],
         "down_payment_required": breakdown["down_payment_required"],
+        "admin_set_down_payment": breakdown["admin_set_down_payment"],
         "down_payment_status": breakdown["down_payment_status"],
         "payment_count": len(order["payments"]),
         "pending_verification": breakdown["pending_verification"],
         "payments_to_verify": len(order_services.pending_submissions(order)),
         "fulfillment_method": order_services.fulfillment_method(order),
         "fulfillment_label": FULFILLMENT_METHODS[order_services.fulfillment_method(order)],
+        "delivery_province": shipping["delivery_province"],
+        "destination_region": shipping["destination_region"],
+        "shipping_fee": shipping["shipping_fee"],
+        "estimated_delivery": shipping["estimated_delivery"],
+        "order_subtotal": breakdown["subtotal"],
         "quotation_status": order_services.quotation(order).get("status", ""),
         "fixed_price": order_services.is_fixed_price(order),
         "price_basis": order_services.price_basis(order),
@@ -321,14 +342,23 @@ def admin_order_view(order: OrderRecord, services: ServiceIndex | None = None) -
     method = order_services.fulfillment_method(order)
     chosen = bool(order_services.payment_option(order))
     payable = status in order_services.PAYABLE_STATUSES and total is not None and chosen and paid < total - 0.005
+    # Only an explicit finished-work review locks final payment. A down payment still waiting for verification
+    # or an older COD order is not a work-approval lock.
+    final_locked = (
+        not order_services.is_cod(order)
+        and order_services.work_approval_lock(order)
+        and paid >= order_services.down_payment_due(order) - 0.005
+    )
     view["actions"] = {
         "quote": order_services.quotable(order),
         # Approving a package order requests the down payment; only a verified down payment confirms the order.
         "confirm_package": order_services.is_fixed_price(order) and status in {"Pending Confirmation", "Under Review"},
         "confirm_cod": False,
-        "verify_payments": payable and bool(pending),
-        "record_payment": payable and not pending,
+        "set_payment_terms": status in {"Pending Confirmation", "Under Review", "Awaiting Down Payment"} and not order["payments"] and not pending,
+        "verify_payments": payable and bool(pending) and not final_locked,
+        "record_payment": payable and not pending and not final_locked,
         "send_draft": status in order_services.DRAFTABLE_STATUSES and order_services.down_payment_met(order),
+        "send_work_preview": status in order_services._work_reviewable_statuses(order) and order_services.down_payment_met(order),
         "start_production_blocked": status == "Approved for Printing" and not order_services.down_payment_met(order),
         "complete_requires_payment": status in order_services.RELEASE_STATUSES and not is_fully_paid(order),
         "cancel_blocked_by_payments": bool(order["payments"]) or bool(pending),
@@ -532,12 +562,24 @@ PAYMENT_SORTS = {
     "amount": "amount",
     "payment_status": "order_payment_status",
     "verification": "verification_status",
+    "verification_result": "verification_result_label",
+    "verification_date": "verification_date",
     "payment_reference": "payment_reference",
+    "order_total": "order_total",
+    "required_down_payment": "required_down_payment",
+    "remaining_down_payment": "remaining_down_payment",
+    "payment_percentage": "payment_percentage",
 }
-# Verification filter values -> the status shown in the table.
+# Verification filter values -> the status shown in the table. The OCR result codes are also accepted by
+# payment_rows, so the admin can filter straight to insufficient payments, mismatches, duplicates, etc.
 VERIFICATION_FILTERS = {
     "verified": order_services.VERIFICATION_VERIFIED,
     "pending": order_services.VERIFICATION_PENDING,
+    "insufficient_payment": payment_verification_services.RESULT_LABELS[payment_verification_services.RESULT_INSUFFICIENT],
+    "reference_mismatch": payment_verification_services.RESULT_LABELS[payment_verification_services.RESULT_REFERENCE_MISMATCH],
+    "duplicate_reference": payment_verification_services.RESULT_LABELS[payment_verification_services.RESULT_DUPLICATE],
+    "needs_manual_review": payment_verification_services.RESULT_LABELS[payment_verification_services.RESULT_MANUAL_REVIEW],
+    "ocr_checked_pending": payment_verification_services.RESULT_LABELS[payment_verification_services.RESULT_OCR_PENDING],
     "rejected": order_services.VERIFICATION_REJECTED,
     "missing": order_services.VERIFICATION_MISSING,
 }
@@ -560,16 +602,43 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
         "order_paid": base["amount_paid"],
         "order_balance": base["balance"],
         "order_payment_status": base["payment_status"],
+        # The running totals are recomputed from confirmed payments for every history row.
+        "cumulative_paid": base["amount_paid"],
+        "remaining_balance": base["balance"],
+        "remaining_balance_exact": base.get("remaining_balance_exact"),
+        "excess_amount": base.get("excess_amount", 0.0),
+        "required_down_payment": base.get("down_payment_required"),
+        "additional_needed_for_down_payment": base.get("additional_needed_for_down_payment"),
+        "delivery_province": base.get("delivery_province", ""),
+        "destination_region": base.get("destination_region", ""),
+        "shipping_fee": base.get("shipping_fee", 0.0),
+        "estimated_delivery": base.get("estimated_delivery", ""),
+        "order_subtotal": base.get("order_subtotal"),
         "payment_option": base["payment_option"],
         "payment_option_label": base["payment_option_label"],
     }
     entries = []
     submissions_by_id = {str(item.get("id")): item for item in order_services.submissions(order)}
 
-    def ocr_columns(item: dict[str, Any], required: float, verification: dict[str, Any]) -> dict[str, Any]:
+    def ocr_columns(
+        item: dict[str, Any], required: float, verification: dict[str, Any], calculation: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
         fields = ocr.get("fields", {}) if isinstance(ocr, dict) else {}
         stored = item.get("verification") if isinstance(item.get("verification"), dict) else verification
+        checks = stored.get("checks") if isinstance(stored.get("checks"), list) else []
+        money_calc = calculation if isinstance(calculation, Mapping) else {}
+        duplicate = next((check for check in checks if isinstance(check, dict) and check.get("key") == "duplicate"), None)
+        duplicate_status = "Duplicate detected" if duplicate and duplicate.get("state") == "inconsistent" else "No duplicate detected"
+        flags = ocr.get("flags", []) if isinstance(ocr, dict) else []
+        if any(flag in flags for flag in ("ocr_error", "engine_unavailable", "unreadable")):
+            ocr_detection_status = "Failed"
+        elif any(str(fields.get(key) or "").strip() for key in ("reference", "amount", "date_time")):
+            ocr_detection_status = "Detected"
+        elif ocr:
+            ocr_detection_status = "Not detected"
+        else:
+            ocr_detection_status = "Not available"
         try:
             extracted = float(str(fields.get("amount") or "").replace(",", ""))
         except ValueError:
@@ -577,27 +646,58 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
         return {
             "ocr_reference": str(fields.get("reference") or ""),
             "ocr_amount": money(extracted) if extracted is not None else None,
+            "ocr_date_time": str(fields.get("date_time") or ""),
+            "ocr_sender": str(fields.get("sender") or ""),
+            "ocr_method": str(fields.get("method") or ""),
+            "ocr_account_info": str(fields.get("account_info") or ""),
             "required_amount": money(required),
             "ocr_confidence": float(ocr.get("confidence") or 0) if isinstance(ocr, dict) else 0.0,
+            "ocr_detection_status": ocr_detection_status,
+            "duplicate_reference_status": duplicate_status,
             "ocr_verification_status": str(stored.get("status") or verification.get("status") or ""),
             "verification_status_label": stored.get("status_label")
             or payment_verification_services.STATUS_LABELS.get(stored.get("status") or verification.get("status") or "", ""),
+            "verification_result": str(stored.get("result") or ""),
+            "verification_result_label": str(stored.get("result_label") or ""),
+            "verification_basis_label": str(stored.get("verification_basis_label") or ""),
+            "verification_date": stored.get("reviewed_at") or verification.get("verified_at"),
+            "verified_by": stored.get("reviewed_by") or verification.get("verified_by", ""),
             "submitted_at": item.get("submitted_at"),
             "receipt_url": (f"/api/admin/orders/{order['reference']}/files/{(item.get('proof') or {}).get('id')}"
                             if isinstance(item.get("proof"), dict) and (item.get("proof") or {}).get("id") else ""),
             "verification_method": item.get("verification_method") or stored.get("verification_method", ""),
+            # Server-calculated down payment arithmetic, also saved with every new OCR result.
+            "total_order_amount": money(money_calc.get("total_order_amount", base.get("order_total"))),
+            "required_down_payment": money(money_calc.get("required_down_payment")),
+            "remaining_down_payment": money(money_calc.get("remaining_down_payment")),
+            "additional_needed_for_down_payment": money(money_calc.get("additional_needed_for_down_payment")),
+            "payment_status_after": money_calc.get("payment_status", ""),
+            "actual_amount_paid": money(extracted if extracted is not None else money_calc.get("actual_amount_paid")),
+            "payment_percentage": money_calc.get("payment_percentage"),
+            "insufficient_by": money(money_calc.get("insufficient_by")),
+            "excess_amount": money(money_calc.get("excess_amount")),
         }
 
     for index, payment in enumerate(order["payments"], start=1):
         verification = order_services.payment_verification(payment)
+        verification["result"] = payment_verification_services.RESULT_VERIFIED
+        verification["result_label"] = payment_verification_services.RESULT_LABELS[payment_verification_services.RESULT_VERIFIED]
         linked = submissions_by_id.get(str(payment.get("submission_id") or ""), {})
+        received = money(payment.get("amount"))
+        applied = money(order_services.payment_applied_amount(payment))
+        paid_before = order_services.payments_total(order["payments"][:index - 1])
+        calculation = payment_verification_services.down_payment_calculation(
+            order, applied, applied, paid_before
+        )
         entries.append({
             **shared,
             "id": f"{order['reference']}-P{index}",
             "entry_type": "payment",
             "payment_number": index,
             "submission_id": None,
-            "amount": money(payment.get("amount")),
+            "amount": applied,
+            "received_amount": received,
+            "applied_amount": applied,
             "method": payment.get("method", ""),
             "payment_reference": str(payment.get("reference") or ""),
             "reference_type_label": verification["reference_type_label"],
@@ -609,13 +709,44 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
             "verified_by": verification["verified_by"],
             "verified_at": verification["verified_at"],
             "counts_as_paid": True,
-            **ocr_columns(linked, float(payment.get("amount") or 0), verification),
+            **ocr_columns(linked, applied, verification, calculation),
+            # The counted amount is what the administrator confirmed, never the OCR reading: the receipt
+            # may have been misread or corrected, and held excess is not part of the credited amount.
+            "actual_amount_paid": applied,
+            "excess_amount": money(payment.get("excess_amount")),
+            "requires_admin_review": bool(payment.get("requires_admin_review")),
+            "excess_review_status": str(payment.get("excess_review_status") or ("resolved" if payment.get("excess_resolved_at") else "none")),
+            "verification_result": verification["result"],
+            "verification_result_label": verification["result_label"],
+            "verification_date": verification.get("verified_at"),
         })
     for item in order_services.submissions(order):
         status = item.get("status", "pending")
         if status == "verified":
             continue
         rejected = status == "rejected"
+        stored = item.get("verification") if isinstance(item.get("verification"), Mapping) else {}
+        legacy_status = order_services.VERIFICATION_REJECTED if rejected else order_services.VERIFICATION_PENDING
+        result = str(stored.get("result") or "")
+        result_label = str(stored.get("result_label") or "")
+        if not result:
+            result = (payment_verification_services.RESULT_REJECTED if rejected
+                      else payment_verification_services.RESULT_OCR_PENDING)
+            result_label = payment_verification_services.RESULT_LABELS[result]
+        ocr = item.get("ocr") if isinstance(item.get("ocr"), Mapping) else {}
+        fields = ocr.get("fields", {}) if isinstance(ocr.get("fields"), Mapping) else {}
+        try:
+            extracted_amount = float(str(fields.get("amount") or "").replace(",", ""))
+        except (TypeError, ValueError):
+            extracted_amount = None
+        calculation = stored.get("down_payment") if isinstance(stored.get("down_payment"), Mapping) else None
+        if calculation is None:
+            calculation = payment_verification_services.down_payment_calculation(
+                order, float(item.get("amount") or 0), extracted_amount, float(base["amount_paid"])
+            )
+        verification_view = dict(stored)
+        verification_view.setdefault("status", str(stored.get("status") or legacy_status))
+        verification_view.setdefault("status_label", result_label)
         entries.append({
             **shared,
             "id": f"{order['reference']}-S{item.get('id', '')}",
@@ -629,13 +760,16 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
             "received_at": item.get("submitted_at"),
             "received_date": iso(local_date(item.get("submitted_at"))),
             "kind": {"down_payment": "Down payment", "balance": "Balance payment"}.get(item.get("stage", ""), "Payment"),
-            "verification_status": order_services.VERIFICATION_REJECTED if rejected else order_services.VERIFICATION_PENDING,
+            "verification_status": legacy_status,
             "verification_detail": (f"Rejected: {item.get('review_note', '')}" if rejected
-                                    else "Submitted by the customer with a receipt; not counted as paid until verified"),
+                                    else f"{result_label} — submitted by the customer with a receipt; not counted as paid until verified"),
             "verified_by": item.get("reviewed_by", "") if rejected else "",
             "verified_at": item.get("reviewed_at") if rejected else None,
             "counts_as_paid": False,
-            **ocr_columns(item, float(item.get("amount") or 0), {"status": order_services.VERIFICATION_REJECTED if rejected else order_services.VERIFICATION_PENDING}),
+            **ocr_columns(item, float(item.get("amount") or 0), verification_view, calculation),
+            "verification_result": result,
+            "verification_result_label": result_label,
+            "verification_date": verification_view.get("reviewed_at"),
         })
     return entries
 
@@ -659,7 +793,11 @@ def payment_rows(params: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[
         if option and base["payment_option"] != option:
             continue
         for row in _transaction_entries(order, base):
-            if verification and row["verification_status"] != VERIFICATION_FILTERS[verification]:
+            if verification and not (
+                row["verification_status"] == VERIFICATION_FILTERS[verification]
+                or row.get("verification_result") == verification
+                or row.get("verification_result_label") == VERIFICATION_FILTERS[verification]
+            ):
                 continue
             if method and row["method"] != method:
                 continue
@@ -688,7 +826,9 @@ def payment_list(params: Mapping[str, Any]) -> dict[str, Any]:
         "filtered_entries": len(rows),
         "filtered_pending_amount": money(sum(row["amount"] for row in rows if row["verification_status"] == order_services.VERIFICATION_PENDING)),
         "missing_reference": sum(1 for payment in all_payments if not str(payment.get("reference") or "").strip()),
-        "partially_paid_orders": sum(1 for order in active if payment_status(order) == "Partially Paid"),
+        "partially_paid_orders": sum(1 for order in active if payment_status(order) in {
+            "Partially Paid", "Insufficient Down Payment", "Down Payment Paid",
+        }),
         "total_received": money(sum(paid_amount(order) for order in orders)),
         "outstanding_balance": money(sum(
             max(0.0, float(order["total_amount"]) - paid_amount(order))
@@ -811,7 +951,9 @@ def customer_stats(customer: Mapping[str, Any], orders: list[OrderRecord]) -> di
         "created_at": customer["created_at"],
         "registered_date": iso(local_date(customer["created_at"])),
         "total_orders": len(orders),
-        "completed_orders": sum(1 for order in orders if order["status"] == "Completed"),
+        # Same completion rule as the order reports and total_spent: a completed order being reprinted
+        # keeps its original completion until the reprint finishes.
+        "completed_orders": sum(1 for order in orders if order_services.counts_as_completed(order)),
         # Pending means still open: not yet completed and not cancelled or rejected.
         "pending_orders": sum(1 for order in orders if order["status"] in PENDING_STATUSES | PROCESSING_STATUSES),
         "cancelled_orders": sum(1 for order in orders if order["status"] in CANCELLED_STATUSES),
@@ -921,7 +1063,8 @@ def customer_detail(customer_id: str) -> dict[str, Any]:
                 "reference": order["reference"],
                 "payment_number": index,
                 "product": (order.get("product") or {}).get("name", ""),
-                "amount": money(payment.get("amount")),
+                "amount": money(order_services.payment_applied_amount(payment)),
+                "received_amount": money(payment.get("amount")),
                 "method": payment.get("method", ""),
                 "payment_reference": payment.get("reference", ""),
                 "reference_type_label": verification["reference_type_label"],
@@ -934,7 +1077,7 @@ def customer_detail(customer_id: str) -> dict[str, Any]:
     for row in rows:
         entry = history.setdefault(row["service_id"], {"service_id": row["service_id"], "service": row["service"], "orders": 0, "completed": 0, "spent": 0.0, "last_order_date": None})
         entry["orders"] += 1
-        entry["completed"] += row["status"] == "Completed"
+        entry["completed"] += row["reported_completed"]
         entry["spent"] = money(entry["spent"] + row["confirmed_revenue"])
         if entry["last_order_date"] is None or (row["request_date"] or "") > entry["last_order_date"]:
             entry["last_order_date"] = row["request_date"]
@@ -1239,8 +1382,9 @@ def revenue_trend(completed: list[dict[str, Any]], start: date | None, end: date
 def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], start: date | None, end: date | None) -> dict[str, Any]:
     """Money received in the period (by payment date) and how open orders are being paid.
 
-    Payments on a 50% down payment order count as the down payment until half of the confirmed total
-    is covered; the rest is the balance. Payments on Cash on Delivery orders are COD collections.
+    Payments on a down payment order count as the down payment until the required down payment
+    (50% of the confirmed total, or the higher amount the administrator set) is covered; the rest is
+    the balance. Payments on Cash on Delivery orders are COD collections.
     Payments are cash flow, not revenue: revenue is still recognized only when an order is completed
     and fully paid.
     """
@@ -1258,12 +1402,14 @@ def payment_summary(orders: list[OrderRecord], requested: list[dict[str, Any]], 
                 refunds_open += float(refund.get("amount") or 0)
         option = order_services.payment_option(order)
         total = order["total_amount"]
-        threshold = float(total) * order_services.DOWN_PAYMENT_RATE if total is not None else 0.0
+        # The same required down payment the order view and payments table use: 50% minimum,
+        # or the higher amount the administrator set for this order.
+        threshold = float(order_services.required_down_payment(order)) if total is not None else 0.0
         # The delivery fee's share of each payment (payments cover the whole total, fee included, pro rata).
         fee_share = order_services.delivery_fee(order) / float(total) if total else 0.0
         cumulative = 0.0
         for payment in sorted(order["payments"], key=lambda item: item.get("received_at") or ""):
-            amount = money(payment.get("amount"))
+            amount = money(order_services.payment_applied_amount(payment))
             if option == "cod":
                 parts = (0.0, 0.0, amount)
             else:
@@ -1507,7 +1653,10 @@ def dashboard() -> dict[str, Any]:
     ]
     status_counts = {status: sum(1 for order in orders if order["status"] == status) for status in STATUS_ORDER}
     refunds_completed = money(sum(order_services.refunded_amount(order) for order in orders))
-    received_total = money(sum(float(payment.get("amount") or 0) for order in orders for payment in order["payments"]))
+    received_total = money(sum(
+        order_services.payment_applied_amount(payment)
+        for order in orders for payment in order["payments"]
+    ))
     return {
         "stages": stages,
         "status_counts": status_counts,
@@ -1531,7 +1680,9 @@ def dashboard() -> dict[str, Any]:
                 row["confirmed_revenue"] for row in completed
                 if in_range(local_date(row["completed_at"]), month_start, today)
             )),
-            "received_this_month": money(sum(float(payment.get("amount") or 0) for payment in received_this_month)),
+            "received_this_month": money(sum(
+                order_services.payment_applied_amount(payment) for payment in received_this_month
+            )),
             "payments_this_month": len(received_this_month),
             "outstanding_balance": money(sum(
                 max(0.0, float(order["total_amount"]) - paid_amount(order))

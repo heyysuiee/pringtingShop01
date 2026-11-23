@@ -32,6 +32,9 @@ CATALOG_SEED = (
     ("QR Ph", "qr", 20, "Scan the shop's QR Ph code with any participating bank or e-wallet app."),
     ("Cash", "cash", 30, "Pay in person at the shop counter. The shop records the payment and issues an official receipt."),
 )
+EWALLET_SEED = (
+    ("MariBank", "ewallet", 3, "Pay through the shop's MariBank account and upload the transaction receipt for verification."),
+)
 CATEGORIES = {
     "ewallet": "E-Wallets",
     "bank": "Online Banking",
@@ -114,6 +117,18 @@ def initialize() -> None:
                     (new_id(), provider, category, description, order, now, now),
                 )
             connection.execute("INSERT INTO app_meta (key, value) VALUES (?, ?)", (CATALOG_MARKER, now))
+
+        # Additive support for newer e-wallet options without disturbing existing configured methods.
+        now = now_iso()
+        existing = {row["provider"].casefold() for row in connection.execute("SELECT provider FROM payment_methods")}
+        for provider, category, order, description in EWALLET_SEED:
+            if provider.casefold() in existing:
+                continue
+            connection.execute(
+                "INSERT INTO payment_methods (id, provider, category, description, active, display_order, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                (new_id(), provider, category, description, order, now, now),
+            )
 
 
 def new_id() -> str:

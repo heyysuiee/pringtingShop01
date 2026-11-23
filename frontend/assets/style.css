@@ -1,7 +1,7 @@
 :root {
     --bg: var(--bg-primary);
     --bg-deep: var(--bg-primary);
-    --panel: rgba(8, 9, 13, 0.72);
+    --panel: rgba(250, 248, 244, 0.72);
     --text: var(--text-primary);
     --muted: var(--text-secondary);
     --serif: var(--font-display);
@@ -133,7 +133,7 @@ a:focus-visible {
 
 .hero-slideshow::after {
     z-index: 1;
-    background: linear-gradient(90deg, rgba(8, 9, 13, 0.85), rgba(255, 255, 255, 0.1));
+    background: linear-gradient(90deg, rgba(250, 248, 244, 0.98), rgba(255, 255, 255, 0.6));
     content: "";
 }
 
@@ -218,7 +218,7 @@ h1 em {
 .mp-proof-strip {
     background: var(--glass-1);
     color: var(--text-primary);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+    border-bottom: 1px solid rgba(139, 94, 60, 0.153);
     padding: 0.5rem 0;
 }
 
@@ -244,7 +244,7 @@ h1 em {
 }
 
 .mp-proof-item+.mp-proof-item {
-    border-left: 1px solid rgba(255, 255, 255, 0.144);
+    border-left: 1px solid rgba(139, 94, 60, 0.1223);
 }
 
 .mp-proof-item h2 {
@@ -256,7 +256,7 @@ h1 em {
 
 .mp-proof-item p {
     max-width: 24ch;
-    color: rgba(255, 255, 255, 0.72);
+    color: rgba(41, 39, 37, 0.72);
     font-size: 0.9rem;
     line-height: 1.6;
 }
@@ -310,7 +310,7 @@ h1 em {
     }
 
     .mp-proof-item+.mp-proof-item {
-        border-top: 1px solid rgba(255, 255, 255, 0.144);
+        border-top: 1px solid rgba(139, 94, 60, 0.1223);
         border-left: 0;
     }
 }
@@ -373,12 +373,12 @@ h1 em {
     overflow: hidden;
     border-radius: 18px;
     background: var(--glass-1);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.256);
+    box-shadow: 0 8px 25px rgba(90, 68, 50, 0.1024);
     transition: box-shadow 0.35s ease;
 }
 
 .mp-home-finished-track>div:hover {
-    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.512);
+    box-shadow: 0 15px 35px rgba(90, 68, 50, 0.2);
 }
 
 /* Images */
@@ -436,7 +436,7 @@ h1 em {
 .mp-home-footer-button:hover {
     background: var(--glass-3);
     transform: translateY(-3px);
-    box-shadow: 0 7px 18px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 7px 18px rgba(90, 68, 50, 0.2);
 }
 
 /* Responsive Design for Finished section */
@@ -584,7 +584,7 @@ h1 em {
     width: 100%;
     padding: 85px 0 100px;
     background: var(--glass-1);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(139, 94, 60, 0.1);
 }
 
 .container1 {
@@ -640,11 +640,11 @@ h1 em {
     flex-direction: column;
     background: var(--glass-1);
     border-radius: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(139, 94, 60, 0.1);
     overflow: hidden;
     text-decoration: none;
     color: var(--text-primary);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+    box-shadow: 0 6px 20px rgba(90, 68, 50, 0.064);
     transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.3s ease, background 0.3s ease;
     position: relative;
     cursor: pointer;
@@ -652,7 +652,7 @@ h1 em {
 
 .mp-home-services-head-actions:hover {
     transform: translateY(-8px);
-    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.416);
+    box-shadow: 0 18px 38px rgba(90, 68, 50, 0.1664);
     border-color: var(--line-accent);
     background: var(--glass-1);
 }
@@ -799,13 +799,13 @@ h1 em {
     letter-spacing: 0.08em;
     text-transform: uppercase;
     transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-    box-shadow: 0 4px 18px rgba(212, 212, 212, 0.3);
+    box-shadow: 0 4px 18px var(--color-surface-alt);
 }
 
 .hero-btn-primary:hover {
     background: var(--glass-hover);
     transform: translateY(-3px);
-    box-shadow: 0 8px 24px rgba(212, 212, 212, 0.45);
+    box-shadow: 0 8px 24px var(--color-surface-alt);
 }
 
 .hero-btn-secondary {
@@ -814,7 +814,7 @@ h1 em {
     padding: 13px 26px;
     background: transparent;
     color: var(--text);
-    border: 1px solid rgba(255, 255, 255, 0.35);
+    border: 1px solid rgba(139, 94, 60, 0.28);
     border-radius: 35px;
     font-size: 0.88rem;
     font-weight: 600;
@@ -824,7 +824,7 @@ h1 em {
 }
 
 .hero-btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.6);
     border-color: var(--text);
     transform: translateY(-2px);
 }
@@ -834,7 +834,7 @@ h1 em {
     width: 44px;
     height: 44px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.074);
+    background: rgba(255, 255, 255, 0.4439);
     color: var(--text-primary);
     display: flex;
     align-items: center;
@@ -889,7 +889,7 @@ h1 em {
     width: 100%;
     padding: 90px 0 100px;
     background: var(--glass-1);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(139, 94, 60, 0.1);
 }
 
 .process-grid {
@@ -900,17 +900,17 @@ h1 em {
 
 .process-card {
     background: var(--glass-1);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(139, 94, 60, 0.1);
     border-radius: 18px;
     padding: 32px 24px 28px;
     position: relative;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.128);
+    box-shadow: 0 4px 16px rgba(90, 68, 50, 0.0512);
     transition: transform 0.35s ease, box-shadow 0.35s ease, border-color 0.35s ease;
 }
 
 .process-card:hover {
     transform: translateY(-8px);
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.384);
+    box-shadow: 0 16px 36px rgba(90, 68, 50, 0.1536);
     border-color: var(--line-accent);
 }
 
@@ -920,7 +920,7 @@ h1 em {
     right: 22px;
     font-size: 1.8rem;
     font-weight: 800;
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(41, 39, 37, 0.62);
     font-family: var(--font-display);
     line-height: 1;
 }
@@ -966,7 +966,7 @@ h1 em {
     width: 100%;
     padding: 90px 0 100px;
     background: var(--glass-1);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(139, 94, 60, 0.1);
 }
 
 .specs-grid {
@@ -977,19 +977,19 @@ h1 em {
 
 .spec-card {
     background: var(--glass-1);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(139, 94, 60, 0.1);
     border-radius: 18px;
     padding: 30px 24px;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.128);
+    box-shadow: 0 4px 16px rgba(90, 68, 50, 0.0512);
     transition: all 0.3s ease;
 }
 
 .spec-card:hover {
     transform: translateY(-6px);
-    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
-    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow: 0 14px 30px rgba(90, 68, 50, 0.128);
+    border-color: rgba(139, 94, 60, 0.153);
     background: var(--glass-1);
 }
 
@@ -997,7 +997,7 @@ h1 em {
     width: 48px;
     height: 48px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.36);
     color: var(--text-primary);
     display: flex;
     align-items: center;
@@ -1023,7 +1023,7 @@ h1 em {
 .spec-list {
     list-style: none;
     padding: 0;
-    border-top: 1px dashed rgba(255, 255, 255, 0.108);
+    border-top: 1px dashed rgba(139, 94, 60, 0.1);
     padding-top: 14px;
 }
 
@@ -1053,7 +1053,7 @@ h1 em {
     width: 100%;
     padding: 90px 0 100px;
     background: var(--glass-1);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid rgba(139, 94, 60, 0.1);
 }
 
 .faq-accordion {
@@ -1065,7 +1065,7 @@ h1 em {
 }
 
 .faq-item {
-    border: 1px solid rgba(255, 255, 255, 0.108);
+    border: 1px solid rgba(139, 94, 60, 0.1);
     border-radius: 14px;
     background: var(--glass-1);
     overflow: hidden;
@@ -1075,7 +1075,7 @@ h1 em {
 .faq-item.active {
     background: var(--glass-1);
     border-color: var(--line-accent);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.224);
+    box-shadow: 0 6px 20px rgba(90, 68, 50, 0.0896);
 }
 
 .faq-question {
@@ -1193,13 +1193,13 @@ h1 em {
     letter-spacing: 0.08em;
     text-transform: uppercase;
     transition: all 0.3s ease;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 6px 20px rgba(90, 68, 50, 0.2);
 }
 
 .btn-cta-primary:hover {
     background: var(--glass-hover);
     transform: translateY(-3px);
-    box-shadow: 0 10px 26px rgba(212, 212, 212, 0.4);
+    box-shadow: 0 10px 26px var(--color-surface-alt);
 }
 
 .btn-cta-secondary {
@@ -1209,7 +1209,7 @@ h1 em {
     padding: 13px 26px;
     background: transparent;
     color: var(--text-primary);
-    border: 1px solid rgba(255, 255, 255, 0.4);
+    border: 1px solid rgba(139, 94, 60, 0.28);
     border-radius: 35px;
     font-size: 0.88rem;
     font-weight: 600;
@@ -1219,7 +1219,7 @@ h1 em {
 }
 
 .btn-cta-secondary:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.6);
     border-color: var(--line);
     transform: translateY(-2px);
 }
@@ -1233,7 +1233,7 @@ h1 em {
     background: var(--bg-elevated);
     color: var(--text-secondary);
     padding: 85px 0 35px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-top: 1px solid rgba(139, 94, 60, 0.1);
 }
 
 .footer-grid {
@@ -1326,11 +1326,11 @@ h1 em {
 .pay-pill {
     font-size: 11.5px;
     font-weight: 600;
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.42);
     color: var(--text-secondary);
     padding: 5px 11px;
     border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(139, 94, 60, 0.102);
 }
 
 .guarantee-box {
@@ -1338,8 +1338,8 @@ h1 em {
     align-items: center;
     gap: 10px;
     padding: 12px 14px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.36);
+    border: 1px solid rgba(139, 94, 60, 0.153);
     border-radius: 12px;
     color: var(--gold);
     font-size: 12px;
@@ -1352,7 +1352,7 @@ h1 em {
     align-items: center;
     justify-content: space-between;
     padding-top: 30px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-top: 1px solid rgba(139, 94, 60, 0.1);
     font-size: 12.5px;
     color: var(--text-primary);
     flex-wrap: wrap;
@@ -1457,8 +1457,7 @@ h1 em {
     position: relative;
     padding: 92px 0 104px;
     text-align: center;
-    background:
-        linear-gradient(165deg, rgba(8, 9, 13, 0.94) 0%, rgba(8, 9, 13, 0.88) 100%),
+    background: linear-gradient(165deg, rgba(250, 248, 244, 0.98) 0%, rgba(250, 248, 244, 0.98) 100%),
         url("/frontend/image/image.jpg") center / cover no-repeat;
 }
 
@@ -1617,7 +1616,7 @@ h1 em {
 .input {
     width: 100%;
     padding: 12px 14px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(139, 94, 60, 0.153);
     border-radius: 10px;
     font: inherit;
     font-size: 0.95rem;
@@ -1671,7 +1670,7 @@ textarea.input {
     left: -50%;
     right: 50%;
     height: 2px;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.6);
 }
 
 .stepper-item:first-child::before {
@@ -1966,7 +1965,7 @@ textarea.input {
     left: -50%;
     right: 50%;
     height: 2px;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.6);
 }
 
 .timeline-step:first-child::before {
@@ -1999,7 +1998,7 @@ textarea.input {
 .timeline-step.is-current .timeline-dot {
     background: var(--primary);
     color: var(--bg-primary);
-    box-shadow: 0 0 0 5px rgba(179, 179, 179, 0.15);
+    box-shadow: 0 0 0 5px var(--color-surface-alt);
 }
 
 .timeline-step.is-done .timeline-label,
@@ -2065,7 +2064,7 @@ textarea.input {
 
 .sample-card:hover {
     transform: translateY(-3px);
-    box-shadow: 0 18px 36px rgba(0, 0, 0, 0.448);
+    box-shadow: 0 18px 36px rgba(90, 68, 50, 0.1792);
 }
 
 /* ---------- Inner-page navigation (hamburger on small screens) ---------- */
@@ -2228,12 +2227,12 @@ textarea.input {
 .btn-gold {
     background: var(--primary);
     color: var(--bg-primary);
-    box-shadow: 0 6px 18px rgba(179, 179, 179, 0.22);
+    box-shadow: 0 6px 18px var(--color-surface-alt);
 }
 
 .btn-gold:hover {
     background: var(--primary-hover);
-    box-shadow: 0 10px 24px rgba(179, 179, 179, 0.35);
+    box-shadow: 0 10px 24px var(--color-surface-alt);
 }
 
 .btn-ghost-dark {
@@ -2270,7 +2269,7 @@ textarea.input {
 .timeline-step.is-current .timeline-dot {
     background: var(--primary);
     color: var(--bg-primary);
-    box-shadow: 0 0 0 5px rgba(179, 179, 179, 0.18);
+    box-shadow: 0 0 0 5px var(--color-surface-alt);
 }
 
 .stepper-num,
@@ -2313,7 +2312,7 @@ textarea.input {
 
 .input:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(179, 179, 179, 0.25);
+    box-shadow: 0 0 0 3px var(--color-surface-alt);
 }
 
 /* =========================================
@@ -2328,10 +2327,10 @@ textarea.input {
     --bg-card: var(--glass-1);
     --bg-card-hover: var(--glass-hover);
     --primary: var(--accent-pink);
-    --primary-hover: #ff5aad;
+    --primary-hover: var(--accent-soft);
     --primary-soft: var(--accent-soft);
     --border-color: var(--line-strong);
-    --shadow-color: rgba(0, 0, 0, 0.4);
+    --shadow-color: rgba(90, 68, 50, 0.16);
     --radius-sm: 10px;
     --radius-md: 14px;
     --radius-lg: 20px;
@@ -2346,8 +2345,8 @@ textarea.input {
     --white: var(--glass-1);
     --border: var(--border-color);
     --border-subtle: var(--line);
-    --header-background: rgba(8, 9, 13, 0.78);
-    --overlay: rgba(8, 9, 13, 0.72);
+    --header-background: rgba(250, 248, 244, 0.98);
+    --overlay: rgba(250, 248, 244, 0.72);
     --transparent: transparent;
     --soft-border: var(--border-color);
     --mobile-border: var(--border-color);
@@ -2356,8 +2355,8 @@ textarea.input {
 
     /* Shadows */
     --shadow: var(--shadow-md);
-    --shadow-logo: 0 3px 10px rgba(0, 0, 0, 0.35);
-    --shadow-logo-hover: 0 6px 14px rgba(0, 0, 0, 0.45);
+    --shadow-logo: 0 3px 10px rgba(90, 68, 50, 0.1399);
+    --shadow-logo-hover: 0 6px 14px rgba(90, 68, 50, 0.18);
     --shadow-button-hover: var(--shadow-glow);
     --shadow-card: var(--shadow-md);
 }
@@ -2777,8 +2776,7 @@ img {
 
 .sample-work-page .page-main {
     padding: clamp(42px, 6vw, 78px) 0 100px;
-    background:
-        radial-gradient(ellipse at 50% 0, rgba(255, 255, 255, 0.03), transparent 46%),
+    background: radial-gradient(ellipse at 50% 0, rgba(255, 255, 255, 0.18), transparent 46%),
         var(--bg-secondary);
 }
 
@@ -2876,8 +2874,8 @@ img {
 }
 
 .sample-work-page .sample-card:hover {
-    border-color: rgba(255, 255, 255, 0.18);
-    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+    border-color: rgba(139, 94, 60, 0.153);
+    box-shadow: 0 14px 32px rgba(90, 68, 50, 0.2);
     transform: translateY(-4px);
 }
 
@@ -2960,8 +2958,7 @@ img {
 
 .service-page-main {
     padding: clamp(42px, 6vw, 78px) 0 96px;
-    background:
-        radial-gradient(ellipse at 50% 0, rgba(255, 255, 255, 0.03), transparent 46%),
+    background: radial-gradient(ellipse at 50% 0, rgba(255, 255, 255, 0.18), transparent 46%),
         var(--bg-secondary);
 }
 
@@ -3010,7 +3007,7 @@ img {
     padding: clamp(20px, 3vw, 34px);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    background: linear-gradient(145deg, rgba(255, 255, 255, 0.1), transparent 48%), var(--bg-card);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.6), transparent 48%), var(--bg-card);
     box-shadow: 0 12px 30px var(--shadow-color);
     scroll-margin-top: 24px;
 }
@@ -3066,13 +3063,13 @@ img {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     background: var(--bg-secondary);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.448);
+    box-shadow: 0 6px 18px rgba(90, 68, 50, 0.1792);
     transition: border-color var(--transition), transform var(--transition), box-shadow var(--transition);
 }
 
 .service-page .sample-card:hover {
-    border-color: rgba(255, 255, 255, 0.18);
-    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.55);
+    border-color: rgba(139, 94, 60, 0.153);
+    box-shadow: 0 14px 28px rgba(90, 68, 50, 0.2);
     transform: translateY(-4px);
 }
 
@@ -3247,7 +3244,7 @@ img {
 .portal-system .card {
     border-color: var(--line);
     background: var(--glass-1);
-    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.256);
+    box-shadow: 0 16px 42px rgba(90, 68, 50, 0.1024);
 }
 
 .order-system .stepper {
@@ -3322,7 +3319,7 @@ img {
 
 .order-system .input:focus {
     border-color: var(--order-brown);
-    box-shadow: 0 0 0 3px rgba(179, 179, 179, 0.12);
+    box-shadow: 0 0 0 3px var(--color-surface-alt);
 }
 
 .order-system .input::placeholder {
@@ -4027,14 +4024,14 @@ body,
 .nav,
 .inner-page .top-bar,
 .inner-page .nav {
-    background: rgba(255, 255, 255, 0.042);
+    background: rgba(255, 255, 255, 0.252);
     color: var(--text-primary);
 }
 
 .top-bar,
 .nav {
     border-color: var(--border-soft);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.256);
+    box-shadow: 0 2px 12px rgba(90, 68, 50, 0.1024);
 }
 
 .top-bar-content,
@@ -4148,7 +4145,7 @@ textarea.input {
 .input::placeholder,
 input::placeholder,
 textarea::placeholder {
-    color: rgba(255, 255, 255, 0.65);
+    color: rgba(41, 39, 37, 0.65);
     opacity: 1;
 }
 
@@ -4158,9 +4155,9 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
     border-color: var(--line-accent);
-    outline: 3px solid rgba(255, 255, 255, 0.162);
+    outline: 3px solid rgba(139, 94, 60, 0.1377);
     outline-offset: 2px;
-    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.256);
+    box-shadow: 0 0 0 3px rgba(90, 68, 50, 0.1024);
 }
 
 input[readonly],
@@ -4265,7 +4262,7 @@ input[type="radio"] {
     border-color: var(--border-soft);
     border-radius: var(--radius-control);
     background: var(--glass-1);
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.192);
+    box-shadow: 0 3px 12px rgba(90, 68, 50, 0.0768);
     color: var(--text-primary);
 }
 
@@ -4712,7 +4709,7 @@ fieldset.dyn-field>legend {
     border: 1px solid var(--order-brown);
     border-radius: 14px;
     background: var(--glass-1);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.384);
+    box-shadow: 0 12px 30px rgba(90, 68, 50, 0.1536);
 }
 
 .estimate-head {
@@ -4980,7 +4977,7 @@ fieldset.dyn-field>legend {
     padding: 18px 20px;
     border: 2px solid var(--order-brown);
     border-radius: 16px;
-    background: linear-gradient(145deg, rgba(255, 62, 157, 0.1), rgba(147, 51, 234, 0.08));
+    background: linear-gradient(145deg, var(--accent-soft), var(--purple-soft));
 }
 
 .selected-package-head {
@@ -5174,7 +5171,7 @@ span.photo-gallery-main {
     bottom: 10px;
     padding: 3px 9px;
     border-radius: 999px;
-    background: rgba(8, 9, 13, 0.85);
+    background: rgba(250, 248, 244, 0.98);
     color: var(--text-primary);
     font-size: 0.72rem;
     font-weight: 700;
@@ -5348,7 +5345,7 @@ span.photo-gallery-main {
 }
 
 .customer-lightbox::backdrop {
-    background: rgba(8, 9, 13, 0.82);
+    background: rgba(250, 248, 244, 0.98);
 }
 
 .lightbox-frame {
@@ -5367,7 +5364,7 @@ span.photo-gallery-main {
     height: 40px;
     border: 0;
     border-radius: 50%;
-    background: rgba(8, 9, 13, 0.85);
+    background: rgba(250, 248, 244, 0.98);
     color: var(--text-primary);
     cursor: pointer;
     font-size: 1.4rem;
@@ -5611,11 +5608,11 @@ span.photo-gallery-main {
 }
 
 .payment-submissions .submission-rejected {
-    border-color: rgba(248, 113, 113, 0.45);
+    border-color: rgba(181, 74, 74, 0.3);
 }
 
 .payment-submissions .submission-verified {
-    border-color: rgba(34, 197, 94, 0.45);
+    border-color: rgba(63, 125, 88, 0.28);
 }
 
 /* ---------- Customer notifications, quotation history ---------- */
@@ -5658,7 +5655,7 @@ span.photo-gallery-main {
 }
 
 .notification-item.is-unread .notification-button {
-    border-color: rgba(0, 214, 255, 0.45);
+    border-color: rgba(79, 115, 150, 0.28);
     background: var(--cyan-soft);
 }
 
@@ -5677,11 +5674,11 @@ span.photo-gallery-main {
 }
 
 .payment-submissions .quote-accepted {
-    border-color: rgba(34, 197, 94, 0.45);
+    border-color: rgba(63, 125, 88, 0.28);
 }
 
 .payment-submissions .quote-declined {
-    border-color: rgba(248, 113, 113, 0.45);
+    border-color: rgba(181, 74, 74, 0.3);
 }
 
 .customer-panel .notice-success {
@@ -5806,18 +5803,18 @@ span.photo-gallery-main {
 }
 
 @keyframes detail-toggle-in {
-    from { opacity: 0; transform: translateY(-4px); }
-    to { opacity: 1; transform: none; }
+    from { opacity:0; transform:translateY(-4px); }
+    to { opacity:1; transform:none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .detail-toggle-body { animation: none; }
-    .detail-toggle-hint::after { transition: none; }
+    .detail-toggle-body { animation:none; }
+    .detail-toggle-hint::after { transition:none; }
 }
 
 @media (max-width: 600px) {
-    .detail-toggle-summary { padding: 12px 14px; }
-    .detail-toggle-body { padding: 4px 14px 14px; }
+    .detail-toggle-summary { padding:12px 14px; }
+    .detail-toggle-body { padding:4px 14px 14px; }
 }
 
 /* ---------- Shop-made designs: gallery, personalization preview, and review ---------- */
@@ -5909,7 +5906,7 @@ span.photo-gallery-main {
     height: 100%;
     object-fit: contain;
     border-radius: 6px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+    box-shadow: 0 6px 18px rgba(90, 68, 50, 0.088);
 }
 
 .design-card-zoom {
@@ -5918,8 +5915,8 @@ span.photo-gallery-main {
     bottom: 10px;
     padding: 3px 10px;
     border-radius: 999px;
-    background: rgba(0, 0, 0, 0.6);
-    color: #fff;
+    background: rgba(41, 39, 37, 0.27);
+    color: var(--color-text);
     font-size: 0.72rem;
     font-weight: 600;
     opacity: 0;
@@ -5938,7 +5935,7 @@ span.photo-gallery-main {
     padding: 4px 10px;
     border-radius: 999px;
     background: var(--order-brown);
-    color: var(--text-on-accent, #fff);
+    color: var(--text-on-accent, var(--color-on-accent));
     font-size: 0.75rem;
     font-weight: 700;
 }
@@ -5987,8 +5984,8 @@ span.photo-gallery-main {
 }
 
 .design-tag-sample {
-    border-color: rgba(245, 158, 11, 0.5);
-    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(154, 106, 18, 0.28);
+    background: var(--color-warning-soft);
     color: #f5c46b;
 }
 
@@ -6203,18 +6200,18 @@ span.photo-gallery-main {
 /* Scoped to the customer ordering and portal pages so other storefront pages keep their layout. */
 
 .order-system .page-hero-compact,
-.portal-system .page-hero-compact { padding: 36px 0 40px; }
+.portal-system .page-hero-compact { padding:36px 0 40px; }
 .order-system .page-main,
-.portal-system .page-main { padding: 40px 0 64px; }
+.portal-system .page-main { padding:40px 0 64px; }
 .order-system .card,
-.portal-system .card { padding: 24px; }
+.portal-system .card { padding:24px; }
 .order-system .order-step-lead,
-.portal-system .order-step-lead { margin-bottom: 14px; }
-.order-system .invitation-subtitle { margin: 16px 0 8px; }
-.order-system .wizard-step { padding-top: 10px; }
-.portal-system .customer-panel { margin: 14px 0; padding: 16px; }
-.portal-system .customer-draft { margin: 14px 0; padding: 16px; border-color: var(--primary, var(--order-brown)); }
-.portal-system .detail-toggle { margin-top: 12px; }
+.portal-system .order-step-lead { margin-bottom:14px; }
+.order-system .invitation-subtitle { margin:16px 0 8px; }
+.order-system .wizard-step { padding-top:10px; }
+.portal-system .customer-panel { margin:14px 0; padding:16px; }
+.portal-system .customer-draft { margin:14px 0; padding:16px; border-color:var(--primary, var(--order-brown)); }
+.portal-system .detail-toggle { margin-top:12px; }
 
 /* The action strip is the first thing after the status banner: urgent work, money, and primary actions. */
 .customer-action-strip {
@@ -6225,7 +6222,7 @@ span.photo-gallery-main {
     border-radius: 12px;
     background: var(--glass-1);
 }
-.customer-action-strip[hidden] { display: none; }
+.customer-action-strip[hidden] { display:none; }
 .action-strip-heading {
     display: flex;
     flex-wrap: wrap;
@@ -6237,13 +6234,13 @@ span.photo-gallery-main {
     font-size: 1rem;
     color: var(--order-ink);
 }
-.action-strip-heading .field-hint { margin: 0; }
+.action-strip-heading .field-hint { margin:0; }
 .action-strip-items {
     display: grid;
     gap: 8px;
     margin-top: 10px;
 }
-.action-strip-items > .field-hint { margin: 0; }
+.action-strip-items > .field-hint { margin:0; }
 .action-strip-item {
     display: flex;
     flex-wrap: wrap;
@@ -6253,30 +6250,30 @@ span.photo-gallery-main {
     border-radius: 9px;
     background: var(--glass-1);
 }
-.action-strip-item.is-urgent { background: var(--primary-soft, var(--cyan-soft)); }
-.action-strip-item > span:nth-child(2) { flex: 1 1 220px; }
+.action-strip-item.is-urgent { background:var(--primary-soft, var(--cyan-soft)); }
+.action-strip-item > span:nth-child(2) { flex:1 1 220px; }
 .action-badge {
     display: inline-block;
     padding: 3px 9px;
     border-radius: 999px;
     background: var(--order-brown);
-    color: #fff;
+    color: var(--color-text);
     font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.02em;
 }
-.btn-small { padding: 7px 12px; font-size: 0.85rem; }
+.btn-small { padding:7px 12px; font-size:0.85rem; }
 
 /* A selected design keeps its name visible; the gallery itself collapses below the fold. */
-.design-gallery.detail-toggle { margin: 0 0 12px; }
-.design-gallery .detail-toggle-summary { padding: 10px 14px; }
-.design-gallery .detail-toggle-summary .invitation-subtitle { margin: 0; }
+.design-gallery.detail-toggle { margin:0 0 12px; }
+.design-gallery .detail-toggle-summary { padding:10px 14px; }
+.design-gallery .detail-toggle-summary .invitation-subtitle { margin:0; }
 .design-gallery .design-grid {
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
 }
-.design-gallery .design-card-media { aspect-ratio: 4 / 3; }
-.design-gallery .design-card-body { padding: 10px; gap: 6px; }
+.design-gallery .design-card-media { aspect-ratio:4 / 3; }
+.design-gallery .design-card-body { padding:10px; gap:6px; }
 .design-gallery .design-card-description {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -6287,15 +6284,15 @@ span.photo-gallery-main {
 
 /* Field-specific validation must be visible, not just present in the DOM. */
 .field-error:not(:empty) {
-    color: #b42318;
+    color: var(--color-danger);
     font-weight: 600;
 }
 .order-system input[aria-invalid="true"],
 .portal-system input[aria-invalid="true"],
-.portal-system select[aria-invalid="true"] { border-color: #b42318; }
+.portal-system select[aria-invalid="true"] { border-color:rgba(181, 74, 74, 0.3); }
 
 @media (max-width: 620px) {
-    .action-strip-item { align-items: flex-start; }
-    .action-strip-item .btn-small { flex: 1 1 auto; }
-    .customer-action-strip { padding: 12px; }
+    .action-strip-item { align-items:flex-start; }
+    .action-strip-item .btn-small { flex:1 1 auto; }
+    .customer-action-strip { padding:12px; }
 }

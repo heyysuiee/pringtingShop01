@@ -11,6 +11,10 @@ database file path or credential is ever exposed or needed.
   sign-in throttling records, so a restore can never change the administrator's password or lock anyone out.
 * Every table is read from one database snapshot, so an order cannot be backed up against a payment or
   audit row from a different moment.
+* **Restore never erases the audit trail.** The audit log is append-only: a restore keeps every current
+  entry, merges in the backup's entries (an entry already present is not duplicated), and records the
+  restore itself as an audit entry. Rolling the data back can therefore never hide what happened after
+  the backup was made.
 * Each file carries a SHA-256 checksum of its data and an HMAC signature made with
   ``PRINTSHOP_BACKUP_SIGNING_KEY`` (or ``PRINTSHOP_SECRET_KEY`` when no dedicated key is set). A restore
   accepts only files signed by this installation and unchanged since they were created. Retired keys can
@@ -40,7 +44,7 @@ from fastapi import HTTPException
 
 from backend.app.core.config import settings
 from backend.app.database.connection import connection_scope
-from backend.app.repositories import admin_repository
+from backend.app.repositories import admin_repository, audit_repository
 
 
 logger = logging.getLogger("printshop.backup")
@@ -50,7 +54,8 @@ VERSION = 2
 # Version 1 backups did not contain upload bytes; they are still accepted so an upgrade never strands an
 # older backup file. Their signature/checksum are computed with their own version number.
 SUPPORTED_VERSIONS = (1, 2)
-# Restored in this order (parents before the tables that reference them); cleared in reverse.
+# Restored in this order (parents before the tables that reference them); cleared in reverse, except the
+# append-only audit log, which is merged and never cleared.
 BACKUP_TABLES = (
     "app_meta",
     "customer_accounts",
@@ -390,6 +395,8 @@ def validate_backup(document: Any) -> tuple[dict[str, Any], dict[str, bytes], in
             raise _invalid(f"the {table} table does not exist in this database.")
         if len(set(columns)) != len(columns) or not all(isinstance(name, str) and name in known for name in columns):
             raise _invalid(f"the {table} table has columns this system does not use.")
+        if table == "order_audit_log" and "id" not in columns:
+            raise _invalid("the order_audit_log table is missing its id column.")
         required = [name for name, column in known.items() if column["notnull"] and column["dflt_value"] is None and not column["pk"]]
         missing = [name for name in required if name not in columns]
         if missing:
@@ -493,7 +500,12 @@ class _DiskFileChanges:
 
 
 def restore_backup(document: Any, confirmation: Any, actor: str) -> dict[str, Any]:
-    """Replace the shop's data with a validated backup, in one transaction."""
+    """Replace the shop's data with a validated backup, in one transaction.
+
+    The audit trail is the exception: it is append-only, so a restore never deletes an audit entry. The
+    backup's entries are merged in (an id already present is kept as it is), entries about orders this
+    restore removes still survive, and the restore itself is recorded in the same transaction.
+    """
     if confirmation != RESTORE_CONFIRMATION:
         raise HTTPException(status_code=422, detail=f'Type {RESTORE_CONFIRMATION} to confirm that the current data will be replaced.')
     started = _now()
@@ -504,12 +516,16 @@ def restore_backup(document: Any, confirmation: Any, actor: str) -> dict[str, An
         raise
     statements: list[tuple[str, list[Any]]] = [("PRAGMA defer_foreign_keys = ON", [])]
     for table in reversed(BACKUP_TABLES):
+        if table == "order_audit_log":
+            continue  # Append-only: merged inside the transaction below, never cleared.
         if table == "app_meta":
             statements.append(("DELETE FROM app_meta WHERE key NOT LIKE 'admin.%' AND key NOT LIKE 'backup.%'", []))
         else:
             statements.append((f"DELETE FROM {table}", []))
     counts: dict[str, int] = {}
     for table in BACKUP_TABLES:
+        if table == "order_audit_log":
+            continue  # Inserted inside the transaction, after deduplicating against the entries kept.
         columns = tables[table]["columns"]
         sql = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})"
         rows = tables[table]["rows"]
@@ -525,11 +541,38 @@ def restore_backup(document: Any, confirmation: Any, actor: str) -> dict[str, An
             disk.apply()
         with connection_scope() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # Merge the backup's audit entries into the trail that is kept. Reading the existing ids inside
+            # the write transaction means a concurrent action's entry can never be lost or duplicated.
+            audit = tables["order_audit_log"]
+            audit_columns = audit["columns"]
+            id_position = audit_columns.index("id")
+            existing = {row[0] for row in connection.execute("SELECT id FROM order_audit_log").fetchall()}
+            audit_rows = [row for row in audit["rows"] if row[id_position] not in existing]
+            audit_sql = (
+                f"INSERT INTO order_audit_log ({', '.join(audit_columns)}) "
+                f"VALUES ({', '.join('?' for _ in audit_columns)})"
+            )
+            statements.extend((audit_sql, [_decode_value(value) for value in row]) for row in audit_rows)
+            counts["order_audit_log"] = len(audit_rows)
             _run_many(connection, statements)
             # Every reference must point at a restored row before the transaction is committed.
             problems = connection.execute("PRAGMA foreign_key_check").fetchall()
             if problems:
                 raise sqlite3.IntegrityError(f"{len(problems)} records refer to missing records")
+            # The restore itself belongs to the trail. "*" marks a shop-wide entry (no single order); it is
+            # written in the same transaction, so a failed restore leaves no entry behind.
+            audit_repository.insert(connection, "*", _now(), {
+                "actor_type": "admin",
+                "actor_id": actor,
+                "action": "backup.restored",
+                "details": {
+                    "backup_created_at": document.get("created_at"),
+                    "backup_created_by": document.get("created_by", ""),
+                    "backup_version": version,
+                    "rows": dict(counts),
+                    "files": len(files) if version >= 2 else 0,
+                },
+            })
     except (sqlite3.Error, OSError) as error:
         if disk is not None:
             disk.rollback()

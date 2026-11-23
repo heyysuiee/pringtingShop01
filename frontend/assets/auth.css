@@ -32,7 +32,7 @@
     border: 1px solid var(--auth-line);
     border-radius: var(--auth-radius);
     background: var(--auth-surface);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+    box-shadow: 0 18px 48px rgba(90, 68, 50, 0.128);
     color: var(--auth-ink);
     font-family: var(--font-sans);
     font-size: 15px;
@@ -205,7 +205,7 @@
 
 .auth-input:focus {
     border-color: var(--line-accent);
-    outline: 3px solid rgba(255, 255, 255, 0.135);
+    outline: 3px solid rgba(139, 94, 60, 0.11475);
     outline-offset: 1px;
 }
 
@@ -354,7 +354,7 @@
 .auth-page .auth-button[aria-busy="true"]::before {
     width: 16px;
     height: 16px;
-    border: 2px solid rgba(255, 255, 255, 0.4);
+    border: 2px solid rgba(139, 94, 60, 0.28);
     border-top-color: var(--line);
     border-radius: 50%;
     animation: auth-spin 0.8s linear infinite;
@@ -362,7 +362,7 @@
 }
 
 @keyframes auth-spin {
-    to { transform: rotate(360deg); }
+    to { transform:rotate(360deg); }
 }
 
 .auth-switch {
@@ -548,7 +548,7 @@
 
     .auth-card {
         border-radius: 14px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.256);
+        box-shadow: 0 8px 24px rgba(90, 68, 50, 0.1024);
     }
 
     .auth-field-row {

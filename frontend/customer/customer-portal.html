@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#08090D">
+    <meta name="theme-color" content="#FAF8F4">
     <meta name="description" content="Track your Printing Shop order with your reference number and email.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,6 +15,8 @@
     <link rel="stylesheet" href="/assets/theme-site.css">
     <link rel="stylesheet" href="/assets/chatbot.css">
     <link rel="stylesheet" href="/assets/portal-tracking.css">
+    <link rel="stylesheet" href="/assets/light-theme.css">
+    <script src="/assets/theme-toggle.js"></script>
     <title>Customer Portal — Printing Shop</title>
 </head>
 
@@ -32,16 +34,15 @@
         <div class="nav-brand">
             <a class="brand-link" href="/home" aria-label="ImPRESSion PrintShop home"><span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word">ImPRESSion <span>PrintShop</span></span></a>
         </div>
-        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
-            <span></span><span></span><span></span>
-        </button>
-        <div class="nav-menu">
+        <div class="nav-menu" id="navMenu">
             <a href="/home">Home</a>
             <a href="/services">Services</a>
             <a href="/order">Order</a>
             <a href="/sample-work">Sample Work</a>
             <a href="/customer-portal" class="active" aria-current="page">Customer Portal</a>
-            <!-- Shown by account.js once the customer is signed in. -->
+        </div>
+        <!-- Notifications stay reachable on mobile because they live outside the collapsed menu. -->
+        <div class="nav-actions">
             <div class="nav-notify" id="nav-notifications" hidden>
                 <button class="nav-notify-button" type="button" id="notifications-toggle" aria-label="Notifications" aria-expanded="false" aria-controls="notifications-panel">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
@@ -55,6 +56,9 @@
                     <ul class="notification-list" id="account-notifications" aria-live="polite"></ul>
                 </section>
             </div>
+            <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="navMenu" aria-label="Open menu">
+                <span></span><span></span><span></span>
+            </button>
         </div>
     </nav>
 
@@ -99,6 +103,22 @@
                         <label for="profile-phone">Contact number<input id="profile-phone" name="phone" type="tel" class="input" minlength="7" maxlength="40" required></label>
                         <label for="profile-messenger">Messenger name<input id="profile-messenger" name="messenger" type="text" class="input" maxlength="120"></label>
                         <button class="btn btn-dark" type="submit">Save profile</button>
+                    </form>
+                    <form id="customer-address-form" class="saved-address-form">
+                        <div class="orders-list-heading"><h3 class="card-title">Saved delivery address</h3></div>
+                        <p class="field-hint">Save a delivery address once and checkout will fill it in for you. The shipping fee is still calculated from the address when you place each order.</p>
+                        <div class="form-grid">
+                            <label for="address-recipient">Recipient name<input id="address-recipient" name="recipient_name" type="text" class="input" maxlength="120" required></label>
+                            <label for="address-contact">Contact number<input id="address-contact" name="contact_number" type="tel" class="input" minlength="7" maxlength="40" placeholder="09XX XXX XXXX" required></label>
+                            <label for="address-street">House number / Street<input id="address-street" name="street" type="text" class="input" maxlength="200" required></label>
+                            <label for="address-barangay">Barangay<input id="address-barangay" name="barangay" type="text" class="input" maxlength="120" required></label>
+                            <label for="address-province">Province<select id="address-province" name="province" class="input" required><option value="">Select province</option></select></label>
+                            <label for="address-city">City / Municipality<select id="address-city" name="city" class="input" required><option value="">Select province first</option></select></label>
+                            <label for="address-landmark">Landmark <span class="optional">(optional)</span><input id="address-landmark" name="landmark" type="text" class="input" maxlength="200"></label>
+                        </div>
+                        <label for="address-instructions">Delivery instructions <span class="optional">(optional)</span><textarea id="address-instructions" name="delivery_instructions" class="input" rows="2" maxlength="500"></textarea></label>
+                        <p class="field-hint" id="address-region" aria-live="polite"></p>
+                        <button class="btn btn-dark" type="submit">Save delivery address</button>
                     </form>
                     <div class="orders-list-heading"><h3 class="card-title">Orders from this account</h3></div>
                     <div id="account-orders" class="my-orders-list" aria-live="polite"></div>
@@ -167,6 +187,10 @@
                             <span class="snapshot-label">Payments submitted</span>
                             <strong class="snapshot-value" id="snapshot-submitted">—</strong>
                         </div>
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Work status</span>
+                            <strong class="snapshot-value snapshot-status" id="snapshot-work-status">—</strong>
+                        </div>
                     </div>
                 </section>
 
@@ -191,6 +215,28 @@
                     <div class="draft-actions">
                         <button type="button" class="btn btn-dark btn-compact" id="approve-draft">Approve draft</button>
                         <button type="button" class="btn btn-ghost-dark btn-compact" id="request-draft-changes">Request revision</button>
+                    </div>
+                </section>
+
+                <!-- PRIMARY: finished-work review, shown after the shop uploads the final work -->
+                <section class="customer-draft" id="customer-work-review" hidden>
+                    <div class="customer-draft-head">
+                        <div>
+                            <span class="overview-label">Action required</span>
+                            <h3>Your finished work is ready to review</h3>
+                            <p class="field-hint">Approve the work to unlock the remaining balance, or request a revision.</p>
+                        </div>
+                    </div>
+                    <p class="field-hint draft-remarks" id="work-review-remarks" hidden></p>
+                    <div class="work-preview-files" id="work-preview-files"></div>
+                    <label class="draft-revision" for="work-review-note">
+                        <span>Message to the shop <span class="field-hint">(optional when approving; required for a revision)</span></span>
+                        <textarea id="work-review-note" class="input" rows="3" maxlength="1000" placeholder="e.g. Please change the date on the second page"></textarea>
+                    </label>
+                    <p class="field-error" id="work-review-error" role="alert"></p>
+                    <div class="draft-actions">
+                        <button type="button" class="btn btn-dark btn-compact" id="approve-work">Approve finished work</button>
+                        <button type="button" class="btn btn-ghost-dark btn-compact" id="request-work-revision">Request revision</button>
                     </div>
                 </section>
 
@@ -228,6 +274,9 @@
                         <div class="detail-toggle-body">
                             <section class="customer-panel customer-panel-embedded" id="customer-requests" hidden aria-live="polite"></section>
                             <p class="field-hint secondary-empty" id="requests-empty">No cancellation, refund, or delivery issue actions are available for this order right now.</p>
+                            <div class="secondary-actions">
+                                <button type="button" class="btn btn-ghost-dark btn-compact" id="cancel-order" hidden>Cancel request</button>
+                            </div>
                         </div>
                     </details>
 
@@ -246,7 +295,6 @@
                             <p class="field-hint" id="receipt-hint">A receipt is available once payments have been verified for this order.</p>
                             <div class="secondary-actions">
                                 <button type="button" class="btn btn-ghost-dark btn-compact" id="download-receipt" hidden>Download receipt</button>
-                                <button type="button" class="btn btn-ghost-dark btn-compact" id="cancel-order" hidden>Cancel request</button>
                             </div>
                         </div>
                     </details>

@@ -71,6 +71,17 @@ def unique_reference() -> str:
     return f"GC-{uuid.uuid4().hex[:12].upper()}"
 
 
+def payment_proof() -> dict:
+    """A distinct receipt file for each ordinary payment.
+
+    Duplicate-receipt tests pass an explicit shared proof; every other payment should represent a
+    different transaction, so its file fingerprint must be different too.
+    """
+    raw = base64.b64decode(PNG.split(",", 1)[1])
+    unique = raw[:-64] + uuid.uuid4().hex.encode() * 2
+    return {"name": "gcash.png", "dataUrl": "data:image/png;base64," + base64.b64encode(unique).decode()}
+
+
 class WorkflowTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -161,7 +172,7 @@ class WorkflowTestCase(unittest.TestCase):
     def submit_payment(self, reference: str, payment_reference: str | None = None, proof: bool = True, expect: int = 200, **body) -> dict:
         body = {"reference": payment_reference or unique_reference(), **body}
         if proof:
-            body["proof"] = {"name": "gcash.png", "dataUrl": PNG}
+            body["proof"] = payment_proof()
         return self.customer_post(reference, "payments", body, expect)
 
     def pending_submission(self, reference: str) -> dict:
@@ -236,12 +247,22 @@ class DownPaymentTests(WorkflowTestCase):
         reference = self.accept(self.customized_order(1001))["reference"]
         view = self.admin_view(reference)
         self.assertEqual(view["payment"]["next_payment"], {"stage": "down_payment", "label": "50% down payment", "amount": 500.5})
-        # The customer cannot pick a different amount, even a smaller or larger one.
-        self.submit_payment(reference, amount=100, expect=422)
-        self.submit_payment(reference, amount=1001, expect=422)
+        # A customer may declare any positive amount, but the browser cannot credit it. Each declared value
+        # is only a pending claim and is rejected here so the server-calculated amount can be submitted next.
+        for amount in (100, 1001):
+            declared = self.submit_payment(reference, amount=amount)
+            submission = self.pending_submission(reference)
+            self.assertEqual(submission["amount"], float(amount))
+            self.assertEqual(submission["status"], "pending")
+            self.assertEqual(declared["payment"]["amount_paid"], 0.0)
+            self.assertEqual(declared["payment"]["payment_status"], "No Payment")
+            self.admin_post(reference, f"payment-submissions/{submission['id']}/reject", {
+                "note": "Amount-selection test",
+            })
         submitted = self.submit_payment(reference)
-        self.assertEqual(submitted["payment_submissions"][0]["amount"], 500.5)
-        self.assertEqual(submitted["payment_submissions"][0]["stage"], "down_payment")
+        # Earlier rejected claims remain in history; the newest submission is the one awaiting verification.
+        self.assertEqual(submitted["payment_submissions"][-1]["amount"], 500.5)
+        self.assertEqual(submitted["payment_submissions"][-1]["stage"], "down_payment")
         verified = self.verify(reference)
         self.assertEqual(verified["payment"]["balance"], 500.5)
         self.assertEqual(verified["payment"]["next_payment"]["stage"], "balance")
@@ -445,7 +466,7 @@ class PaymentVerificationTests(WorkflowTestCase):
         # Verifying again, or replaying the same request with the old version, changes nothing.
         path = f"/api/admin/orders/{reference}/payment-submissions/{submission['id']}/verify"
         self.assertEqual(self.admin.post(path, json={"received": True, "expected_version": version}).status_code, 409)
-        self.assertEqual(self.admin.post(path, json={"received": True}).status_code, 409)
+        self.assertEqual(self.admin.post(path, json={"received": True, "expected_version": version}).status_code, 409)
         stored = stored_order(reference)
         self.assertEqual(len(stored["payments"]), 1)
         confirmations = [item for item in self.notifications(reference=reference) if item["kind"] == "order_confirmed"]
@@ -576,7 +597,14 @@ class OrderSecurityTests(WorkflowTestCase):
         reference = quoted["reference"]
         accepted = self.accept(quoted, total_amount=1, down_payment_required=1)
         self.assertEqual((accepted["total_amount"], accepted["payment"]["down_payment_required"]), (1000.0, 500.0))
-        self.submit_payment(reference, amount=1, expect=422)
+        # A browser-supplied amount cannot become money or change the agreed price.
+        declared = self.submit_payment(reference, amount=1)
+        self.assertEqual(declared["payment_submissions"][0]["amount"], 1.0)
+        self.assertEqual(declared["payments"], [])
+        wrong_submission = self.pending_submission(reference)
+        self.admin_post(reference, f"payment-submissions/{wrong_submission['id']}/reject", {
+            "note": "Wrong amount",
+        })
         self.submit_payment(reference)
         submission = self.pending_submission(reference)
         for path, body in (
@@ -661,7 +689,7 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
         self.assertEqual(order["fulfillment"]["release_status"], "Ready for Dispatch")
         # The delivery area and fee are worked out by the server from the province (Metro Manila → Luzon).
         self.assertEqual(order["fulfillment"]["area_label"], "Luzon (including Metro Manila)")
-        self.assertEqual(order["fulfillment"]["delivery_fee"], 0.0)
+        self.assertEqual(order["fulfillment"]["delivery_fee"], 58.0)
         pickup = self.place(fulfillment={"method": "pickup", "street": "ignored"})
         self.assertEqual((pickup["fulfillment"]["method"], pickup["fulfillment"]["address"]), ("pickup", []))
         self.assertEqual(stored_order(pickup["reference"]).get("fulfillment"), {"method": "pickup"})

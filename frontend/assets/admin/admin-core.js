@@ -254,7 +254,13 @@
             this.tbody = h("tbody");
             this.table = h("table", { className: `data-table ${this.options.className || ""}`.trim() }, this.thead, this.tbody);
             if (this.options.caption) this.table.prepend(h("caption", { className: "visually-hidden", text: this.options.caption }));
-            this.wrap = h("div", { className: "table-wrap data-table-wrap" }, this.table);
+            // Keyboard users can focus and scroll wide tables on small screens.
+            this.wrap = h("div", {
+                className: "table-wrap data-table-wrap",
+                tabIndex: 0,
+                role: "region",
+                "aria-label": this.options.caption || "Data table, scrollable horizontally"
+            }, this.table);
             this.footer = h("div", { className: "table-footer" });
             this.container.replaceChildren(this.wrap, this.footer);
             this.renderHead();

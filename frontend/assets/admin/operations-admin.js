@@ -118,7 +118,7 @@
         const reprint = p.reprint;
         return h("section", { className: "fact-card", dataset: { focus: "production" } },
             h("h3", { text: p.cycle > 1 ? `Production monitoring · cycle ${p.cycle}` : "Production monitoring" }),
-            reprint ? h("p", { className: `notice-card ${reprint.status === "in_progress" ? "notice-warning" : "notice-success"}`, text: `Reprint ${reprint.id} (${reprint.status === "in_progress" ? "in progress" : "completed"}): ${number(reprint.quantity)} pc(s) · ${reprint.reason} · ${reprint.chargeable ? `chargeable ${money(reprint.charge_amount)} (customer agreed)` : "free"} · authorized by ${reprint.authorized_by || "the administrator"} on ${dateTime(reprint.authorized_at)}${reprint.refund_id ? ` · from refund request ${reprint.refund_id}` : ""}` }) : null,
+            reprint ? h("p", { className: `notice-card${reprint.status === "in_progress" ? " notice-warning" : reprint.status === "completed" ? " notice-success" : ""}`, text: `Reprint ${reprint.id} (${ { in_progress: "in progress", completed: "completed", cancelled: "cancelled" }[reprint.status] || reprint.status}): ${number(reprint.quantity)} pc(s) · ${reprint.reason} · ${reprint.chargeable ? `chargeable ${money(reprint.charge_amount)} (customer agreed)` : "free"} · authorized by ${reprint.authorized_by || "the administrator"} on ${dateTime(reprint.authorized_at)}${reprint.refund_id ? ` · from refund request ${reprint.refund_id}` : ""}${reprint.status === "cancelled" && reprint.cancelled_at ? ` · closed on ${dateTime(reprint.cancelled_at)}${reprint.cancellation_request_id ? ` with cancellation ${reprint.cancellation_request_id}` : ""}` : ""}` }) : null,
             ctx.detailList([
                 ["Progress", progressBar(p.progress)],
                 ["Production started", p.started_at ? dateTime(p.started_at) : "Not started"],
@@ -176,14 +176,19 @@
 
     function deliveryCard(order, ctx, reload) {
         const f = order.fulfillment || {};
+        const shipping = order.shipping || {};
         const attempts = f.attempts || [];
         const issues = f.issues || [];
         const cycles = f.previous_cycles || [];
-        const hasData = f.courier || attempts.length || f.pickup_confirmation || issues.length || f.pickup_schedule || f.released_at || cycles.length;
+        const hasData = f.courier || attempts.length || f.pickup_confirmation || issues.length || f.pickup_schedule || f.released_at || cycles.length || shipping.delivery_province;
         if (!hasData) return null;
         return h("section", { className: "fact-card", dataset: { focus: "fulfillment" } },
             h("h3", { text: f.method === "delivery" ? "Delivery tracking" : "Pickup" }),
             ctx.detailList([
+                shipping.delivery_province ? ["Delivery province", shipping.delivery_province] : null,
+                shipping.destination_region ? ["Destination region", shipping.destination_region] : null,
+                shipping.shipping_fee ? ["Shipping fee", money(shipping.shipping_fee)] : null,
+                shipping.estimated_delivery ? ["Estimated delivery", shipping.estimated_delivery] : null,
                 f.released_at ? ["Released", dateTime(f.released_at)] : null,
                 f.courier ? ["Courier", `${f.courier}${f.courier_service ? ` · ${f.courier_service}` : ""}`] : null,
                 f.tracking_number ? ["Tracking number", f.tracking_url ? h("a", { href: f.tracking_url, target: "_blank", rel: "noopener", text: f.tracking_number }) : f.tracking_number] : null,
@@ -844,6 +849,9 @@
                 { label: "Status", render: (row) => badge(row.status) },
                 { label: "Courier / tracking", render: (row) => ctx.cellPair(row.courier || "—", row.tracking_number || (row.scheduled_date ? `Scheduled ${date(row.scheduled_date)}` : "")) },
                 { label: "Area / fee", render: (row) => ctx.cellPair(row.area_label || "—", money(row.delivery_fee)) },
+                { label: "Destination / shipping", render: (row) => row.delivery_province
+                    ? ctx.cellPair(`${row.delivery_province} · ${row.destination_region}`, `${money(row.shipping_fee || row.delivery_fee || 0)}${row.estimated_delivery ? ` · ${row.estimated_delivery}` : ""}`)
+                    : "—" },
                 { label: "Attempts", align: "right", render: (row) => number(row.attempts) },
             ],
             issues: [
@@ -1124,7 +1132,7 @@
             const form = h("form", { className: "op-settings-form" },
                 h("label", { className: "check-row" }, enabled, " Offer delivery at checkout"),
                 h("h4", { text: "Delivery areas, fees, and estimated courier delivery periods" }),
-                h("p", { className: "field-note", text: "The delivery fee is calculated on the server from the customer's province (Luzon, Visayas, or Mindanao, or a specific area listing the province). Estimates are not guaranteed arrival dates." }),
+                h("p", { className: "field-note", text: "The shipping fee and delivery estimate are calculated on the server from the customer's province (Luzon, Visayas, or Mindanao, or a specific area listing the province). Changes take effect for new orders only; every existing order keeps the province, region, fee, and estimate stored when it was placed. Estimates are not guaranteed arrival dates." }),
                 areaRows, h("button", { className: "button button-small", type: "button", text: "+ Add delivery area", onclick: () => addArea() }),
                 h("h4", { text: "Couriers" }),
                 h("p", { className: "field-note", text: "J&T Express is the default courier. No live tracking API is connected: tracking numbers are entered when dispatching. A tracking page address with {tracking} shows customers a tracking link." }),

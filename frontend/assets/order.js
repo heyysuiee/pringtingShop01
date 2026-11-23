@@ -143,6 +143,10 @@
         quote: null,
         quoteTimer: 0,
         quoteSequence: 0,
+        savedAddress: {},
+        addressApplied: false,
+        shippingQuote: null,
+        shippingQuoteSequence: 0,
         sequence: SEQUENCES.general,
         activeStep: 1,
         idempotencyKey: newIdempotencyKey(),
@@ -1330,27 +1334,27 @@
         $("#payment-after-quote").hidden = fixed;
     }
 
-    /** The 50% down payment and remaining balance, as calculated by the server's price quote. */
+    /** The 50% down payment and remaining balance, with the server-calculated shipping fee added once. */
     function paymentRows() {
         if (!isFixedPrice()) {
             return [
                 ["Payment", "50% Down Payment"],
-                ["Total", `Set by the shop's quotation (you accept or decline it first)${fulfillmentMethod() === "delivery" && selectedArea() ? ` plus the ${money(deliveryFee())} delivery fee` : ""}`],
+                ["Total", `Set by the shop's quotation (you accept or decline it first)${fulfillmentMethod() === "delivery" && state.shippingQuote ? ` plus the ${money(shippingFee())} shipping fee` : ""}`],
                 ["Down payment (50%)", "Half of the accepted quotation, verified by the shop"],
             ];
         }
         const quote = state.quote || {};
         const rows = [["Payment", "50% Down Payment"]];
         if (typeof quote.down_payment !== "number" || typeof quote.estimated_total !== "number") {
-            rows.push([fixedTotalLabel(), "Calculating…"]);
+            rows.push(["Order subtotal", "Calculating…"]);
             return rows;
         }
-        const fee = deliveryFee();
+        const fee = shippingFee();
         const total = Math.round((quote.estimated_total + fee) * 100) / 100;
         const down = Math.round(total * 50) / 100;
-        rows.push([fixedTotalLabel(), money(quote.estimated_total)]);
-        if (fulfillmentMethod() === "delivery") rows.push(["Delivery fee", selectedArea() ? money(fee) : "Choose your delivery area"]);
-        rows.push(["Order total", money(total)]);
+        rows.push(["Order subtotal", money(quote.estimated_total)]);
+        if (fulfillmentMethod() === "delivery") rows.push(["Shipping fee", state.shippingQuote ? money(fee) : "Calculating…"]);
+        rows.push(["Total amount", money(total)]);
         rows.push(["Down payment (50%)", money(down)]);
         rows.push(["Remaining balance (50%)", money(Math.round((total - down) * 100) / 100)]);
         return rows;
@@ -1367,7 +1371,7 @@
             paymentBreakdown.append(row);
         });
         if (state.quote?.estimated_total !== null && state.quote?.estimated_total !== undefined) {
-            paymentBreakdown.append(el("p", "field-hint", `${state.mode === "package" ? "From the package's published price and add-on rate." : "From the shop's published size price list (price per piece × quantity)."} Pay the down payment after the shop approves your order; it is confirmed once the shop verifies your e-wallet payment.`));
+            paymentBreakdown.append(el("p", "field-hint", `${state.mode === "package" ? "Order subtotal is the package's published price and add-on rate." : "Order subtotal is from the shop's published size price list (price per piece × quantity)."} Delivery shipping is quoted by the server from your province and added once to the total. Pay the down payment after the shop approves your order; it is confirmed once the shop verifies your e-wallet payment.`));
         }
     }
 
@@ -1382,12 +1386,15 @@
     const provinceSelect = $("#delivery-province");
     const citySelect = $("#delivery-city");
     const regionHint = $("#delivery-region");
+    const shippingSummary = $("#shipping-summary");
+    const savedAddressNote = $("#saved-address-note");
     // Delivery areas (fee and estimated courier period) and pickup locations configured by the shop. The
-    // server calculates the delivery fee again when the order is submitted.
+    // server always recalculates the fee from the address, including on submit.
     let fulfillmentOptions = { delivery_enabled: true, areas: [], pickup_locations: [], delivery_disclaimer: "" };
     // PSGC reference data: province → city/municipality → island group. Never sent as an order total; the
     // server repeats the province/municipality check and computes the area and fee.
     let locationData = { provinces: [] };
+    let shippingError = "";
     const locationKey = (value) => String(value || "").toLowerCase().replace(/\s*\([^)]*\)/g, "")
         .replace(/^province of\s+/, "").replace(/\s+province$/, "").trim();
     /** Shared client-side mirror of the backend's PH mobile/landline rule. */
@@ -1429,6 +1436,121 @@
             ? `${province.region} · ${province.island_group.charAt(0).toUpperCase()}${province.island_group.slice(1)}. Choose the city or municipality where the order will be delivered.${noArea ? " No configured delivery area matches this province; choose an area below or contact the shop." : ""}`
             : "Select a province to see its region and available delivery area.";
     }
+
+    function selectedArea() {
+        return fulfillmentOptions.areas.find((area) => area.id === areaSelect.value) || null;
+    }
+
+    /** The shipping fee displayed at checkout comes from the server quote; the area fee is only a fallback. */
+    function shippingFee() {
+        if (fulfillmentMethod() !== "delivery") return 0;
+        const quoted = Number(state.shippingQuote?.shipping_fee);
+        if (state.shippingQuote && Number.isFinite(quoted)) return quoted;
+        return Number(selectedArea()?.fee || 0);
+    }
+
+    function estimateText(area) {
+        if (!area) return "";
+        const low = area.estimate_min_days;
+        const high = area.estimate_max_days;
+        if (low === null && high === null) return "Estimated delivery period confirmed by the shop";
+        if (low === null || high === null || low === high) return `About ${high ?? low} days (estimate)`;
+        return `${low}–${high} days (estimate)`;
+    }
+
+    function shippingProvince() {
+        return state.shippingQuote?.delivery_province || provinceSelect.value || "—";
+    }
+
+    function shippingRegion() {
+        if (state.shippingQuote?.destination_region) return state.shippingQuote.destination_region;
+        const province = selectedProvince();
+        return province ? province.island_group.charAt(0).toUpperCase() + province.island_group.slice(1) : "—";
+    }
+
+    function shippingEstimate() {
+        return state.shippingQuote?.estimated_delivery || estimateText(selectedArea());
+    }
+
+    /** Re-render every figure that depends on the destination so an address change updates the whole summary. */
+    function renderShippingViews() {
+        renderDeliveryQuote();
+        renderPaymentBreakdown();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    }
+
+    /** Ask the server to resolve the province, classify the region, and quote the fee and delivery estimate. */
+    async function refreshShippingQuote() {
+        const sequence = ++state.shippingQuoteSequence;
+        state.shippingQuote = null;
+        shippingError = "";
+        if (fulfillmentMethod() === "delivery" && provinceSelect.value.trim()) {
+            const params = new URLSearchParams({ province: provinceSelect.value.trim() });
+            const city = citySelect.value.trim();
+            if (city) params.set("city", city);
+            if (areaSelect.value) params.set("area_id", areaSelect.value);
+            renderShippingViews();
+            try {
+                const quote = await requestJson(`/api/shipping-quote?${params.toString()}`);
+                if (sequence !== state.shippingQuoteSequence) return;
+                state.shippingQuote = quote;
+            } catch (error) {
+                if (sequence !== state.shippingQuoteSequence) return;
+                shippingError = error instanceof Error ? error.message : "The shipping fee could not be calculated.";
+            }
+        }
+        renderShippingViews();
+    }
+
+    function renderShippingSummary() {
+        if (!shippingSummary) return;
+        shippingSummary.replaceChildren();
+        if (fulfillmentMethod() !== "delivery") return;
+        const quote = state.shippingQuote;
+        const printingTotal = state.quote && typeof state.quote.estimated_total === "number" ? state.quote.estimated_total : null;
+        const subtotal = isFixedPrice() && printingTotal !== null ? printingTotal : null;
+        const total = subtotal === null ? null : Math.round((subtotal + shippingFee()) * 100) / 100;
+        const rows = [
+            ["Delivery province", shippingProvince()],
+            ["Destination region", shippingRegion()],
+            ["Shipping fee", quote ? money(shippingFee()) : selectedArea() ? money(shippingFee()) : "Calculating…"],
+            ["Estimated delivery", shippingEstimate() || "—"],
+            ["Order subtotal", subtotal === null ? "Set by the shop's quotation" : money(subtotal)],
+            ["Total amount", total === null ? "Quotation + shipping fee" : money(total)],
+        ];
+        rows.forEach(([label, value]) => {
+            const row = el("div", "payment-breakdown-row");
+            row.append(el("dt", "", label), el("dd", "", String(value)));
+            shippingSummary.append(row);
+        });
+    }
+
+    /** Prefill the delivery form from the account's saved address, then quote that address through the server. */
+    function applySavedAddress(force = false) {
+        const saved = state.savedAddress;
+        if (!saved || !saved.province || !locationData.provinces.length) return;
+        if (state.addressApplied && !force) return;
+        if (!force && provinceSelect.value) return;
+        const deliveryRadio = form.querySelector('input[name="fulfillment-method"][value="delivery"]');
+        if (deliveryRadio?.disabled) return;
+        if (deliveryRadio) deliveryRadio.checked = true;
+        state.addressApplied = true;
+        syncFulfillment();
+        // Fill the saved province first: syncProvinceSelection() rebuilds the city options from it.
+        deliveryInputs.forEach((input) => {
+            const value = saved[input.dataset.deliveryField];
+            if (value !== undefined && value !== null && String(value).trim()) input.value = value;
+        });
+        syncProvinceSelection();
+        // Rebuilding the city list clears the saved city, so restore it from the fresh options.
+        if (saved.city) {
+            const savedCity = [...citySelect.options].find((option) => locationKey(option.value) === locationKey(saved.city));
+            if (savedCity) citySelect.value = savedCity.value;
+        }
+        if (savedAddressNote) savedAddressNote.hidden = false;
+        void refreshShippingQuote();
+    }
+
     fetch("/api/locations", { credentials: "same-origin" })
         .then((response) => (response.ok ? response.json() : null))
         .then((data) => {
@@ -1438,6 +1560,7 @@
             // Locations may resolve after fulfillment options; select the matching area in either order.
             syncProvinceSelection();
             syncFulfillment();
+            applySavedAddress();
         })
         .catch(() => {
             // The server still validates the address; a failed lookup leaves the selects empty with a hint.
@@ -1445,9 +1568,14 @@
         });
     provinceSelect.addEventListener("change", () => {
         syncProvinceSelection();
-        renderDeliveryQuote();
-        renderPaymentBreakdown();
-        if (state.activeStep === REVIEW_STEP) renderSummary();
+        void refreshShippingQuote();
+    });
+    citySelect.addEventListener("change", () => {
+        void refreshShippingQuote();
+    });
+    $("#use-saved-address")?.addEventListener("click", () => {
+        applySavedAddress(true);
+        renderShippingViews();
     });
     fetch("/api/fulfillment-options", { credentials: "same-origin" })
         .then((response) => (response.ok ? response.json() : null))
@@ -1471,6 +1599,7 @@
             // Fulfillment options may resolve after the location list; retry the derived area now.
             syncDeliveryArea();
             syncFulfillment();
+            void refreshShippingQuote();
         })
         .catch(() => {
             areaSelect.dataset.optional = "true";
@@ -1479,31 +1608,23 @@
             syncFulfillment();
         });
 
-    function selectedArea() {
-        return fulfillmentOptions.areas.find((area) => area.id === areaSelect.value) || null;
-    }
-
-    /** The delivery fee shown before submitting (the server recalculates it from the address). */
-    function deliveryFee() {
-        return fulfillmentMethod() === "delivery" ? Number(selectedArea()?.fee || 0) : 0;
-    }
-
-    function estimateText(area) {
-        if (!area) return "";
-        const low = area.estimate_min_days;
-        const high = area.estimate_max_days;
-        if (low === null && high === null) return "Estimated delivery period confirmed by the shop";
-        if (low === null || high === null || low === high) return `About ${high ?? low} days (estimate)`;
-        return `${low}–${high} days (estimate)`;
-    }
-
     function renderDeliveryQuote() {
-        const area = selectedArea();
-        $("#delivery-quote").textContent = area
-            ? `Delivery fee ${money(area.fee)} · ${estimateText(area)}. ${fulfillmentOptions.delivery_disclaimer || ""}`
-            : "Choose the area of the delivery address to see the delivery fee and estimated delivery period.";
+        if (fulfillmentMethod() === "delivery") {
+            const quote = state.shippingQuote;
+            const area = selectedArea();
+            $("#delivery-quote").textContent = quote
+                ? `Shipping fee ${money(shippingFee())} · ${shippingEstimate()}. ${fulfillmentOptions.delivery_disclaimer || ""}`
+                : shippingError
+                    ? shippingError
+                    : provinceSelect.value
+                        ? "Calculating shipping from your province…"
+                        : "Choose the province and city of the delivery address to see the shipping fee and estimated delivery period.";
+        } else {
+            $("#delivery-quote").textContent = "";
+        }
         const location = fulfillmentOptions.pickup_locations.find((item) => item.id === pickupSelect.value) || fulfillmentOptions.pickup_locations[0];
         $("#pickup-info").textContent = [location ? `Pickup at ${location.name}, ${location.address}${location.hours ? ` (${location.hours})` : ""}.` : "Pickup at the shop.", location?.instructions, fulfillmentOptions.pickup_instructions, "Orders are released only when fully paid; bring the pickup code shown in your customer portal."].filter(Boolean).join(" ");
+        renderShippingSummary();
     }
 
     function fulfillmentMethod() {
@@ -1515,7 +1636,6 @@
         const delivery = fulfillmentMethod() === "delivery";
         deliveryFields.hidden = !delivery;
         pickupFields.hidden = delivery;
-        renderDeliveryQuote();
         deliveryInputs.forEach((input) => {
             input.disabled = !delivery;
             input.required = delivery && input.dataset.optional !== "true";
@@ -1525,6 +1645,7 @@
             if (!$("#delivery-name").value.trim()) $("#delivery-name").value = $("#name").value.trim();
             if (!$("#delivery-phone").value.trim()) $("#delivery-phone").value = $("#phone").value.trim();
         }
+        renderDeliveryQuote();
     }
 
     function fulfillmentPayload() {
@@ -1549,26 +1670,37 @@
                 ["Preferred pickup date", $("#pickup-date").value || "Not specified"],
             ];
         }
-        const area = selectedArea();
+        const addressRows = deliveryInputs
+            .filter((input) => !["province", "city", "area_id"].includes(input.dataset.deliveryField))
+            .map((input) => [input.closest(".field").querySelector("label").textContent.replace("(optional)", "").trim(), input.value.trim()]);
         return [
             ["Method", "Delivery"],
-            ...deliveryInputs.filter((input) => input !== areaSelect).map((input) => [input.closest(".field").querySelector("label").textContent.replace("(optional)", "").trim(), input.value.trim()]),
-            ["Delivery area", area ? area.label : "Not chosen"],
-            ["Delivery fee", area ? money(area.fee) : "—"],
-            ["Estimated delivery", area ? `${estimateText(area)} — not a guaranteed arrival date` : "—"],
+            ...addressRows,
+            ["Delivery province", shippingProvince()],
+            ["City / Municipality", citySelect.value || "—"],
+            ["Destination region", shippingRegion()],
+            ["Delivery area", state.shippingQuote?.area_label || selectedArea()?.label || "—"],
+            ["Shipping fee", state.shippingQuote || selectedArea() ? money(shippingFee()) : "—"],
+            ["Estimated delivery", shippingEstimate() ? `${shippingEstimate()} — not a guaranteed arrival date` : "—"],
         ];
     }
 
     form.querySelectorAll('input[name="fulfillment-method"]').forEach((input) => input.addEventListener("change", () => {
         syncFulfillment();
+        void refreshShippingQuote();
         renderPaymentBreakdown();
         if (state.activeStep === REVIEW_STEP) renderSummary();
     }));
-    [areaSelect, pickupSelect].forEach((select) => select.addEventListener("change", () => {
+    areaSelect.addEventListener("change", () => {
+        void refreshShippingQuote();
+        renderPaymentBreakdown();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    });
+    pickupSelect.addEventListener("change", () => {
         renderDeliveryQuote();
         renderPaymentBreakdown();
         if (state.activeStep === REVIEW_STEP) renderSummary();
-    }));
+    });
     syncFulfillment();
 
     // ---------------------------------------------------------------- general reference files (non-invitation)
@@ -1851,6 +1983,10 @@
                     citySelect.focus();
                     return false;
                 }
+                if (!state.shippingQuote) {
+                    setError(shippingError || "The shipping fee is still being calculated. Wait a moment and try again.");
+                    return false;
+                }
             }
         }
         if (stepNumber === REVIEW_STEP && !$("#acknowledge").checked) {
@@ -1871,11 +2007,22 @@
             indicator.append(el("span", "stepper-num", String(index + 1)), el("span", "stepper-label", item.label));
             return indicator;
         }));
-        // Number each step heading after its position in this product's flow.
+        // Number each step heading after its position in this product's flow. The markup has no
+        // hardcoded numbers, so branches with different step counts never show conflicting numbers.
+        // Clear the previous flow first: sections that are not in the new flow must not keep a
+        // stale number from the default sequence.
+        steps.forEach((section) => {
+            const previous = section.querySelector(".order-step-kicker");
+            if (!previous?.dataset.baseText) return;
+            previous.textContent = previous.dataset.baseText;
+            delete previous.dataset.baseText;
+        });
         state.sequence.forEach((item, index) => {
             const section = steps.find((element) => Number(element.dataset.step) === item.step);
             const kicker = section?.querySelector(".order-step-kicker");
-            if (kicker) kicker.textContent = kicker.textContent.replace(/^\d+\s·\s/, `${String(index + 1).padStart(2, "0")} · `);
+            if (!kicker) return;
+            if (!kicker.dataset.baseText) kicker.dataset.baseText = kicker.textContent.trim();
+            kicker.textContent = `${String(index + 1).padStart(2, "0")} · ${kicker.dataset.baseText}`;
         });
     }
 
@@ -2089,6 +2236,7 @@
         const details = $("#confirm-details");
         const packageName = order.order_kind === "package" ? order.package?.name : (order.order_kind === "design" ? `${order.design?.name || "Shop"} design` : "");
         const fulfillment = order.fulfillment || {};
+        const shipping = order.shipping || {};
         const lines = [
             el("p", "", `${order.product.name}${packageName ? ` · ${packageName}` : ""} · ${order.customization.quantity.toLocaleString()} pc(s) · ${order.status}`),
         ];
@@ -2108,8 +2256,17 @@
             );
         }
         lines.push(el("p", "", `Fulfillment: ${fulfillment.label || "Store Pickup"}${fulfillment.method === "delivery"
-            ? ` to ${fulfillment.address.filter((row) => ["street", "barangay", "city", "province"].includes(row.key)).map((row) => row.value).join(", ")} · delivery fee ${money(fulfillment.delivery_fee || 0)}${fulfillment.estimate_text ? ` · ${fulfillment.estimate_text}` : ""}`
+            ? ` to ${fulfillment.address.filter((row) => ["street", "barangay", "city", "province"].includes(row.key)).map((row) => row.value).join(", ")}`
             : fulfillment.pickup_location ? ` at ${fulfillment.pickup_location.name}` : ""}.`));
+        if (fulfillment.method === "delivery" && shipping.delivery_province) {
+            const subtotalText = typeof payment.order_subtotal === "number" ? money(payment.order_subtotal) : "Set by the shop's quotation";
+            const totalText = typeof payment.total_amount === "number" ? money(payment.total_amount) : "Quotation + shipping fee";
+            lines.push(
+                el("p", "", `Delivery province: ${shipping.delivery_province} · Destination region: ${shipping.destination_region}.`),
+                el("p", "", `Order subtotal: ${subtotalText} · Shipping fee: ${money(shipping.shipping_fee || 0)} · Total amount: ${totalText}.`),
+            );
+            if (shipping.estimated_delivery) lines.push(el("p", "", `Estimated delivery: ${shipping.estimated_delivery} (an estimate, not a guaranteed arrival date).`));
+        }
         details.replaceChildren(...lines);
         $("#confirm-track").href = "/customer-portal";
         const confirmation = $("#confirmation");
@@ -2445,6 +2602,10 @@
         $("#email").value = customer.email || "";
         $("#phone").value = customer.phone || "";
         $("#messenger").value = customer.messenger || "";
+        // The saved address is a checkout convenience: the server still resolves and quotes it on submit.
+        state.savedAddress = customer.saved_address || {};
+        state.addressApplied = false;
+        applySavedAddress();
         // The account is the source of truth for the email, and for the phone once it is set.
         $("#email").readOnly = true;
         $("#phone").readOnly = Boolean(customer.phone);

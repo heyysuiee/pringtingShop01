@@ -20,6 +20,7 @@ from backend.app.core.security import (
     require_session,
 )
 from backend.app.schemas.user import (
+    CustomerDeliveryAddress,
     CustomerLogin,
     CustomerProfileUpdate,
     CustomerRegistration,
@@ -231,6 +232,17 @@ def update_customer_profile(payload: CustomerProfileUpdate, request: Request) ->
     require_same_origin(request)
     claims = require_session(request, "customer")
     customer = auth_services.update_customer(claims["sub"], payload.model_dump())
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer account not found.")
+    return {"customer": customer}
+
+
+@router.patch("/api/account/delivery-address")
+def update_customer_delivery_address(payload: CustomerDeliveryAddress, request: Request) -> dict[str, object]:
+    """Save the address used to prefill checkout; the order still recalculates and snapshots shipping."""
+    require_same_origin(request)
+    claims = require_session(request, "customer")
+    customer = auth_services.save_delivery_address(claims["sub"], payload.model_dump())
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer account not found.")
     return {"customer": customer}

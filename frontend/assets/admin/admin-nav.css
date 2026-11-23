@@ -70,7 +70,7 @@
 
 .nav-group-toggle:focus-visible,
 .sidebar-nav a:focus-visible {
-    outline: 2px solid var(--accent-pink-light, #FF7AC0);
+    outline: 2px solid var(--accent-pink-light, rgba(162, 99, 106, 0.28));
     outline-offset: -2px;
 }
 
@@ -80,7 +80,7 @@
 }
 
 .nav-group.has-active > .nav-group-toggle .nav-icon {
-    color: var(--accent-pink-light, #FF7AC0);
+    color: var(--accent-pink-light, var(--color-secondary-ink));
 }
 
 .nav-chevron {
@@ -216,12 +216,12 @@
     padding: 0 5px;
     place-items: center;
     border-radius: 999px;
-    background: var(--grad-brand-strong, #FF3E9D);
-    color: #fff;
+    background: var(--grad-brand-strong, var(--accent-soft));
+    color: var(--color-on-accent);
     font-size: 10px;
     font-weight: 700;
     line-height: 1;
-    box-shadow: 0 0 0 2px rgba(10, 11, 16, 0.9);
+    box-shadow: 0 0 0 2px rgba(90, 68, 50, 0.2);
     pointer-events: none;
 }
 
@@ -231,8 +231,8 @@
 
 /* On the full notification history page (opened from the bell), the bell shows as current. */
 .icon-button.is-active {
-    border-color: rgba(255, 62, 157, 0.45);
-    color: var(--accent-pink-light, #FF7AC0);
+    border-color: var(--line-accent);
+    color: var(--accent-pink-light, var(--color-secondary-ink));
 }
 
 @media (prefers-reduced-motion: reduce) {

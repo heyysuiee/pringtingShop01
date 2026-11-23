@@ -160,7 +160,7 @@ class ReportCalculationTests(unittest.TestCase):
         base = {"customer": customer["email"]}
         self.assertEqual(report_services.completed_list({**base, "min_days": "5"})["total"], 1)
         self.assertEqual(report_services.completed_list({**base, "max_days": "1"})["total"], 1)
-        self.assertEqual(report_services.completed_list({**base, "payment_status": "Partially Paid"})["total"], 1)
+        self.assertEqual(report_services.completed_list({**base, "payment_status": "Down Payment Paid"})["total"], 1)
         self.assertEqual(report_services.completed_list({**base, "completed_from": "2026-10-10", "completed_to": "2026-10-31"})["total"], 1)
         self.assertEqual(report_services.completed_list({**base, "request_from": "2026-10-02"})["total"], 1)
         with self.assertRaises(HTTPException):

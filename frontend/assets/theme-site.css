@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Storefront & customer portal — Dark Glass layer
+   Storefront & customer portal — Light Studio layer
    Loaded after style.css (+ auth.css) and theme.css. Presentation only: every class name
    comes from the existing markup and scripts.
    ========================================================================== */
@@ -23,7 +23,7 @@
 
 .top-bar {
     border-bottom: 1px solid var(--line);
-    background: rgba(8, 9, 13, 0.7);
+    background: rgba(250, 248, 244, 0.9799);
     box-shadow: none;
 }
 
@@ -40,8 +40,8 @@
 .nav,
 .inner-page .nav {
     border-bottom: 1px solid var(--line);
-    background: rgba(10, 11, 16, 0.68);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    background: rgba(250, 248, 244, 0.952);
+    box-shadow: 0 10px 30px rgba(90, 68, 50, 0.1);
     -webkit-backdrop-filter: blur(18px) saturate(150%);
     backdrop-filter: blur(18px) saturate(150%);
 }
@@ -49,6 +49,18 @@
 .nav {
     min-height: 76px;
     padding: 0 clamp(16px, 3vw, 40px);
+}
+
+/* Right-side controls injected by /assets/theme-toggle.js */
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.nav > .nav-menu {
+    margin-left: auto;
 }
 
 .nav-brand,
@@ -109,9 +121,9 @@
 .nav-menu a[aria-current="page"],
 .inner-page .nav-menu a.active,
 .inner-page .nav-menu a[aria-current="page"] {
-    background: linear-gradient(135deg, rgba(255, 62, 157, 0.2), rgba(147, 51, 234, 0.16));
-    color: #fff;
-    box-shadow: inset 0 0 0 1px rgba(255, 62, 157, 0.3);
+    background: linear-gradient(135deg, var(--accent-soft), var(--purple-soft));
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
 }
 
 .nav-toggle {
@@ -170,7 +182,7 @@
     border: 2px solid var(--bg-primary);
     border-radius: var(--radius-pill);
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-size: 0.64rem;
     font-weight: 800;
     line-height: 14px;
@@ -188,7 +200,7 @@
     padding: 14px;
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-lg);
-    background: rgba(16, 17, 22, 0.97);
+    background: rgba(250, 248, 244, 0.98);
     box-shadow: var(--shadow-lg);
     color: var(--text-primary);
     animation: theme-fade-up 180ms var(--ease) both;
@@ -221,6 +233,15 @@
 @media (max-width: 840px) {
     .nav {
         min-height: 0;
+    }
+
+    /* Keep the toggle and hamburger together on the right of the first row. */
+    .nav-actions {
+        order: 1;
+    }
+
+    .nav-menu {
+        order: 2;
     }
 
     /* Inside the collapsed menu the dropdown opens in place instead of floating. */
@@ -318,14 +339,13 @@
 }
 
 .hero-slideshow::after {
-    background:
-        radial-gradient(700px 420px at 18% 60%, rgba(147, 51, 234, 0.28), transparent 70%),
-        linear-gradient(90deg, rgba(8, 9, 13, 0.94) 0%, rgba(8, 9, 13, 0.72) 48%, rgba(8, 9, 13, 0.35) 100%),
-        linear-gradient(180deg, transparent 60%, rgba(8, 9, 13, 0.9) 100%);
+    background: radial-gradient(700px 420px at 18% 60%, var(--purple-soft), transparent 70%),
+        linear-gradient(90deg, rgba(250, 248, 244, 0.98) 0%, rgba(250, 248, 244, 0.98) 48%, rgba(250, 248, 244, 0.82) 100%),
+        linear-gradient(180deg, transparent 60%, rgba(250, 248, 244, 0.98) 100%);
 }
 
 .hero-copy h1 {
-    color: #fff;
+    color: var(--color-text);
     font-family: var(--font-display);
     font-weight: 800;
     letter-spacing: -0.045em;
@@ -344,7 +364,7 @@
 }
 
 .hero-copy h1 span {
-    color: #fff;
+    color: var(--color-text);
 }
 
 .hero-btn-primary,
@@ -377,9 +397,9 @@
     border: 0;
     border-radius: var(--radius-pill);
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 700;
-    box-shadow: 0 10px 28px rgba(255, 62, 157, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    box-shadow: 0 10px 28px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
@@ -388,8 +408,8 @@
 .showcase-btn:hover,
 .mp-home-footer-button:hover {
     background: var(--grad-brand-hover);
-    color: #fff;
-    box-shadow: 0 14px 34px rgba(255, 62, 157, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    color: var(--color-on-accent);
+    box-shadow: 0 14px 34px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transform: translateY(-2px);
 }
 
@@ -400,7 +420,7 @@
 .portfolio-filter {
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.36);
     color: var(--text-primary);
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
@@ -411,9 +431,9 @@
 .btn-cta-secondary:hover,
 .btn-ghost-dark:hover,
 .portfolio-filter:hover {
-    border-color: rgba(255, 255, 255, 0.3);
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
+    border-color: rgba(139, 94, 60, 0.255);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--color-text);
 }
 
 .portfolio-filter.active,
@@ -421,7 +441,7 @@
 .portfolio-filter[aria-selected="true"] {
     border-color: transparent;
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
 }
 
 /* Value strip under the hero */
@@ -446,7 +466,7 @@
 .mp-proof-item {
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    background: var(--glass-tint), rgba(16, 17, 22, 0.6);
+    background: var(--glass-tint), rgba(250, 248, 244, 0.84);
     box-shadow: var(--shadow-sm), var(--glass-highlight);
     -webkit-backdrop-filter: blur(var(--blur));
     backdrop-filter: blur(var(--blur));
@@ -455,7 +475,7 @@
 
 .mp-proof-item:hover {
     transform: translateY(-3px);
-    border-color: rgba(255, 62, 157, 0.35);
+    border-color: var(--line-accent);
 }
 
 .mp-proof-item h2 {
@@ -472,8 +492,8 @@
 .spec-icon-box,
 .order-mode-icon,
 .upload-icon {
-    border: 1px solid rgba(255, 62, 157, 0.3);
-    background: linear-gradient(145deg, rgba(255, 62, 157, 0.18), rgba(147, 51, 234, 0.14));
+    border: 1px solid var(--line-accent);
+    background: linear-gradient(145deg, var(--accent-soft), var(--purple-soft));
     color: var(--accent-pink-light);
 }
 
@@ -497,7 +517,7 @@
 .faq-item {
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    background: var(--glass-tint), rgba(255, 255, 255, 0.025);
+    background: var(--glass-tint), rgba(255, 255, 255, 0.18);
     box-shadow: var(--shadow-sm), var(--glass-highlight);
     -webkit-backdrop-filter: blur(var(--blur));
     backdrop-filter: blur(var(--blur));
@@ -514,8 +534,8 @@
 .process-card:hover,
 .spec-card:hover {
     transform: translateY(-4px);
-    border-color: rgba(255, 62, 157, 0.35);
-    box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 62, 157, 0.1), 0 18px 50px rgba(255, 62, 157, 0.08);
+    border-color: var(--line-accent);
+    box-shadow: var(--shadow-md), 0 0 0 1px var(--accent-soft), 0 18px 50px var(--accent-soft);
 }
 
 .mp-home-services-head-actions {
@@ -565,8 +585,8 @@
 }
 
 .faq-item:has(.faq-question[aria-expanded="true"]) {
-    border-color: rgba(255, 62, 157, 0.35);
-    background: linear-gradient(145deg, rgba(255, 62, 157, 0.07), rgba(255, 255, 255, 0.02));
+    border-color: var(--line-accent);
+    background: linear-gradient(145deg, var(--accent-soft), rgba(255, 255, 255, 0.18));
 }
 
 .faq-question[aria-expanded="true"] .faq-chevron {
@@ -584,9 +604,8 @@
     overflow: hidden;
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
-    background:
-        radial-gradient(600px 300px at 15% 0%, rgba(255, 62, 157, 0.22), transparent 70%),
-        radial-gradient(600px 320px at 85% 100%, rgba(147, 51, 234, 0.28), transparent 70%),
+    background: radial-gradient(600px 300px at 15% 0%, var(--accent-soft), transparent 70%),
+        radial-gradient(600px 320px at 85% 100%, var(--purple-soft), transparent 70%),
         var(--bg-secondary);
 }
 
@@ -601,7 +620,7 @@
 
 .main-footer {
     border-top: 1px solid var(--line);
-    background: rgba(8, 9, 13, 0.75);
+    background: rgba(250, 248, 244, 0.98);
 }
 
 .main-footer p,
@@ -649,10 +668,10 @@
 }
 
 .guarantee-box {
-    border: 1px solid rgba(34, 197, 94, 0.32);
+    border: 1px solid rgba(63, 125, 88, 0.28);
     border-radius: var(--radius-md);
     background: var(--success-soft);
-    color: #86EFAC;
+    color: var(--color-success);
 }
 
 .footer-bottom {
@@ -667,10 +686,9 @@
     position: relative;
     overflow: hidden;
     border-bottom: 1px solid var(--line);
-    background:
-        radial-gradient(700px 300px at 20% 0%, rgba(255, 62, 157, 0.16), transparent 70%),
-        radial-gradient(700px 320px at 85% 20%, rgba(147, 51, 234, 0.2), transparent 70%),
-        rgba(16, 17, 22, 0.55);
+    background: radial-gradient(700px 300px at 20% 0%, var(--accent-soft), transparent 70%),
+        radial-gradient(700px 320px at 85% 20%, var(--purple-soft), transparent 70%),
+        rgba(250, 248, 244, 0.82);
     color: var(--text-primary);
 }
 
@@ -693,7 +711,7 @@
 .service-catalog-shortcuts {
     border: 1px solid var(--line);
     border-radius: var(--radius-xl);
-    background: var(--glass-tint), rgba(255, 255, 255, 0.025);
+    background: var(--glass-tint), rgba(255, 255, 255, 0.18);
     box-shadow: var(--shadow-sm), var(--glass-highlight);
     -webkit-backdrop-filter: blur(var(--blur)) saturate(140%);
     backdrop-filter: blur(var(--blur)) saturate(140%);
@@ -711,7 +729,7 @@
 .portal-account .order-history-card,
 .card .order-history-card {
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     box-shadow: none;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -722,7 +740,7 @@
 .sample-work-page .sample-card {
     overflow: hidden;
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 255, 255, 0.21);
     transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
@@ -730,8 +748,8 @@
 .service-page .sample-card:hover,
 .sample-work-page .sample-card:hover {
     transform: translateY(-4px);
-    border-color: rgba(255, 62, 157, 0.35);
-    box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 62, 157, 0.1);
+    border-color: var(--line-accent);
+    box-shadow: var(--shadow-md), 0 0 0 1px var(--accent-soft);
 }
 
 .sample-card img {
@@ -747,8 +765,8 @@
 }
 
 .order-history-card:hover {
-    border-color: rgba(255, 62, 157, 0.3);
-    background: rgba(255, 62, 157, 0.04);
+    border-color: var(--line-accent);
+    background: var(--accent-soft);
 }
 
 .order-history-main h2,
@@ -771,11 +789,11 @@
     border: 0;
     border-radius: var(--radius-pill);
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 700;
     letter-spacing: 0.01em;
     text-transform: none;
-    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    box-shadow: 0 8px 22px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
@@ -784,8 +802,8 @@
 .order-system .btn-gold:hover,
 .portal-system .btn-dark:hover {
     background: var(--grad-brand-hover);
-    color: #fff;
-    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    color: var(--color-on-accent);
+    box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transform: translateY(-1px);
 }
 
@@ -796,7 +814,7 @@
 .portal-system .order-history-card .btn-dark,
 .portal-system #account-orders .btn-dark {
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.3);
     color: var(--text-primary);
     box-shadow: none;
 }
@@ -805,9 +823,9 @@
 .order-history-card .btn:hover,
 .portal-system .order-history-card .btn-dark:hover,
 .portal-system #account-orders .btn-dark:hover {
-    border-color: rgba(255, 62, 157, 0.5);
+    border-color: var(--line-accent);
     background: var(--accent-soft);
-    color: #fff;
+    color: var(--color-text);
     box-shadow: none;
 }
 
@@ -832,7 +850,7 @@ select,
 textarea {
     border: 1px solid var(--line-strong);
     border-radius: 12px;
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: rgba(255, 255, 255, 0.24);
     color: var(--text-primary);
     transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background-color var(--dur) var(--ease);
 }
@@ -841,7 +859,7 @@ textarea {
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):hover,
 select:hover,
 textarea:hover {
-    border-color: rgba(255, 255, 255, 0.24);
+    border-color: rgba(139, 94, 60, 0.204);
 }
 
 .input:focus,
@@ -852,10 +870,10 @@ textarea:focus-visible,
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):focus,
 select:focus,
 textarea:focus {
-    border-color: rgba(255, 62, 157, 0.65);
-    background-color: rgba(255, 255, 255, 0.06);
+    border-color: var(--line-accent);
+    background-color: rgba(255, 255, 255, 0.36);
     outline: none;
-    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.14);
+    box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 input::placeholder,
@@ -873,7 +891,7 @@ input[readonly],
 input:disabled,
 select:disabled,
 textarea:disabled {
-    background-color: rgba(255, 255, 255, 0.025);
+    background-color: rgba(255, 255, 255, 0.18);
     color: var(--text-muted);
 }
 
@@ -887,12 +905,12 @@ textarea:disabled {
 
 .field-error,
 .order-error {
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .order-error:not([hidden]) {
     padding: 12px 14px;
-    border: 1px solid rgba(248, 113, 113, 0.4);
+    border: 1px solid rgba(181, 74, 74, 0.3);
     border-radius: var(--radius-md);
     background: var(--danger-soft);
 }
@@ -906,7 +924,7 @@ textarea:disabled {
 
 .stepper-item::before,
 .order-system .stepper-item::before {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.6);
 }
 
 .stepper-num,
@@ -927,8 +945,8 @@ textarea:disabled {
 .order-system .stepper-item.active .stepper-num {
     border-color: transparent;
     background: var(--grad-brand);
-    color: #fff;
-    box-shadow: 0 0 0 5px rgba(255, 62, 157, 0.16), 0 6px 18px rgba(255, 62, 157, 0.4);
+    color: var(--color-on-accent);
+    box-shadow: 0 0 0 5px var(--accent-soft), 0 6px 18px var(--accent-soft);
 }
 
 .stepper-item.done,
@@ -938,14 +956,14 @@ textarea:disabled {
 
 .stepper-item.done .stepper-num,
 .order-system .stepper-item.done .stepper-num {
-    border-color: rgba(34, 197, 94, 0.5);
+    border-color: rgba(63, 125, 88, 0.28);
     background: var(--success-soft);
-    color: #4ADE80;
+    color: var(--color-success);
 }
 
 .stepper-item.done::before,
 .order-system .stepper-item.done::before {
-    background: linear-gradient(90deg, rgba(34, 197, 94, 0.6), rgba(34, 197, 94, 0.35));
+    background: linear-gradient(90deg, var(--color-success-soft), var(--color-success-soft));
 }
 
 .wizard-step.active {
@@ -962,7 +980,7 @@ textarea:disabled {
 .package-addon {
     border-color: var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 255, 255, 0.21);
     color: var(--text-primary);
     transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
@@ -972,8 +990,8 @@ textarea:disabled {
 .order-mode-card:hover:not(:disabled),
 .payment-option-card:hover .payment-option-body,
 .choice-chip:hover .choice-chip-body {
-    border-color: rgba(255, 255, 255, 0.24);
-    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(139, 94, 60, 0.204);
+    background: rgba(255, 255, 255, 0.36);
 }
 
 .product-option input:checked + .product-option-body,
@@ -982,9 +1000,9 @@ textarea:disabled {
 .order-mode-card.selected,
 .package-card:has(input:checked),
 .package-card.selected {
-    border-color: rgba(255, 62, 157, 0.7);
-    background: linear-gradient(145deg, rgba(255, 62, 157, 0.14), rgba(147, 51, 234, 0.1));
-    box-shadow: 0 0 0 1px rgba(255, 62, 157, 0.35), 0 10px 30px rgba(255, 62, 157, 0.14);
+    border-color: var(--line-accent);
+    background: linear-gradient(145deg, var(--accent-soft), var(--purple-soft));
+    box-shadow: 0 0 0 1px var(--accent-soft), 0 10px 30px var(--accent-soft);
 }
 
 .package-price,
@@ -1009,11 +1027,10 @@ textarea:disabled {
 
 /* Price breakdown. It is sticky, so its surface must hide the fields scrolling beneath it. */
 .estimate-panel {
-    border: 1px solid rgba(255, 62, 157, 0.28);
+    border: 1px solid var(--line-accent);
     border-radius: var(--radius-lg);
-    background:
-        radial-gradient(320px 160px at 100% 0%, rgba(255, 62, 157, 0.14), transparent 70%),
-        rgba(24, 25, 34, 0.96);
+    background: radial-gradient(320px 160px at 100% 0%, var(--accent-soft), transparent 70%),
+        rgba(250, 248, 244, 0.98);
     box-shadow: var(--shadow-md);
     -webkit-backdrop-filter: blur(16px);
     backdrop-filter: blur(16px);
@@ -1030,16 +1047,16 @@ textarea:disabled {
 
 /* Upload zones and previews */
 .upload-zone {
-    border: 1.5px dashed rgba(255, 255, 255, 0.2);
+    border: 1.5px dashed rgba(139, 94, 60, 0.17);
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.025);
+    background: rgba(255, 255, 255, 0.18);
     transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
 .upload-zone:hover,
 .upload-zone:focus-within {
-    border-color: rgba(255, 62, 157, 0.6);
-    background: rgba(255, 62, 157, 0.06);
+    border-color: var(--line-accent);
+    background: var(--accent-soft);
 }
 
 .upload-preview,
@@ -1048,7 +1065,7 @@ textarea:disabled {
 .order-acknowledgement {
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     box-shadow: none;
 }
 
@@ -1066,8 +1083,8 @@ textarea:disabled {
 
 .confirm-badge {
     background: var(--grad-brand);
-    color: #fff;
-    box-shadow: 0 0 0 8px rgba(255, 62, 157, 0.12), 0 12px 30px rgba(255, 62, 157, 0.35);
+    color: var(--color-on-accent);
+    box-shadow: 0 0 0 8px var(--accent-soft), 0 12px 30px var(--accent-soft);
 }
 
 .confirm-badge-muted {
@@ -1098,27 +1115,27 @@ textarea:disabled {
 
 .timeline-step::before,
 .portal-system .timeline-step::before {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.6);
 }
 
 .timeline-step.is-done .timeline-dot,
 .portal-system .timeline-step.is-done .timeline-dot {
-    border-color: rgba(34, 197, 94, 0.5);
+    border-color: rgba(63, 125, 88, 0.28);
     background: var(--success-soft);
-    color: #4ADE80;
+    color: var(--color-success);
 }
 
 .timeline-step.is-done::before,
 .portal-system .timeline-step.is-done::before {
-    background: rgba(34, 197, 94, 0.5);
+    background: var(--color-success-soft);
 }
 
 .timeline-step.is-current .timeline-dot,
 .portal-system .timeline-step.is-current .timeline-dot {
     border-color: transparent;
     background: var(--grad-brand);
-    color: #fff;
-    box-shadow: 0 0 0 6px rgba(255, 62, 157, 0.16), 0 6px 18px rgba(255, 62, 157, 0.4);
+    color: var(--color-on-accent);
+    box-shadow: 0 0 0 6px var(--accent-soft), 0 6px 18px var(--accent-soft);
 }
 
 .timeline-step.is-current .timeline-label,
@@ -1127,11 +1144,11 @@ textarea:disabled {
 }
 
 .portal-system .timeline-step.is-current::before {
-    background: linear-gradient(90deg, rgba(34, 197, 94, 0.5), rgba(255, 62, 157, 0.6));
+    background: linear-gradient(90deg, var(--color-success-soft), var(--accent-soft));
 }
 
 .notice {
-    border-color: rgba(0, 214, 255, 0.3);
+    border-color: rgba(79, 115, 150, 0.28);
     background: var(--cyan-soft);
     color: var(--text-secondary);
 }
@@ -1139,15 +1156,14 @@ textarea:disabled {
 /* ---------- Services & sample work ---------- */
 
 .service-page .service-category {
-    background:
-        radial-gradient(420px 200px at 100% 0%, rgba(147, 51, 234, 0.12), transparent 70%),
-        rgba(255, 255, 255, 0.025);
+    background: radial-gradient(420px 200px at 100% 0%, var(--purple-soft), transparent 70%),
+        rgba(255, 255, 255, 0.18);
 }
 
 .sample-card-image,
 .service-page .sample-card-image,
 .sample-work-page .sample-card-image {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.24);
 }
 
 /* ---------- Dialogs & lightbox ---------- */
@@ -1167,14 +1183,14 @@ textarea:disabled {
 .lightbox-close {
     border: 1px solid var(--line-strong);
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.48);
     color: var(--text-primary);
     transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
 
 .dialog-close:hover,
 .lightbox-close:hover {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.96);
     transform: rotate(90deg);
 }
 
@@ -1186,7 +1202,7 @@ textarea:disabled {
 .lightbox-stage {
     overflow: hidden;
     border-radius: var(--radius-md);
-    background: rgba(0, 0, 0, 0.35);
+    background: rgba(41, 39, 37, 0.1575);
 }
 
 .lightbox-stage img {
@@ -1238,7 +1254,7 @@ textarea:disabled {
 .photo-gallery-thumb {
     border-color: var(--line);
     border-radius: var(--radius-md);
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(41, 39, 37, 0.135);
 }
 
 .photo-gallery-thumb[aria-current="true"],
@@ -1247,9 +1263,9 @@ textarea:disabled {
 }
 
 .photo-gallery-count {
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(8, 9, 13, 0.7);
-    color: #fff;
+    border: 1px solid rgba(139, 94, 60, 0.17);
+    background: rgba(250, 248, 244, 0.9799);
+    color: var(--color-text);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
 }
@@ -1263,7 +1279,7 @@ textarea:disabled {
 .auth-card {
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-xl);
-    background: var(--glass-tint), rgba(255, 255, 255, 0.03);
+    background: var(--glass-tint), rgba(255, 255, 255, 0.18);
     box-shadow: var(--shadow-lg), var(--glass-highlight);
     -webkit-backdrop-filter: blur(24px) saturate(140%);
     backdrop-filter: blur(24px) saturate(140%);
@@ -1273,9 +1289,9 @@ textarea:disabled {
 .auth-brand-mark {
     border: 0;
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 800;
-    box-shadow: 0 8px 22px rgba(255, 62, 157, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    box-shadow: 0 8px 22px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.125);
 }
 
 .auth-brand-name {
@@ -1302,23 +1318,23 @@ textarea:disabled {
 .auth-input {
     border: 1px solid var(--line-strong);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.24);
     color: var(--text-primary);
 }
 
 .auth-input:focus {
-    border-color: rgba(255, 62, 157, 0.65);
-    box-shadow: 0 0 0 4px rgba(255, 62, 157, 0.14);
+    border-color: var(--line-accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
     outline: none;
 }
 
 .auth-input[aria-invalid="true"] {
-    border-color: rgba(248, 113, 113, 0.75);
-    box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.12);
+    border-color: rgba(181, 74, 74, 0.3);
+    box-shadow: 0 0 0 4px var(--color-danger-soft);
 }
 
 .auth-field-error {
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .auth-page .auth-toggle-password {
@@ -1333,67 +1349,67 @@ textarea:disabled {
 
 .auth-page .auth-link {
     color: var(--accent-pink-light);
-    text-decoration-color: rgba(255, 122, 192, 0.45);
+    text-decoration-color: var(--purple-soft);
 }
 
 .auth-page .auth-link:hover {
-    color: #fff;
+    color: var(--color-text);
 }
 
 .auth-page .auth-button {
     border: 0;
     border-radius: var(--radius-pill);
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
     font-weight: 700;
-    box-shadow: 0 10px 26px rgba(255, 62, 157, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    box-shadow: 0 10px 26px var(--accent-soft), inset 0 1px 0 rgba(139, 94, 60, 0.11);
     transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
 .auth-page .auth-button:hover:not(:disabled) {
     background: var(--grad-brand-hover);
-    box-shadow: 0 14px 34px rgba(255, 62, 157, 0.38);
+    box-shadow: 0 14px 34px var(--accent-soft);
     transform: translateY(-1px);
 }
 .auth-alert-error {
-    border-color: rgba(248, 113, 113, 0.4);
+    border-color: rgba(181, 74, 74, 0.3);
     background: var(--danger-soft);
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .auth-alert-success {
-    border-color: rgba(34, 197, 94, 0.4);
+    border-color: rgba(63, 125, 88, 0.28);
     background: var(--success-soft);
-    color: #86EFAC;
+    color: var(--color-success);
 }
 
 .auth-rules li.met {
-    color: #86EFAC;
+    color: var(--color-success);
 }
 
 .auth-rules li.met .auth-rule-state {
     background: var(--accent-green);
-    color: #08090D;
+    color: rgba(41, 39, 37, 1);
 }
 
 .auth-rules li.unmet {
-    color: #FCA5A5;
+    color: var(--color-danger);
 }
 
 .auth-rules li.unmet .auth-rule-state {
-    border-color: rgba(248, 113, 113, 0.6);
-    color: #FCA5A5;
+    border-color: rgba(181, 74, 74, 0.3);
+    color: var(--color-danger);
 }
 
 .auth-steps li.current::before {
     background: var(--grad-brand);
-    color: #fff;
+    color: var(--color-on-accent);
 }
 
 .auth-success-icon {
     background: var(--grad-brand);
-    color: #fff;
-    box-shadow: 0 0 0 8px rgba(255, 62, 157, 0.12);
+    color: var(--color-on-accent);
+    box-shadow: 0 0 0 8px var(--accent-soft);
 }
 
 .auth-code-input {
@@ -1470,7 +1486,7 @@ textarea:disabled {
     padding: 7px 14px;
     border: 1px solid var(--line-strong);
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     color: var(--text-secondary);
     font-size: 0.85rem;
     font-weight: 600;
@@ -1502,7 +1518,7 @@ textarea:disabled {
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: var(--radius-xl);
-    background: var(--glass-tint), rgba(255, 255, 255, 0.02);
+    background: var(--glass-tint), rgba(255, 255, 255, 0.18);
     box-shadow: var(--shadow-sm), var(--glass-highlight);
     scroll-margin-top: 90px;
 }
@@ -1515,7 +1531,7 @@ textarea:disabled {
     gap: 8px 16px;
     padding: 20px 24px 16px;
     border-bottom: 1px solid var(--line);
-    background: linear-gradient(90deg, var(--accent-soft), rgba(147, 51, 234, 0.05) 60%, transparent);
+    background: linear-gradient(90deg, var(--accent-soft), var(--purple-soft) 60%, transparent);
 }
 
 .service-category-block-title {
@@ -1554,8 +1570,7 @@ textarea:disabled {
 .service-row {
     display: grid;
     grid-template-columns: 76px minmax(0, 1fr) minmax(130px, auto) auto;
-    grid-template-areas:
-        "media info price action"
+    grid-template-areas: "media info price action"
         ".     packages packages packages";
     align-items: center;
     gap: 0 20px;
@@ -1570,7 +1585,7 @@ textarea:disabled {
 
 .service-row:hover,
 .service-row:focus-within {
-    background: rgba(255, 255, 255, 0.025);
+    background: rgba(255, 255, 255, 0.18);
 }
 
 .service-row-thumb {
@@ -1583,7 +1598,7 @@ textarea:disabled {
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.24);
     cursor: zoom-in;
 }
 
@@ -1644,7 +1659,7 @@ textarea:disabled {
     padding: 2px 9px;
     border: 1px solid var(--line);
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     color: var(--text-muted);
     font-size: 0.74rem;
     font-weight: 600;
@@ -1733,7 +1748,7 @@ textarea:disabled {
     padding: 10px 14px;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(255, 255, 255, 0.18);
     color: var(--text-primary);
     text-decoration: none;
     transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
@@ -1791,8 +1806,7 @@ textarea:disabled {
 
     .service-row {
         grid-template-columns: 64px minmax(0, 1fr) auto;
-        grid-template-areas:
-            "media info info"
+        grid-template-areas: "media info info"
             "media price action"
             "packages packages packages";
         gap: 10px 16px;
@@ -1827,8 +1841,7 @@ textarea:disabled {
 
     .service-row {
         grid-template-columns: 56px minmax(0, 1fr);
-        grid-template-areas:
-            "media info"
+        grid-template-areas: "media info"
             "price price"
             "action action"
             "packages packages";
@@ -1970,7 +1983,7 @@ textarea:disabled {
     height: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.48);
 }
 
 .upload-progress-bar {

@@ -43,6 +43,9 @@ class OrderUpdates(TypedDict):
     drafts: NotRequired[list[dict[str, Any]]]
     cancellation_requests: NotRequired[list[dict[str, Any]]]
     refunds: NotRequired[list[dict[str, Any]]]
+    # Down payment workflow (see order_services): administrator-set amount and the independent payment status.
+    required_down_payment: NotRequired[float | None]
+    payment_status: NotRequired[str]
 
 
 # How a customer pays for an order. Every new order requires the 50% down payment (package and customized
@@ -131,3 +134,11 @@ class OrderRecord(TypedDict):
     # Refund records (see refund_services). Separate from cancellation: a duplicate-payment refund never
     # cancels the order.
     refunds: NotRequired[list[dict[str, Any]]]
+    # Administrator-set down payment. NULL keeps the original 50% rule for older orders.
+    required_down_payment: NotRequired[float | None]
+    # Independent payment progress: Unpaid, Awaiting Down Payment, Pending Verification, Partially Paid,
+    # Awaiting Final Payment, Fully Paid. Never used to represent production/work progress.
+    payment_status: NotRequired[str]
+    # Finished-work preview, customer approval timestamp, and revision requests (JSON):
+    # {"status", "approved_at", "note", "preview", "requests": [...], "breakdown_sent_at"}.
+    work_approval: NotRequired[dict[str, Any]]

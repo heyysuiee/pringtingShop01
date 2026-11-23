@@ -11,8 +11,8 @@ from fastapi import HTTPException
 from backend.app.core.config import settings
 from backend.app.core.security import hash_password, verify_password
 from backend.app.repositories import customer_repository
-from backend.app.schemas.user import CustomerRegistration, password_problems
-from backend.app.services import email_service
+from backend.app.schemas.user import CustomerRegistration, password_problems, validate_phone
+from backend.app.services import email_service, location_services
 from backend.app.utils.clock import now_iso, now_utc
 
 
@@ -41,6 +41,8 @@ def public_customer(customer: dict[str, Any]) -> dict[str, Any]:
         "created_at": customer["created_at"],
         "updated_at": customer["updated_at"],
         "email_verified": bool(customer.get("email_verified", 1)),
+        # A reusable delivery address, validated against the same PSGC data as checkout.
+        "saved_address": customer.get("saved_address") if isinstance(customer.get("saved_address"), dict) else {},
     }
 
 
@@ -93,6 +95,46 @@ def get_customer(customer_id: str) -> dict[str, Any] | None:
 
 def update_customer(customer_id: str, profile: dict[str, str]) -> dict[str, Any] | None:
     customer = customer_repository.update(customer_id, profile, now_iso())
+    return public_customer(customer) if customer else None
+
+
+def _saved_address_text(value: Any, label: str, limit: int, required: bool = False) -> str:
+    text = "" if value is None else str(value).strip()
+    if required and not text:
+        raise HTTPException(status_code=422, detail=f"{label} is required.")
+    if len(text) > limit:
+        raise HTTPException(status_code=422, detail=f"{label} must be {limit} characters or fewer.")
+    return text
+
+
+def save_delivery_address(customer_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate and save the customer's reusable delivery address.
+
+    The same PSGC province/city check and phone rule used at checkout run here. The saved address is a
+    convenience for prefill only: the order's fee and region are always recalculated and snapshotted when
+    the customer actually places the order.
+    """
+    fields = (
+        ("recipient_name", "Recipient name", 120, True),
+        ("contact_number", "Contact number", 40, True),
+        ("street", "House number / Street", 200, True),
+        ("barangay", "Barangay", 120, True),
+        ("city", "City / Municipality", 120, True),
+        ("province", "Province", 120, True),
+        ("landmark", "Landmark", 200, False),
+        ("delivery_instructions", "Delivery instructions", 500, False),
+    )
+    address = {
+        key: _saved_address_text(payload.get(key), label, limit, required)
+        for key, label, limit, required in fields
+    }
+    try:
+        address["contact_number"] = validate_phone(address["contact_number"])
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=f"Delivery contact number: {error}") from error
+    resolved = location_services.resolve_address(address["province"], address["city"])
+    address.update({key: resolved[key] for key in ("province", "city", "region", "region_code", "island_group")})
+    customer = customer_repository.update_saved_address(customer_id, address, now_iso())
     return public_customer(customer) if customer else None
 
 

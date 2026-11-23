@@ -40,6 +40,7 @@
         "Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined",
         "Awaiting COD Confirmation", "Awaiting Down Payment", "Confirmed",
         "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing",
+        "In Progress", "Ready for Customer Review", "Revision Requested", "Approved by Customer", "Awaiting Final Payment",
         "In Production", "Quality Checking", "Packaging", "Awaiting Full Payment",
         "Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed",
         "Completed", "Rejected", "Cancelled",
@@ -47,7 +48,7 @@
     const STATUS_GROUPS = [
         ["", "All orders", STATUSES],
         ["pending", "Pending", ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"]],
-        ["processing", "Active (confirmed)", ["Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Production", "Quality Checking", "Packaging", "Awaiting Full Payment", "Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed"]],
+        ["processing", "Active (confirmed)", ["Confirmed", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing", "In Progress", "Ready for Customer Review", "Revision Requested", "Approved by Customer", "Awaiting Final Payment", "In Production", "Quality Checking", "Packaging", "Awaiting Full Payment", "Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered", "Order Claimed"]],
         ["completed", "Completed", ["Completed"]],
         ["cancelled", "Cancelled / rejected", ["Rejected", "Cancelled"]],
     ];
@@ -58,10 +59,15 @@
         ["production", "In production (stage)"],
         ["release", "Ready for pickup / delivery (stage)"],
     ];
-    const PAYMENT_STATUSES = ["Fully Paid", "Partially Paid", "Unpaid", "Not Quoted"];
+    const PAYMENT_STATUSES = ["Not Quoted", "No Payment", "Insufficient Down Payment", "Down Payment Paid", "Partially Paid", "Fully Paid", "Excess Payment"];
     const VERIFICATION_FILTERS = [
         ["", "All verification statuses"],
         ["verified", "Verified"],
+        ["ocr_checked_pending", "OCR-checked · pending manual verification"],
+        ["insufficient_payment", "Insufficient Payment"],
+        ["reference_mismatch", "Reference Number Mismatch"],
+        ["duplicate_reference", "Duplicate Reference Number"],
+        ["needs_manual_review", "Needs Manual Review"],
         ["pending", "Pending Verification"],
         ["rejected", "Rejected"],
         ["missing", "Reference Missing"],
@@ -74,6 +80,11 @@
         "Draft Preparation": "Start draft preparation",
         "Rejected": "Reject request",
         "Cancelled": "Cancel order",
+        "In Progress": "Mark as in progress",
+        "Ready for Customer Review": "Send work for review",
+        "Revision Requested": "Mark revision requested",
+        "Approved by Customer": "Mark approved by customer",
+        "Awaiting Final Payment": "Await final payment",
         "In Production": "Start production",
         "Quality Checking": "Send to quality checking",
         "Ready for Pickup": "Mark ready for pickup",
@@ -86,6 +97,11 @@
         "Draft Preparation": "The down payment is verified; start preparing the design draft.",
         "Rejected": "The customer sees the request as rejected.",
         "Cancelled": "Stops the order. Orders with recorded payments cannot be cancelled here.",
+        "In Progress": "The confirmed work is being prepared. Send the finished work for review when it is ready.",
+        "Ready for Customer Review": "The customer can approve the finished work or request a revision.",
+        "Revision Requested": "The customer asked for changes; send an updated preview to continue.",
+        "Approved by Customer": "The customer approved the work, so the remaining balance can be paid.",
+        "Awaiting Final Payment": "The finished work is approved; collect the remaining balance before release.",
         "In Production": "The customer approved the draft; printing starts.",
         "Quality Checking": "Printing is finished; inspect the products before packaging.",
         "Ready for Pickup": "Printing is done and the order can be collected at the shop.",
@@ -239,6 +255,40 @@
         if (row.total_amount !== null && row.total_amount !== undefined) return money(row.total_amount);
         if (row.status === "Rejected" || row.status === "Cancelled") return "—";
         return row.estimated_total !== null && row.estimated_total !== undefined ? `Est. ${money(row.estimated_total)}` : "Awaiting quote";
+    }
+
+    const MONEY_TOLERANCE = 0.005;
+    const finite = (value, fallback = null) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+    /** The same cumulative money view the server exposes, with legacy fields only as a fallback. */
+    function adminPayment(order) {
+        const summary = order.summary || {};
+        const payment = order.payment || {};
+        const calc = payment.payment_calculation || summary.payment_calculation || {};
+        const total = finite(calc.total_order_amount, finite(summary.total_amount, finite(order.total_amount)));
+        const paid = finite(calc.confirmed_payments, finite(summary.amount_paid, 0));
+        return {
+            total,
+            paid,
+            balanceDue: finite(calc.balance_due, finite(summary.balance, total === null ? null : Math.max(0, total - paid))),
+            exact: finite(calc.remaining_balance_exact, finite(calc.remaining_balance, total === null ? null : total - paid)),
+            requiredDown: finite(calc.required_down_payment, finite(payment.down_payment_required, finite(summary.down_payment_required))),
+            shortfall: finite(calc.additional_needed_for_down_payment, finite(summary.additional_needed_for_down_payment, 0)),
+            excess: finite(calc.excess_amount, finite(summary.excess_amount, 0)),
+            status: calc.payment_status || summary.order_payment_status || order.payment_status || payment.payment_status || summary.payment_status || "—",
+        };
+    }
+
+    /** Client-side preview only; the server recomputes and stores this when the payment is confirmed. */
+    function paymentStatusAfter(total, requiredDown, paidAfter, cod = false) {
+        if (total === null) return "No Payment";
+        if (!cod && paidAfter > total + MONEY_TOLERANCE) return "Excess Payment";
+        if (paidAfter >= total - MONEY_TOLERANCE) return "Fully Paid";
+        if (paidAfter <= MONEY_TOLERANCE) return "No Payment";
+        const required = cod ? 0 : requiredDown || 0;
+        if (required > 0 && paidAfter < required - MONEY_TOLERANCE) return "Insufficient Down Payment";
+        if (required > 0 && paidAfter <= required + MONEY_TOLERANCE) return "Down Payment Paid";
+        return "Partially Paid";
     }
 
     // ================================================================ navigation
@@ -636,24 +686,8 @@
             statCard({ label: "Refunds pending", value: number((data.pending_cancellations || 0) + (data.pending_refunds || 0)), foot: `${plural(data.pending_cancellations || 0, "cancellation")} · ${plural(data.pending_refunds || 0, "refund")}`, icon: "↺", tone: (data.pending_cancellations || data.pending_refunds) ? "highlight" : "", onClick: () => navigate("refunds") }),
         );
 
-        /** Each tile is an ordinary deep link; filtered queues set their filter before navigate(). */
-        function attentionItem(label, count, href, view, apply) {
-            const link = h("a", {
-                className: `attention-item${count ? " has-items" : ""}`,
-                href,
-                ...(apply ? {} : { "data-view": view }),
-            }, h("span", { text: label }), h("strong", { text: number(count) }));
-            if (apply) link.addEventListener("click", (event) => { event.preventDefault(); apply(); navigate(view); });
-            return link;
-        }
-        const needsAttention = panel("Needs attention", "Counts that need action now · select a tile to open its queue",
-            h("div", { className: "attention-grid" },
-                attentionItem("Orders to review", st.to_review, "/admin/orders", "orders", () => { filters.orders = { ...filters.orders, status: "to_review" }; }),
-                attentionItem("Payments to verify", data.payments_to_verify, "/admin/payments", "payments", () => { filters.payments = { ...filters.payments, verification: "pending" }; }),
-                attentionItem("In production", st.production, "/admin/production", "production"),
-                attentionItem("Ready for pickup / delivery", releaseDue, "/admin/fulfillment", "fulfillment"),
-                attentionItem("Cancellations & refunds", (data.pending_cancellations || 0) + (data.pending_refunds || 0), "/admin/refunds", "refunds"),
-            ));
+        // The four priority cards above are the "needs attention" summary. A second
+        // tile grid repeated the same counts, so the dashboard now shows each figure once.
 
         // Order workflow: every order that is not cancelled or rejected is counted in exactly one card.
         const orderCards = h("section", { className: "stats-grid stats-grid-4 dashboard-stages", "aria-label": "Orders by stage" },
@@ -723,7 +757,6 @@
         );
         body.replaceChildren(
             priorityCards,
-            needsAttention,
             data.payments_missing_reference ? h("p", { className: "notice-card notice-warning dashboard-notice" },
                 `${plural(data.payments_missing_reference, "older payment")} ${data.payments_missing_reference === 1 ? "has" : "have"} no reference number. `,
                 h("button", { className: "table-link", type: "button", text: "Review in Payments & Verification →", onclick: () => { filters.payments = { ...filters.payments, verification: "missing" }; navigate("payments"); } })) : null,
@@ -750,6 +783,9 @@
     /** The next step for an order, derived only from fields already present in the orders row. */
     function requiredAction(row) {
         if (row.payments_to_verify) return { text: "Verify payment", tone: "verify" };
+        if (row.work_status === "Revision Requested") return { text: "Resend finished work", tone: "action" };
+        if (row.work_status === "Ready for Customer Review") return { text: "Await work approval", tone: "" };
+        if (row.work_status === "Approved by Customer" || row.status === "Awaiting Final Payment") return { text: "Collect remaining balance", tone: "action" };
         if (ACTION_LABELS[row.status]) return { text: ACTION_LABELS[row.status], tone: "action" };
         if (row.status === "Awaiting Down Payment") return { text: "Await down payment", tone: "" };
         if (row.status === "Awaiting Full Payment") return { text: "Collect remaining balance", tone: "action" };
@@ -807,7 +843,6 @@
                 {
                     label: "Order Reference", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "cell-pair" },
                         h("span", { className: "table-primary", text: row.reference }),
-                        h("button", { className: "button button-small table-open", type: "button", text: "Open", title: `Open order ${row.reference}`, onclick: () => openOrder(row.reference) }),
                         row.image_count ? h("span", { className: "table-chip", text: `🖼 ${row.image_count} image${row.image_count === 1 ? "" : "s"}` }) : null),
                 },
                 { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
@@ -817,9 +852,13 @@
                     row.order_kind ? h("span", { className: "table-chip", text: orderKindChip(row) }) : null) },
                 { label: "Order Date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
                 { label: "Order Status", sortKey: "status", render: (row) => h("span", { className: "cell-pair" }, badge(row.status),
-                    h("span", { className: "table-secondary", text: row.fulfillment_label })) },
-                { label: "Payment Status", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.payment_status),
-                    h("span", { className: "table-secondary", text: row.payment_option === "cod" ? "COD" : row.payment_option ? `50% DP · ${row.down_payment_status}` : "Option after quotation" }),
+                    row.work_status && row.work_status !== row.status ? h("span", { className: "table-chip", text: row.work_status }) : null,
+                    h("span", { className: "table-secondary", text: row.delivery_province
+                        ? `${row.fulfillment_label} · ${row.delivery_province} (${row.destination_region})`
+                        : row.fulfillment_label })) },
+                { label: "Payment Status", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.order_payment_status || row.payment_status),
+                    h("span", { className: "table-secondary", text: row.order_payment_status && row.order_payment_status !== row.payment_status ? `Legacy: ${row.payment_status}` : "" }),
+                    h("span", { className: "table-secondary", text: row.payment_option === "cod" ? "COD" : row.payment_option ? `${row.admin_set_down_payment ? "Custom DP" : "50% DP"} · ${row.down_payment_status}` : "Option after quotation" }),
                     row.payments_to_verify ? h("span", { className: "table-chip", text: "⚑ Payment to verify" }) : null) },
                 { label: "Total Amount", sortKey: "total", align: "right", render: (row) => totalText(row) },
                 { label: "Amount Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
@@ -857,6 +896,17 @@
             Object.assign(f, { search: "", status: "", service: "", product: "", payment_status: "", payment_option: "", kind: "", date_from: "", date_to: "" });
             renderOrders();
         } });
+        // Keep the everyday filters visible; uncommon filters live behind one disclosure.
+        const moreOrderFilters = h("details", { className: "filter-more" },
+            h("summary", { text: "More filters" }),
+            h("div", { className: "filter-more-grid" },
+                field("Exact status", statusSelect),
+                field("Payment option", optionSelect),
+                field("Order type", kindSelect),
+                field("Requested from", fromInput),
+                field("Requested to", toInput),
+                clear,
+            ));
         body.replaceChildren(
             tabs,
             h("div", { className: "filter-bar orders-filter-bar", role: "search", "aria-label": "Order search and filters" },
@@ -864,15 +914,10 @@
                 search,
                 field("Category", serviceSelect),
                 field("Printing service", productSelect),
-                field("Status", statusSelect),
                 field("Payment", paymentSelect),
-                field("Payment option", optionSelect),
-                field("Order type", kindSelect),
-                field("Requested from", fromInput),
-                field("Requested to", toInput),
-                clear,
+                moreOrderFilters,
             ),
-            panel(["Customer requests ", countLabel], "Reference, customer, service, date, statuses, amounts, balance, and the next required action. Use Open or select a row for the complete transaction details.", tableHost,
+            panel(["Customer requests ", countLabel], "Reference, customer, service, date, statuses, amounts, balance, and the next required action. Select a row for the complete transaction details.", tableHost,
                 UI.exportButtons("orders", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
         table.load();
@@ -1201,6 +1246,7 @@
                 deliverySummaryCard(order, deliveryOps)),
             h("div", { className: "od-column" },
                 paymentSummaryCard(order),
+                workReviewCard(order),
                 quotationCard(order),
                 paymentHistoryCard(order, reload),
                 actions,
@@ -1301,6 +1347,7 @@
     /** Fulfillment at a glance; the address is intentionally omitted (it lives in Customer). */
     function deliverySummaryCard(order, deliveryOps = []) {
         const f = order.fulfillment || {};
+        const shipping = order.shipping || {};
         const tracking = f.tracking_number
             ? (f.tracking_url
                 ? h("a", { href: f.tracking_url, target: "_blank", rel: "noopener", text: f.tracking_number })
@@ -1312,13 +1359,15 @@
                 ["Method", h("strong", { text: f.label || "Store Pickup" })],
                 f.courier ? ["Courier", `${f.courier}${f.courier_service ? ` · ${f.courier_service}` : ""}`] : null,
                 tracking ? ["Tracking number", tracking] : null,
-                f.estimate_text ? ["Estimated delivery", f.estimate_text] : null,
+                shipping.delivery_province ? ["Delivery province", shipping.delivery_province] : null,
+                shipping.destination_region ? ["Destination region", shipping.destination_region] : null,
+                shipping.shipping_fee ? ["Shipping fee", money(shipping.shipping_fee)] : f.delivery_fee ? ["Delivery fee", money(f.delivery_fee)] : null,
+                shipping.estimated_delivery || f.estimate_text ? ["Estimated delivery", shipping.estimated_delivery || f.estimate_text] : null,
                 f.scheduled_date ? ["Scheduled delivery", date(f.scheduled_date)] : null,
                 f.pickup_schedule ? ["Pickup schedule", `${date(f.pickup_schedule.date)} ${f.pickup_schedule.time || ""}`.trim()] : null,
                 f.preferred_pickup_date ? ["Preferred pickup date", date(f.preferred_pickup_date)] : null,
                 f.pickup_location ? ["Pickup location", `${f.pickup_location.name} · ${f.pickup_location.address}`] : null,
                 f.pickup_notes ? ["Pickup notes", f.pickup_notes] : null,
-                f.method === "delivery" ? ["Delivery fee", money(f.delivery_fee || 0)] : null,
                 ["Status", badge(f.release_status || "Ready for Pickup")],
                 f.recorded ? null : ["Note", "Placed before delivery options existed: store pickup."],
             ]),
@@ -1332,24 +1381,42 @@
         const summary = order.summary;
         const payment = order.payment || {};
         const cod = payment.payment_option === "cod";
+        const moneyNow = adminPayment(order);
         const downValue = cod
-            ? (payment.down_payment_required === 0 ? "Not required (COD)" : money(payment.down_payment_required))
-            : (payment.down_payment_required === null || payment.down_payment_required === undefined
+            ? (moneyNow.requiredDown === 0 ? "Not required (COD)" : money(moneyNow.requiredDown))
+            : (moneyNow.requiredDown === null
                 ? "Half of the quotation"
-                : money(payment.down_payment_required));
+                : money(moneyNow.requiredDown));
+        const shipping = order.shipping || {};
         const metrics = [
+            ...(payment.order_subtotal === null || payment.order_subtotal === undefined ? [] : [
+                h("div", { className: "od-money" },
+                    h("span", { text: "Order subtotal" }),
+                    h("strong", { text: money(payment.order_subtotal) })),
+            ]),
+            ...(shipping.delivery_province ? [
+                h("div", { className: "od-money" },
+                    h("span", { text: `Shipping fee · ${shipping.destination_region}` }),
+                    h("strong", { text: money(payment.shipping_fee ?? shipping.shipping_fee ?? 0) })),
+            ] : []),
             h("div", { className: "od-money" },
-                h("span", { text: cod ? "Down payment" : "Required down payment (50%)" }),
+                h("span", { text: cod ? "Down payment" : `Required down payment${payment.admin_set_down_payment ? "" : " (50%)"}` }),
                 h("strong", { text: downValue })),
             h("div", { className: "od-money" },
-                h("span", { text: "Amount paid" }),
-                h("strong", { text: money(summary.amount_paid) })),
+                h("span", { text: "Confirmed payments" }),
+                h("strong", { text: money(moneyNow.paid) })),
             h("div", { className: "od-money" },
                 h("span", { text: cod ? "Due on delivery" : "Remaining balance" }),
-                h("strong", { className: summary.balance > 0 ? "od-balance-due" : "", text: summary.balance === null ? "—" : money(summary.balance) })),
+                h("strong", { className: moneyNow.balanceDue > 0 ? "od-balance-due" : "", text: moneyNow.balanceDue === null ? "—" : money(moneyNow.balanceDue) })),
             h("div", { className: "od-money" },
                 h("span", { text: "Down payment status" }),
                 h("strong", {}, odStatus(payment.down_payment_status || "—"))),
+            h("div", { className: "od-money" },
+                h("span", { text: "Payment status" }),
+                h("strong", {}, odStatus(moneyNow.status))),
+            h("div", { className: "od-money" },
+                h("span", { text: "Work status" }),
+                h("strong", {}, odStatus(order.work_status || payment.work_status || "—"))),
         ];
         return h("section", { className: "od-panel od-payment", dataset: { focus: "payments", orderSection: "payments" } },
             odPanelHead("Payment summary"),
@@ -1361,19 +1428,53 @@
             h("div", { className: "od-money-grid" }, ...metrics),
             payment.pending_verification
                 ? h("p", { className: "od-inline-note" }, h("strong", { text: `${money(payment.pending_verification)} waiting for verification.` }), " It is not counted as paid yet.")
+                : null,
+            payment.final_payment_locked
+                ? h("p", { className: "od-inline-note" }, h("strong", { text: "Final payment locked: " }), payment.final_payment_lock || "Waiting for the customer's approval of the finished work.")
+                : null,
+            !cod && moneyNow.shortfall > 0.005
+                ? h("p", { className: "od-inline-note", text: `${money(moneyNow.shortfall)} still due on the down payment.` })
+                : null,
+            moneyNow.excess > 0.005
+                ? h("p", { className: "od-inline-note", text: `${money(moneyNow.excess)} excess was confirmed and is flagged for admin review.` })
                 : null);
+    }
+
+    /** The finished-work review record, including the files the customer is approving. */
+    function workReviewCard(order) {
+        const review = order.work_approval || {};
+        if (!review.status && !(review.preview_files || []).length) return null;
+        const previews = (review.preview_files || []).map((file) => h("a", {
+            className: "button button-small", href: file.url, target: "_blank", rel: "noopener",
+            text: `Open ${file.name}`,
+        }));
+        return h("section", { className: "od-panel od-work-review", dataset: { focus: "work-review" } },
+            odPanelHead("Finished-work review", review.status_label || review.status || ""),
+            detailList([
+                ["Work status", odStatus(review.work_status || review.status_label || "—")],
+                ["Sent", review.sent_at ? dateTime(review.sent_at) : "—"],
+                ["Customer responded", review.responded_at ? dateTime(review.responded_at) : "—"],
+                ["Revision requests", number(review.revision_count || 0)],
+                ["Shop remarks", review.remarks || "—"],
+                ["Customer note", review.approval_note || review.revision_note || "—"],
+            ]),
+            previews.length ? h("div", { className: "dialog-actions" }, ...previews) : null);
     }
 
     /** Compact payment ledger. The header carries the record count and the whole section collapses. */
     function paymentHistoryCard(order, reload) {
         const count = order.payments.length;
+        const moneyNow = adminPayment(order);
+        let running = 0;
         const table = count
             ? h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table od-pay-table" },
-                h("thead", {}, h("tr", {}, ...["Date received", "Payment type", "Payment method", "Amount", "Verification status"].map((text, index) => h("th", {
-                    scope: "col", className: index === 3 ? "align-right" : "", text,
+                h("thead", {}, h("tr", {}, ...["Date received", "Payment type", "Payment method", "Amount", "Cumulative paid", "Balance after", "Verification status"].map((text, index) => h("th", {
+                    scope: "col", className: index >= 3 && index <= 5 ? "align-right" : "", text,
                 })))),
                 h("tbody", {}, ...order.payments.map((payment) => {
                     const check = payment.verification_view || {};
+                    running = Math.round((running + Number(payment.amount || 0)) * 100) / 100;
+                    const balanceAfter = moneyNow.total === null ? null : Math.max(0, Math.round((moneyNow.total - running) * 100) / 100);
                     const reference = payment.reference
                         ? h("span", { className: "od-cell-sub", text: `Ref ${payment.reference}${check.reference_type_label ? ` · ${check.reference_type_label}` : ""}` })
                         : addReferenceButton(order, payment, reload);
@@ -1384,6 +1485,8 @@
                             payment.source === "customer submission" ? h("span", { className: "od-cell-sub", text: "Verified submission" }) : null),
                         h("td", { text: payment.method || "—" }),
                         h("td", { className: "align-right od-amount", text: money(payment.amount) }),
+                        h("td", { className: "align-right", text: money(running) }),
+                        h("td", { className: "align-right", text: balanceAfter === null ? "—" : money(balanceAfter) }),
                         h("td", {},
                             odStatus(check.status || "—"),
                             check.verified_by ? h("span", { className: "od-cell-sub", text: `by ${check.verified_by}` }) : null,
@@ -1669,13 +1772,24 @@
             section.append(h("p", { className: "notice-card", text: "The customer declined this quotation, so it cannot be paid. Send a revised quotation or close the request." }));
         }
         if (order.status === "Awaiting Down Payment" && !actions.verify_payments) {
-            section.append(h("p", { className: "notice-card", text: `Waiting for the customer's 50% down payment of ${money(order.payment?.down_payment_required)} through the shop's e-wallet. The order is confirmed automatically when you verify it.` }));
+            section.append(h("p", { className: "notice-card", text: `Waiting for the customer's ${order.payment?.admin_set_down_payment ? "required down payment" : "50% down payment"} of ${money(order.payment?.down_payment_required)} through the shop's e-wallet. The order is confirmed automatically when you verify it.` }));
         }
         if (order.status === "Confirmed") {
-            section.append(h("p", { className: "notice-card notice-success", text: "The 50% down payment is verified and the order is confirmed. Start draft preparation or send the draft." }));
+            section.append(h("p", { className: "notice-card notice-success", text: "The down payment is verified and the order is confirmed. Start draft preparation or send the finished work for review." }));
+        }
+        const review = order.work_approval || {};
+        if (review.status === "pending") {
+            section.append(h("p", { className: "notice-card", text: "Waiting for the customer to approve the finished work. The remaining balance stays locked until they approve it." }));
+        } else if (review.status === "revision_requested") {
+            section.append(h("p", { className: "notice-card notice-warning", text: `The customer requested a revision${review.revision_note ? `: “${review.revision_note}”` : ""}. Send an updated finished-work preview to continue.` }));
+        } else if (review.status === "approved") {
+            section.append(h("p", { className: "notice-card notice-success", text: "The customer approved the finished work. The remaining balance can now be paid." }));
+        }
+        if (order.payment?.final_payment_locked && review.status !== "pending") {
+            section.append(h("p", { className: "notice-card notice-warning", text: order.payment.final_payment_lock || "The remaining balance is locked until the customer approves the finished work." }));
         }
         if (actions.start_production_blocked) {
-            section.append(h("p", { className: "notice-card notice-warning", text: "Production cannot start until the required 50% down payment is verified." }));
+            section.append(h("p", { className: "notice-card notice-warning", text: "Production cannot start until the required down payment is verified." }));
         }
 
         if (section.childElementCount === 1) {
@@ -1686,10 +1800,14 @@
         // Forms are secondary: one disclosure keeps the initial view short without removing any capability.
         const advanced = [];
         if (actions.confirm_package) advanced.push(confirmPackageForm(order, reload));
-        if (actions.verify_payments) advanced.push(...(order.payment_submissions || []).filter((item) => item.status === "pending").map((item) => verifySubmissionForm(order, item, reload)));
+        if (actions.set_payment_terms) advanced.push(paymentTermsForm(order, reload));
+        const pendingPayments = (order.payment_submissions || []).filter((item) => item.status === "pending");
+        if (actions.verify_payments) advanced.push(...pendingPayments.map((item) => paymentForm(order, reload, item)));
         if (actions.quote) advanced.push(quoteForm(order, reload));
-        if (actions.record_payment) advanced.push(paymentForm(order, reload));
+        // A pending customer receipt must be verified or rejected first; the direct form would be refused.
+        if (actions.record_payment && !pendingPayments.length) advanced.push(paymentForm(order, reload));
         if (actions.send_draft) advanced.push(draftForm(order, reload));
+        if (actions.send_work_preview) advanced.push(workPreviewForm(order, reload));
         if (actions.change_payment_option) advanced.push(paymentOptionForm(order, reload));
         advanced.push(...(OPS()?.orderActions(order, reload, opsContext()) || []));
         const more = advanced.length
@@ -1736,7 +1854,17 @@
         const revising = Boolean(quote);
         // The amount is entered by the administrator; the catalog estimate is shown only as a reference.
         const fee = order.payment?.delivery_fee || 0;
+        // Base the optional down-payment helper on the value the admin is about to edit,
+        // and keep it in sync while they type. It is only guidance; the server recalculates it.
+        const openingTotal = Number(order.payment?.subtotal ?? order.total_amount ?? 0) || 0;
         const amount = h("input", { id: "quote-amount", name: "total_amount", type: "number", min: "0.01", step: "0.01", required: true, value: order.payment?.subtotal ?? order.total_amount ?? "" });
+        const down = h("input", { id: "quote-down-payment", name: "down_payment_amount", type: "number", min: "0.01", max: String(openingTotal + fee), step: "0.01", placeholder: `50% of ${money(openingTotal + fee)}` });
+        amount.addEventListener("input", () => {
+            const current = Number(amount.value) || 0;
+            down.max = String(current + fee);
+            down.placeholder = `50% of ${money(current + fee)}`;
+        });
+        down.value = order.quotation?.down_payment_amount ?? "";
         const instructions = h("textarea", { id: "quote-instructions", name: "payment_instructions", maxlength: 1000, placeholder: "The shop's approved payment instructions (configured e-wallet number, bank details, etc.)" });
         instructions.value = order.payment_instructions || "";
         const note = h("textarea", { id: "quote-note", name: "note", maxlength: 1000, placeholder: "Optional message shown with the quotation (what it includes, lead time, …)" });
@@ -1744,9 +1872,10 @@
         const submit = h("button", { className: "button button-primary", type: "submit", text: revising ? "Send revised quotation" : "Send quotation" });
         const form = h("form", { className: "action-form", dataset: { focus: "quotation" } },
             h("h4", { text: revising ? `Revise quotation (currently revision ${quote.revision}, ${quote.status})` : "Send quotation" }),
-            h("p", { className: "field-note", text: `${estimate === null ? "No catalog estimate for this request." : `Catalog estimate for reference only: ${money(estimate)}.`} Enter the customization price yourself. The customer is notified, must accept it, and then pays the 50% down payment.${revising ? " The earlier revision is kept in the quotation history and can no longer be accepted." : ""}` }),
+            h("p", { className: "field-note", text: `${estimate === null ? "No catalog estimate for this request." : `Catalog estimate for reference only: ${money(estimate)}.`} Enter the customization price yourself. The customer is notified, must accept it, and then pays the down payment.${revising ? " The earlier revision is kept in the quotation history and can no longer be accepted." : ""}` }),
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: "quote-amount", text: fee ? `Printing amount (PHP) · + ${money(fee)} delivery fee` : "Quoted total (PHP)" }), amount),
+                h("div", { className: "form-field" }, h("label", { for: "quote-down-payment", text: "Down payment (PHP, optional)" }), down, h("p", { className: "field-note", text: "Leave blank to use 50% of the quoted total including delivery." })),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-instructions", text: "Payment instructions" }), instructions),
                 h("div", { className: "form-field full" }, h("label", { for: "quote-note", text: "Message to the customer (optional)" }), note)),
             h("div", { className: "dialog-actions" }, submit),
@@ -1757,19 +1886,20 @@
             const total = Number(amount.value);
             const answer = await UI.confirm({
                 title: revising ? "Send the revised quotation?" : "Send this quotation?",
-                message: `The customer is notified and accepts or declines the quotation in their portal. After accepting, they pay the 50% down payment.${revising ? " Any earlier acceptance is cleared." : ""}`,
+                message: `The customer is notified and accepts or declines the quotation in their portal. After accepting, they pay the down payment.${revising ? " Any earlier acceptance is cleared." : ""}`,
                 confirmLabel: revising ? "Send revised quotation" : "Send quotation",
                 details: [
                     revising ? ["Previous quotation", money(quote.total ?? quote.amount)] : null,
                     fee ? ["Printing amount", money(total)] : null,
                     fee ? ["Delivery fee (from checkout)", money(fee)] : null,
                     ["Quoted total", money(total + fee)],
-                    ["50% down payment (approx.)", money(Math.round((total + fee) * 50) / 100)],
+                    down.value ? ["Required down payment", money(Number(down.value))] : ["50% down payment (approx.)", money(Math.round((total + fee) * 50) / 100)],
                 ].filter(Boolean),
             });
             if (!answer) return;
             await submitAction(submit, order, "quotation", {
                 total_amount: total,
+                down_payment_amount: down.value === "" ? null : Number(down.value),
                 payment_instructions: instructions.value.trim(),
                 note: note.value.trim(),
             }, reload, revising ? "Revised quotation sent to the customer." : "Quotation sent to the customer.");
@@ -1781,30 +1911,148 @@
         const cod = order.payment?.payment_option === "cod";
         const instructions = h("textarea", { id: "confirm-instructions", maxlength: 1000, placeholder: "The shop's configured e-wallet number and account name" });
         instructions.value = order.payment_instructions || "";
+        const down = h("input", { id: "confirm-down-payment", type: "number", min: "0.01", max: String(order.total_amount || 100000000), step: "0.01", placeholder: `50% of ${money(order.total_amount)}` });
+        down.value = order.required_down_payment ?? "";
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Approve & request down payment" });
         const form = h("form", { className: "action-form" },
             h("h4", { text: order.price_basis === "standard_size" ? "Approve the standard-size order" : "Approve the package order" }),
-            h("p", { className: "field-note", text: `Fixed ${order.price_basis === "standard_size" ? "price-list" : "package"} total ${money(order.total_amount)}. The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)} through the shop's configured e-wallet(s); the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
+            h("p", { className: "field-note", text: `Fixed ${order.price_basis === "standard_size" ? "price-list" : "package"} total ${money(order.total_amount)}. The customer then pays the down payment of ${money(order.payment?.down_payment_required)} through the shop's configured e-wallet(s); the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
+            h("div", { className: "form-field" }, h("label", { for: "confirm-down-payment", text: "Down payment (PHP, optional)" }), down, h("p", { className: "field-note", text: "Leave blank to use the default 50% down payment." })),
             h("div", { className: "form-field full" }, h("label", { for: "confirm-instructions", text: "Payment instructions" }), instructions),
             h("div", { className: "dialog-actions" }, submit),
         );
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
-            const answer = await UI.confirm({ title: order.price_basis === "standard_size" ? "Approve this order?" : "Approve this package order?", message: "The customer is notified to pay the 50% down payment and sees the payment instructions in their portal.", confirmLabel: "Approve order" });
+            if (!form.reportValidity()) return;
+            const answer = await UI.confirm({ title: order.price_basis === "standard_size" ? "Approve this order?" : "Approve this package order?", message: "The customer is notified to pay the down payment and sees the payment instructions in their portal.", confirmLabel: "Approve order" });
             if (!answer) return;
-            await submitAction(submit, order, "confirm", { payment_instructions: instructions.value.trim() }, reload, "Order approved. Down payment requested.");
+            await submitAction(submit, order, "confirm", {
+                down_payment_amount: down.value === "" ? null : Number(down.value),
+                payment_instructions: instructions.value.trim(),
+            }, reload, "Order approved. Down payment requested.");
         });
         return form;
     }
 
+    /** Correct the agreed total or set a custom down payment while no money has been recorded yet. */
+    function paymentTermsForm(order, reload) {
+        const currentTotal = order.total_amount ?? order.payment?.confirmed_total ?? "";
+        const total = h("input", { id: "payment-terms-total", type: "number", min: "0.01", max: "100000000", step: "0.01", required: true, value: currentTotal });
+        const down = h("input", { id: "payment-terms-down", type: "number", min: "0.01", max: String(currentTotal || 100000000), step: "0.01", placeholder: currentTotal ? `50% of ${money(Number(currentTotal))}` : "50% of the total" });
+        down.value = order.required_down_payment ?? "";
+        const instructions = h("textarea", { id: "payment-terms-instructions", maxlength: 1000, placeholder: "The shop's configured e-wallet number and account name" });
+        instructions.value = order.payment_instructions || "";
+        const note = h("textarea", { id: "payment-terms-note", maxlength: 1000, placeholder: "Why the terms are being changed (recorded in the order history)" });
+        const submit = h("button", { className: "button button-primary", type: "submit", text: "Save payment terms" });
+        const form = h("form", { className: "action-form", dataset: { focus: "payment-terms" } },
+            h("h4", { text: "Set payment terms" }),
+            h("p", { className: "field-note", text: "Available only before a payment is submitted or recorded. Leave the down payment blank to use the default 50%." }),
+            h("div", { className: "form-grid" },
+                h("div", { className: "form-field" }, h("label", { for: "payment-terms-total", text: "Confirmed total (PHP, including delivery fee)" }), total),
+                h("div", { className: "form-field" }, h("label", { for: "payment-terms-down", text: "Required down payment (PHP, optional)" }), down),
+                h("div", { className: "form-field full" }, h("label", { for: "payment-terms-instructions", text: "Payment instructions" }), instructions),
+                h("div", { className: "form-field full" }, h("label", { for: "payment-terms-note", text: "Reason (optional)" }), note)),
+            h("div", { className: "dialog-actions" }, submit));
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            if (!form.reportValidity()) return;
+            const totalValue = Number(total.value);
+            const answer = await UI.confirm({
+                title: "Save these payment terms?",
+                message: "The customer sees the updated total and down payment in their portal.",
+                confirmLabel: "Save terms",
+                details: [
+                    ["Confirmed total", money(totalValue)],
+                    down.value ? ["Required down payment", money(Number(down.value))] : ["Down payment", "50% of the total"],
+                ],
+            });
+            if (!answer) return;
+            await submitAction(submit, order, "payment-terms", {
+                total_amount: totalValue,
+                down_payment_amount: down.value === "" ? null : Number(down.value),
+                payment_instructions: instructions.value.trim(),
+                note: note.value.trim(),
+            }, reload, "Payment terms saved.");
+        });
+        return form;
+    }
+
+    /** Upload the finished work so the customer can approve it before paying the balance. */
+    function workPreviewForm(order, reload) {
+        const file = h("input", { id: "work-preview-file", type: "file", accept: ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf", required: true });
+        const remarks = h("textarea", { id: "work-preview-remarks", maxlength: 1000, placeholder: "Optional notes for the customer about the finished work" });
+        remarks.value = order.work_approval?.remarks || "";
+        const submit = h("button", { className: "button button-primary", type: "submit", text: order.work_approval?.sent_at ? "Send updated work for review" : "Send finished work for review" });
+        const form = h("form", { className: "action-form", dataset: { focus: "work-preview" } },
+            h("h4", { text: order.work_approval?.sent_at ? "Resend finished work for review" : "Send finished work for review" }),
+            h("p", { className: "field-note", text: "The customer reviews this file in their portal. The remaining balance stays locked until they approve it." }),
+            h("div", { className: "form-grid" },
+                h("div", { className: "form-field full" }, h("label", { for: "work-preview-file", text: "Finished-work preview (JPG, PNG, or PDF · max 5 MB)" }), file),
+                h("div", { className: "form-field full" }, h("label", { for: "work-preview-remarks", text: "Remarks for the customer (optional)" }), remarks)),
+            h("div", { className: "dialog-actions" }, submit));
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            if (!form.reportValidity()) return;
+            const chosen = file.files?.[0];
+            if (!chosen || !/\.(jpe?g|png|pdf)$/i.test(chosen.name) || !["image/jpeg", "image/png", "application/pdf"].includes(chosen.type)) {
+                toast("Choose a JPG, PNG, or PDF finished-work preview.", "error");
+                return;
+            }
+            if (chosen.size > 5 * 1024 * 1024) {
+                toast("Finished-work previews must be no larger than 5 MB.", "error");
+                return;
+            }
+            const answer = await UI.confirm({ title: "Send this work for customer review?", message: `${chosen.name} will be shared with the customer. Final payment stays locked until they approve it.`, confirmLabel: "Send for review" });
+            if (!answer) return;
+            const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.addEventListener("load", () => resolve(reader.result));
+                reader.addEventListener("error", () => reject(new Error(`Could not read ${chosen.name}.`)));
+                reader.readAsDataURL(chosen);
+            });
+            await submitAction(submit, order, "work-preview", { file: { name: chosen.name, dataUrl }, remarks: remarks.value.trim() }, reload, "Finished work sent for customer review.");
+        });
+        return form;
+    }
+
+    function fmtAmount(value) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? money(parsed) : "—";
+    }
+
+    /** The customer's original receipt, with the shared zoom/fullscreen viewer (no separate page). */
+    function receiptPreview(item) {
+        const proof = item.proof;
+        if (!proof) return h("p", { className: "field-note", text: "No receipt attached (older submission)." });
+        if (!String(proof.mime_type || "").startsWith("image/")) {
+            return h("a", { href: proof.url, target: "_blank", rel: "noopener", className: "button button-small", text: `📄 Open ${proof.name}` });
+        }
+        const open = () => UI.openViewer([{
+            src: proof.url, name: proof.name,
+            caption: `Customer-uploaded receipt · ${proof.name}`,
+            original: proof.url,
+        }]);
+        return h("div", { className: "receipt-preview" },
+            h("button", { className: "receipt-preview-image", type: "button", title: "Zoom and fullscreen preview", onclick: open },
+                h("img", { src: proof.url, alt: `Customer-uploaded receipt ${proof.name}`, loading: "lazy" })),
+            h("div", { className: "receipt-preview-actions" },
+                h("button", { className: "button button-small", type: "button", text: "Zoom / fullscreen", onclick: open }),
+                h("a", { href: proof.url, target: "_blank", rel: "noopener", className: "button button-small", text: "Open original ↗" })));
+    }
+
+    function verificationStatusChips(confirmation) {
+        const statuses = (confirmation && confirmation.statuses) || [];
+        return statuses.length
+            ? h("div", { className: "verify-statuses" }, ...statuses.map((status) =>
+                h("span", { className: `verify-status verify-${status.tone || "info"}`, text: status.label })))
+            : null;
+    }
+
+    /** Section C: read-only OCR extraction and the comparison with the shop's records. */
     function ocrReviewPanel(order, item) {
         const comparison = item.comparison || { rows: [] };
         const verification = item.verification || {};
-        const receipt = item.proof
-            ? (item.proof.mime_type.startsWith("image/")
-                ? h("a", { href: item.proof.url, target: "_blank", rel: "noopener", className: "proof-preview" }, h("img", { src: item.proof.url, alt: `Uploaded receipt ${item.proof.name}` }))
-                : h("a", { href: item.proof.url, target: "_blank", rel: "noopener", className: "button button-small", text: `📄 Open ${item.proof.name}` }))
-            : h("p", { className: "field-note", text: "No receipt attached (older submission)." });
+        const confirmation = item.confirmation || {};
         const rows = (comparison.rows || []).map((row) => h("tr", { className: `ocr-row ocr-${row.state}` },
             h("th", { scope: "row", text: row.label }),
             h("td", { text: row.receipt_value }),
@@ -1813,105 +2061,104 @@
         const checks = (verification.checks || []).map((check) => h("li", { className: `ocr-check ocr-${check.state}` },
             h("strong", { text: `${check.label}: ` }), h("span", { text: check.detail })));
         return h("div", { className: "ocr-review" },
-            h("p", { className: "notice-card", text: `Receipt reading: ${verification.status_label || item.verification_status_label || "Not available"} · ${Math.round((verification.confidence || 0) * 100)}% confidence. OCR is not proof of payment; confirm the money in the shop's account before approving.` }),
-            h("div", { className: "ocr-compare" },
-                h("section", { className: "ocr-side" }, h("h5", { text: "Uploaded receipt" }), receipt),
-                h("section", { className: "ocr-side" }, h("h5", { text: "Extracted information vs. order" }),
-                    rows.length ? h("table", { className: "ocr-table" }, h("thead", {}, h("tr", {}, h("th", { text: "Field" }), h("th", { text: "Receipt" }), h("th", { text: "System" }), h("th", { text: "Result" }))), h("tbody", {}, ...rows)) : h("p", { className: "field-note", text: "No receipt information was extracted." }))),
+            verificationStatusChips(confirmation),
+            h("p", { className: "notice-card", text: confirmation.notice || "OCR reads text only. It does not prove that money was received; check the shop's account before recording this payment." }),
+            // Only the raw extraction lives here. Expected amounts and match results are shown once,
+            // in the comparison table below, so the same facts are not repeated twice in the modal.
+            detailList([
+                ["Amount read", confirmation.extracted_amount !== null && confirmation.extracted_amount !== undefined ? fmtAmount(confirmation.extracted_amount) : "Not read"],
+                ["Reference read", confirmation.extracted_reference || "Not read"],
+                ["Method on receipt", confirmation.extracted_method || item.method || "Not read"],
+                ["Date / time", confirmation.extracted_date_time || "Not read"],
+                ["Sender", confirmation.extracted_sender || "Not read"],
+                ["Recipient / account", confirmation.extracted_recipient || "Not read"],
+                ["Scan confidence", Number.isFinite(Number(item.ocr?.confidence)) ? `${Math.round(Number(item.ocr.confidence) * 100)}%` : "—"],
+            ]),
+            rows.length ? h("table", { className: "ocr-table" },
+                h("thead", {}, h("tr", {}, h("th", { text: "Field" }), h("th", { text: "Receipt" }), h("th", { text: "System" }), h("th", { text: "Result" }))),
+                h("tbody", {}, ...rows)) : h("p", { className: "field-note", text: "No receipt information was extracted." }),
             checks.length ? h("details", { className: "od-disclosure" }, h("summary", {}, h("span", { text: "Validation results" })), h("ul", { className: "ocr-checks" }, ...checks)) : null,
             (item.admin_notes || []).length ? h("p", { className: "field-note", text: `Verification notes: ${item.admin_notes.map((note) => `${note.by}: ${note.note}`).join(" · ")}` }) : null,
         );
     }
 
-    function verifySubmissionForm(order, item, reload) {
-        const amount = h("input", { id: `verify-amount-${item.id}`, type: "number", min: "0.01", step: "0.01", max: String(order.summary.balance), required: true, value: item.amount.toFixed(2) });
-        const received = h("input", { id: `verify-received-${item.id}`, type: "checkbox", required: true });
-        const verify = h("button", { className: "button button-primary", type: "submit", text: "Verify payment" });
-        const reject = h("button", { className: "button button-danger-strong", type: "button", text: "Reject" });
-        const review = h("button", { className: "button button-small", type: "button", text: "Review receipt & OCR" });
-        const request = h("button", { className: "button button-small", type: "button", text: "Request clearer receipt" });
-        const note = h("button", { className: "button button-small", type: "button", text: "Add verification note" });
-        const form = h("form", { className: "action-form", dataset: { focus: "verify" } },
-            h("h4", { text: `Verify a customer payment${item.stage === "balance" ? " (balance)" : item.stage === "down_payment" ? " (50% down payment)" : ""}` }),
-            h("p", { className: "field-note", text: `Receipt reading: ${item.verification_status_label || "Not available"}${Number.isFinite(item.ocr?.confidence) ? ` · ${Math.round(item.ocr.confidence * 100)}% confidence` : ""}` }),
-            item.stage === "down_payment" ? h("p", { className: "field-note", text: "Verifying the full down payment confirms the order automatically and notifies the customer." }) : null,
-            detailList([
-                ["Amount due (set by the shop)", money(item.amount)],
-                ["Method", item.method],
-                ["Reference", item.reference],
-                ["Extracted reference", item.ocr?.fields?.reference || "Not read"],
-                ["Extracted amount", item.ocr?.fields?.amount ? money(Number(item.ocr.fields.amount)) : "Not read"],
-                ["Submitted", dateTime(item.submitted_at)],
-            ]),
-            odDisclosure("Receipt and OCR comparison", { hint: "Side-by-side review", body: [ocrReviewPanel(order, item)] }),
-            h("div", { className: "form-grid" },
-                h("div", { className: "form-field" }, h("label", { for: amount.id, text: "Amount actually received (PHP)" }), amount),
-                h("label", { className: "check-field full", for: received.id }, received, " I checked the shop's account and this money was received.")),
-            h("div", { className: "dialog-actions" }, reject, request, note, review, verify),
-        );
-        review.addEventListener("click", () => {
-            UI.openModal(h("div", { className: "customer-modal" },
-                h("header", { className: "order-modal-header" }, h("div", {}, h("h2", { className: "dialog-heading", text: "Receipt and OCR comparison" }), h("p", { className: "table-secondary", text: `Order ${order.reference} · ${item.method} · ${item.reference}` }))),
-                ocrReviewPanel(order, item)), { wide: true, size: "xl" });
-        });
-        request.addEventListener("click", async () => {
-            const answer = await UI.confirm({
-                title: "Request a clearer receipt?",
-                message: "The customer is notified and can upload a new receipt. The earlier submission stays in the audit history and no payment is recorded.",
-                confirmLabel: "Request new receipt",
-                input: { label: "What should the customer show clearly?", required: false, placeholder: "e.g. the reference number and recipient name" },
-            });
-            if (!answer) return;
-            await submitAction(request, order, `payment-submissions/${encodeURIComponent(item.id)}/request-receipt`, { note: answer.value || "" }, reload, "The customer was asked for a clearer receipt.");
-        });
-        note.addEventListener("click", async () => {
-            const answer = await UI.confirm({
-                title: "Add a verification note?",
-                message: "The note is kept with the submission's audit history and shown to the customer.",
-                confirmLabel: "Add note",
-                input: { label: "Verification note", required: true, placeholder: "e.g. Reference matched the shop's account after callback" },
-            });
-            if (!answer) return;
-            await submitAction(note, order, `payment-submissions/${encodeURIComponent(item.id)}/notes`, { note: answer.value }, reload, "Verification note added.");
-        });
-        form.addEventListener("submit", async (event) => {
-            event.preventDefault();
-            if (!form.reportValidity()) return;
-            const answer = await UI.confirm({ title: "Verify this payment?", message: "It is recorded once in the payment history and cannot be edited. Only verify after confirming the money in the shop's account.", confirmLabel: "Verify payment", details: [["Amount", money(Number(amount.value))], ["Reference", item.reference]] });
-            if (!answer) return;
-            await submitAction(verify, order, `payment-submissions/${encodeURIComponent(item.id)}/verify`, { amount: Number(amount.value), received: true }, reload, "Payment verified and recorded.");
-        });
-        reject.addEventListener("click", async () => {
-            const answer = await UI.confirm({
-                title: "Reject this payment submission?",
-                message: "The customer sees the reason and can submit the payment again.",
-                confirmLabel: "Reject submission",
-                tone: "danger",
-                input: { label: "Reason (shown to the customer)", required: true, placeholder: "e.g. Reference number not found in our e-wallet account" },
-            });
-            if (!answer) return;
-            await submitAction(reject, order, `payment-submissions/${encodeURIComponent(item.id)}/reject`, { note: answer.value }, reload, "Payment submission rejected.");
-        });
-        return form;
-    }
+    // Customer submissions and manually recorded payments now share one Confirm Received Payment form.
+    // The submission is passed in when OCR has read the customer's receipt; everything is prefilled from it.
 
     const CASH_METHODS = ["Cash", "Cash on Delivery"];
 
-    function paymentForm(order, reload) {
+    function paymentForm(order, reload, submission = null) {
         const summary = order.summary;
-        const amount = h("input", { id: "payment-amount", type: "number", min: "0.01", step: "0.01", max: summary.balance === null || summary.balance === undefined ? undefined : String(summary.balance), required: true });
+        const confirmation = submission?.confirmation || null;
+        const ocrFields = (submission?.ocr?.fields) || {};
         const cod = order.payment?.payment_option === "cod";
+        const moneyNow = adminPayment(order);
+        const balanceNow = moneyNow.balanceDue ?? 0;
         const methods = order.payment_methods || ["GCash", "Maya", "Bank transfer", "Cash", "Cash on Delivery", "Other"];
-        const method = selectInput(methods.map((value) => [value, value]), cod ? "Cash on Delivery" : "GCash", () => updateReferenceField());
-        method.id = "payment-method";
-        const reference = h("input", { id: "payment-reference", maxlength: 120, autocomplete: "off" });
-        const referenceLabel = h("label", { for: "payment-reference" });
+        const suffix = submission ? submission.id : "new";
+        const down = cod ? 0 : (moneyNow.requiredDown ?? (moneyNow.total ?? 0) * 0.5);
+        const downShortfall = cod ? 0 : Math.max(0, Math.round((down - moneyNow.paid) * 100) / 100);
+
+        // OCR values are the default. Everything the admin changes here is sent back as an audited correction.
+        const extractedAmount = Number(ocrFields.amount);
+        const initial = submission ? {
+            amount: Number.isFinite(extractedAmount) && extractedAmount > 0 ? extractedAmount : Number(submission.amount),
+            method: methods.includes(String(ocrFields.method || "")) ? String(ocrFields.method) : (submission.method || (cod ? "Cash on Delivery" : "GCash")),
+            reference: String(ocrFields.reference || submission.reference || ""),
+        } : {
+            amount: !cod && downShortfall > 0.005 && downShortfall < balanceNow
+                ? downShortfall : balanceNow,
+            method: cod ? "Cash on Delivery" : "GCash",
+            reference: "",
+        };
+        const hasOcr = Boolean(submission && (ocrFields.amount || ocrFields.reference || ocrFields.date_time));
+
+        // There is deliberately no maximum: a real overpayment is recorded and flagged for review, never
+        // silently clipped by the browser or rejected as if the shop could not receive it.
+        const amount = h("input", {
+            id: `payment-amount-${suffix}`, type: "number", min: "0.01", step: "0.01",
+            required: true,
+        });
+        amount.value = Number.isFinite(initial.amount) ? initial.amount.toFixed(2) : "";
+        const method = selectInput(methods.map((value) => [value, value]), initial.method, () => updateReferenceField());
+        method.id = `payment-method-${suffix}`;
+        const reference = h("input", { id: `payment-reference-${suffix}`, maxlength: 120, autocomplete: "off" });
+        reference.value = initial.reference;
+        const referenceLabel = h("label", { for: reference.id });
         const referenceNote = h("p", { className: "field-note" });
-        const note = h("input", { id: "payment-note", maxlength: 300, placeholder: "e.g. Received by Ana at the shop counter" });
-        const received = h("input", { id: "payment-received", type: "checkbox", required: true });
-        const submit = h("button", { className: "button button-primary", type: "submit", text: "Confirm payment" });
-        const down = cod ? 0 : order.total_amount * 0.5;
-        const fill = (value) => h("button", { className: "button button-small", type: "button", text: value === summary.balance ? `Full balance ${money(value)}` : `50% down ${money(value)}`, onclick: () => { amount.value = value.toFixed(2); } });
+        const note = h("input", { id: `payment-note-${suffix}`, maxlength: 300, placeholder: "e.g. Checked the transaction in the shop's GCash account" });
+        const received = h("input", { id: `payment-received-${suffix}`, type: "checkbox", required: true });
+        const correct = h("button", { className: "button button-small", type: "button", text: "Correct extracted details" });
+        const correctionHint = h("p", { className: "field-note", text: "Corrections to OCR-extracted values are recorded in the order's audit log." });
+        const submit = h("button", { className: "button button-primary", type: "submit", text: submission ? "Confirm received payment" : "Confirm payment" });
+        const reject = h("button", { className: "button button-danger-strong", type: "button", text: "Reject" });
+        const request = h("button", { className: "button button-small", type: "button", text: "Request clearer receipt" });
+        const addNote = h("button", { className: "button button-small", type: "button", text: "Add verification note" });
+        const fill = (value, label) => h("button", {
+            className: "button button-small", type: "button",
+            text: label || (Math.abs(value - balanceNow) < 0.005 ? `Full balance ${money(value)}` : `Down payment ${money(value)}`),
+            onclick: () => { amount.value = value.toFixed(2); updateAmountPreview(); },
+        });
+        const amountPreview = h("p", { className: "notice-card" });
+        function updateAmountPreview() {
+            const value = Number(amount.value);
+            if (!Number.isFinite(value) || value <= 0) {
+                amountPreview.textContent = "Enter the amount actually received to preview the cumulative total and status.";
+                amountPreview.className = "notice-card";
+                return;
+            }
+            const paidAfter = Math.round((moneyNow.paid + value) * 100) / 100;
+            const exact = moneyNow.total === null ? null : Math.round((moneyNow.total - paidAfter) * 100) / 100;
+            const statusAfter = paymentStatusAfter(moneyNow.total, down, paidAfter, cod);
+            const review = exact !== null && exact < -MONEY_TOLERANCE;
+            amountPreview.className = `notice-card${review ? " notice-warning" : ""}`;
+            amountPreview.textContent = `After this payment: cumulative confirmed ${money(paidAfter)}, balance ${money(Math.max(0, exact ?? 0))}, status ${statusAfter}.`
+                + (review ? ` Excess of ${money(-exact)} over the order total will be flagged for admin review.` : "")
+                + (!cod && moneyNow.total !== null && paidAfter < down - MONEY_TOLERANCE
+                    ? ` Down payment still short by ${money(Math.round((down - paidAfter) * 100) / 100)}.` : "");
+        }
+        amount.addEventListener("input", updateAmountPreview);
+        updateAmountPreview();
 
         /** E-wallet and bank payments need their reference; cash may use an official receipt. */
         function updateReferenceField() {
@@ -1925,32 +2172,112 @@
         }
         updateReferenceField();
 
-        const form = h("form", { className: "action-form", dataset: { focus: "payment" } },
-            h("h4", { text: cod ? "Confirm a Cash on Delivery payment" : "Confirm a received payment" }),
-            h("p", { className: "field-note", text: `${order.payment?.payment_option_label || "50% Down Payment"} · Confirmed total ${money(order.total_amount)} · Paid ${money(summary.amount_paid)} · Balance ${money(summary.balance)}. Record only money the shop has actually received.` }),
-            h("div", { className: "quick-fill" }, !cod && summary.amount_paid < down - 0.005 && down < summary.balance ? fill(Math.round((down - summary.amount_paid) * 100) / 100) : null, fill(summary.balance)),
-            h("div", { className: "form-grid" },
-                h("div", { className: "form-field" }, h("label", { for: "payment-amount", text: "Amount received (PHP)" }), amount),
-                h("div", { className: "form-field" }, h("label", { for: "payment-method", text: "Payment method" }), method),
-                h("div", { className: "form-field full" }, referenceLabel, reference, referenceNote),
-                h("div", { className: "form-field full" }, h("label", { for: "payment-note", text: "Verification note (optional)" }), note),
-                h("label", { className: "check-field full", for: "payment-received" }, received, " I confirm this payment has actually been received and checked against the reference.")),
-            h("div", { className: "dialog-actions" }, submit),
+        // Read-only by default: an authorized admin unlocks the extracted values only to correct a bad read.
+        function setLocked(locked) {
+            amount.readOnly = locked;
+            reference.readOnly = locked;
+            method.disabled = locked;
+            correct.textContent = locked ? "Correct extracted details" : "Restore extracted values";
+            correctionHint.hidden = locked;
+            form.classList.toggle("ocr-locked", locked);
+        }
+
+        correct.addEventListener("click", () => {
+            const locked = !amount.readOnly;
+            if (!locked) {
+                amount.value = Number.isFinite(initial.amount) ? initial.amount.toFixed(2) : "";
+                method.value = initial.method;
+                reference.value = initial.reference;
+                updateReferenceField();
+                updateAmountPreview();
+            }
+            setLocked(locked);
+            (locked ? correct : amount).focus();
+        });
+
+        const stage = submission?.stage === "balance" ? " (balance)"
+            : submission?.stage === "down_payment" ? ` (${order.payment?.admin_set_down_payment ? "down payment" : "50% down payment"})` : "";
+        const title = submission ? `Confirm Received Payment${stage}` : (cod ? "Confirm a Cash on Delivery payment" : "Confirm a received payment");
+        const form = h("form", { className: "action-form confirm-payment-form", dataset: { focus: submission ? "verify" : "payment" } },
+            h("h4", { text: title }),
+            h("div", { className: "confirm-sections" },
+                h("section", { className: "confirm-section" },
+                    h("h5", { text: "A. Payment summary" }),
+                    detailList([
+                        ["Order Total", fmtAmount(moneyNow.total)],
+                        ["Required Down Payment", cod ? "Cash on Delivery" : fmtAmount(moneyNow.requiredDown)],
+                        ["Previously Received", fmtAmount(moneyNow.paid)],
+                        ["Remaining Balance", fmtAmount(moneyNow.balanceDue)],
+                        ["Down-payment Shortfall", cod ? "Not required" : fmtAmount(moneyNow.shortfall)],
+                        ["Payment Status", moneyNow.status],
+                    ]),
+                    !submission ? h("div", { className: "quick-fill" },
+                        !cod && downShortfall > 0.005 && downShortfall < balanceNow
+                            ? fill(downShortfall, `Down-payment shortfall ${money(downShortfall)}`) : null,
+                        fill(balanceNow)) : null),
+                submission ? h("section", { className: "confirm-section" },
+                    h("h5", { text: "B. Customer receipt" }),
+                    h("p", { className: "field-note", text: `Uploaded ${dateTime(submission.submitted_at)} · ${submission.method} · ${submission.reference || "no reference entered"}` }),
+                    receiptPreview(submission)) : null,
+                submission ? h("section", { className: "confirm-section" },
+                    h("h5", { text: "C. Receipt scan (assist only)" }),
+                    ocrReviewPanel(order, submission)) : null,
+                h("section", { className: "confirm-section" },
+                    h("h5", { text: "D. Admin confirmation" }),
+                    h("p", { className: "notice-card", text: submission
+                        ? "The values below were filled from the receipt. OCR is preliminary evidence only: check the shop's account and confirm the money was actually received before recording it."
+                        : "Record only money the shop has actually received. Payments cannot be edited after they are saved." }),
+                    amountPreview,
+                    hasOcr ? correctionHint : null,
+                    h("div", { className: "form-grid" },
+                        h("div", { className: "form-field" }, h("label", { for: amount.id, text: "Amount Received (PHP)" }), amount),
+                        h("div", { className: "form-field" }, h("label", { for: method.id, text: "Payment Method" }), method, hasOcr ? correct : null),
+                        h("div", { className: "form-field full" }, referenceLabel, reference, referenceNote),
+                        h("div", { className: "form-field full" }, h("label", { for: note.id, text: "Verification Note" }), note),
+                        h("label", { className: "check-field full", for: received.id }, received, " I confirm this payment has actually been received and checked against the reference.")))),
+            h("div", { className: "dialog-actions" }, ...(submission ? [reject, request, addNote] : []), submit),
         );
+        if (hasOcr) setLocked(true);
+
+        request.addEventListener("click", async () => {
+            const answer = await UI.confirm({
+                title: "Request a clearer receipt?",
+                message: "The customer is notified and can upload a new receipt. The earlier submission stays in the audit history and no payment is recorded.",
+                confirmLabel: "Request new receipt",
+                input: { label: "What should the customer show clearly?", required: false, placeholder: "e.g. the reference number and recipient name" },
+            });
+            if (!answer) return;
+            await submitAction(request, order, `payment-submissions/${encodeURIComponent(submission.id)}/request-receipt`, { note: answer.value || "" }, reload, "The customer was asked for a clearer receipt.");
+        });
+        addNote.addEventListener("click", async () => {
+            const answer = await UI.confirm({
+                title: "Add a verification note?",
+                message: "The note is kept with the submission's audit history and shown to the customer.",
+                confirmLabel: "Add note",
+                input: { label: "Verification note", required: true, placeholder: "e.g. Reference matched the shop's account after callback" },
+            });
+            if (!answer) return;
+            await submitAction(addNote, order, `payment-submissions/${encodeURIComponent(submission.id)}/notes`, { note: answer.value }, reload, "Verification note added.");
+        });
+        reject.addEventListener("click", async () => {
+            const answer = await UI.confirm({
+                title: "Reject this payment submission?",
+                message: "The customer sees the reason and can submit the payment again.",
+                confirmLabel: "Reject submission",
+                tone: "danger",
+                input: { label: "Reason (shown to the customer)", required: true, placeholder: "e.g. Reference number not found in our e-wallet account" },
+            });
+            if (!answer) return;
+            await submitAction(reject, order, `payment-submissions/${encodeURIComponent(submission.id)}/reject`, { note: answer.value }, reload, "Payment submission rejected.");
+        });
+
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
             const value = Number(amount.value);
-            const balance = Number(summary.balance);
             const cash = CASH_METHODS.includes(method.value);
-            // Check in the browser too: an over-balance payment must never reach the confirm step.
             if (!Number.isFinite(value) || value <= 0) {
                 toast("Enter a payment amount greater than zero.", "error");
-                amount.focus();
-                return;
-            }
-            if (!Number.isFinite(balance) || value > balance + 0.005) {
-                toast(`The amount cannot exceed the remaining balance of ${money(summary.balance)}.`, "error");
                 amount.focus();
                 return;
             }
@@ -1959,22 +2286,52 @@
                 reference.focus();
                 return;
             }
-            const remaining = Math.round((balance - value) * 100) / 100;
+            const paidAfter = Math.round((moneyNow.paid + value) * 100) / 100;
+            const remainingExact = moneyNow.total === null ? null : Math.round((moneyNow.total - paidAfter) * 100) / 100;
+            const remaining = Math.max(0, remainingExact ?? 0);
+            const statusAfter = paymentStatusAfter(moneyNow.total, down, paidAfter, cod);
+            const adminReview = remainingExact !== null && remainingExact < -MONEY_TOLERANCE;
+            const changes = [];
+            if (Math.abs(value - initial.amount) > 0.005) changes.push(["Amount", `${fmtAmount(initial.amount)} → ${fmtAmount(value)}`]);
+            if (method.value !== initial.method) changes.push(["Method", `${initial.method} → ${method.value}`]);
+            if (reference.value.trim() !== initial.reference.trim()) changes.push(["Reference", `${initial.reference || "—"} → ${reference.value.trim() || "—"}`]);
             const answer = await UI.confirm({
-                title: "Record this payment?",
-                message: "Payments cannot be edited after they are saved.",
-                confirmLabel: "Record payment",
+                title: submission ? "Confirm receipt of this payment?" : "Record this payment?",
+                message: submission
+                    ? "The payment is recorded once in the history and cannot be edited. Only confirm after checking that the shop actually received the money."
+                    : "Payments cannot be edited after they are saved.",
+                confirmLabel: submission ? "Confirm received payment" : "Record payment",
+                input: changes.length ? { label: "Reason for correcting the extracted details (audit log)", required: true, placeholder: "e.g. OCR read the last digit of the reference incorrectly" } : null,
                 details: [
                     ["Amount", money(value)],
                     ["Method", method.value],
                     ["Reference", reference.value.trim() || (cash ? "Cash receipt number issued by the system" : "—")],
-                    ["Balance after payment", money(Math.max(0, remaining))],
-                    ["Payment status after", remaining <= 0 ? "Fully Paid" : "Partially Paid"],
+                    ...(confirmation ? [["Amount match", confirmation.amount_match ? "YES" : "NO"], ["Reference", confirmation.reference_matched ? "MATCHED" : "Needs review"]] : []),
+                    ...changes,
+                    ["Previously received", money(moneyNow.paid)],
+                    ["Cumulative after payment", money(paidAfter)],
+                    ["Remaining balance after", money(remaining)],
+                    ["Payment status after", statusAfter],
+                    ...(adminReview ? [["Admin review", `Excess of ${money(-remainingExact)} over the order total`]] : []),
                 ],
             });
             if (!answer) return;
-            await submitAction(submit, order, "payments", { amount: value, method: method.value, reference: reference.value.trim(), verification_note: note.value.trim(), received: true }, reload,
-                remaining <= 0 ? "Payment recorded. The order is now fully paid." : "Payment recorded.");
+            const payload = {
+                amount: value, method: method.value, reference: reference.value.trim(),
+                verification_note: note.value.trim(), received: true,
+            };
+            if (submission) {
+                payload.correction_note = changes.length ? (answer.value || "") : "";
+                await submitAction(submit, order, `payment-submissions/${encodeURIComponent(submission.id)}/verify`, payload, reload,
+                    adminReview
+                        ? "Payment verified and flagged for admin review because it exceeds the order total."
+                        : "Payment verified and recorded.");
+                return;
+            }
+            await submitAction(submit, order, "payments", payload, reload,
+                adminReview
+                    ? "Payment recorded and flagged for admin review because it exceeds the order total."
+                    : statusAfter === "Fully Paid" ? "Payment recorded. The order is now fully paid." : "Payment recorded.");
         });
         return form;
     }
@@ -2440,6 +2797,167 @@
 
     // ================================================================ payments
 
+    /** The customer's original receipt in the dedicated verification modal (images zoom, PDFs open). */
+    function verificationReceipt(url, name, mimeType) {
+        if (!url) return h("p", { className: "field-note", text: "No receipt is attached to this record." });
+        if (!String(mimeType || "").startsWith("image/")) {
+            return h("div", { className: "receipt-preview" },
+                h("a", { href: url, target: "_blank", rel: "noopener", className: "button button-small", text: `📄 Open ${name || "receipt"}` }));
+        }
+        const open = () => UI.openViewer([{
+            src: url, name: name || "Payment receipt",
+            caption: `Customer-uploaded receipt · ${name || "payment receipt"}`, original: url,
+        }]);
+        return h("div", { className: "receipt-preview" },
+            h("button", { className: "receipt-preview-image", type: "button", title: "Zoom and fullscreen preview", onclick: open },
+                h("img", { src: url, alt: `Customer-uploaded receipt ${name || ""}`, loading: "lazy" })),
+            h("div", { className: "receipt-preview-actions" },
+                h("button", { className: "button button-small", type: "button", text: "Zoom / fullscreen", onclick: open }),
+                h("a", { href: url, target: "_blank", rel: "noopener", className: "button button-small", text: "Open original ↗" })));
+    }
+
+    const RESULT_TONES = {
+        verified: "success", ocr_checked_pending: "info", insufficient_payment: "danger",
+        reference_mismatch: "danger", duplicate_reference: "danger", needs_manual_review: "warning",
+        rejected: "danger",
+    };
+
+    /**
+     * Clicking any payment row opens the verification record itself: the untouched receipt on the left and
+     * everything OCR extracted, the money arithmetic, and the validation checks on the right.
+     */
+    async function openPaymentVerification(row, reload) {
+        const host = h("div", { className: "payment-verification-modal" }, loadingBlock("Loading verification details…"));
+        UI.openModal(host, { wide: true, size: "xl" });
+        let order;
+        try {
+            order = await api(`/api/admin/orders/${encodeURIComponent(row.reference)}`);
+        } catch (error) {
+            host.replaceChildren(errorBlock(error.message, () => openPaymentVerification(row, reload)));
+            return;
+        }
+        if (!dialog.open || !host.isConnected) return;
+        const submission = row.submission_id
+            ? (order.payment_submissions || []).find((item) => item.id === row.submission_id) : null;
+        const payment = !submission && row.payment_number
+            ? (order.payments || []).find((item) => item.number === row.payment_number) : null;
+        const record = submission || payment || {};
+        const confirmation = submission?.confirmation || {};
+        const verification = submission?.verification || payment?.extraction_verification || {};
+        const comparison = submission?.comparison || payment?.extraction_comparison || {};
+        const ocrFields = record.ocr?.fields || {};
+        const receiptUrl = row.receipt_url || record.proof?.url || record.receipt?.url || "";
+        const receiptName = record.proof?.name || record.receipt?.name || "Payment receipt";
+        const receiptMime = record.proof?.mime_type || record.receipt?.mime_type || "";
+        const num = (...values) => {
+            const found = values.find((value) => value !== null && value !== undefined && value !== "");
+            const parsed = Number(found);
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+        const total = num(confirmation.total_order_amount, row.total_order_amount, order.total_amount);
+        const required = num(confirmation.required_down_payment, row.required_down_payment);
+        // A recorded payment uses the amount the administrator actually received (which may be a correction);
+        // a pending submission still shows the amount OCR read from the receipt.
+        const actual = num(row.entry_type === "payment" ? row.amount : null,
+            confirmation.actual_amount_paid, row.actual_amount_paid, row.ocr_amount, row.amount);
+        const remainingDown = num(confirmation.remaining_down_payment, row.remaining_down_payment);
+        const remainingBalance = num(confirmation.remaining_balance_after, row.order_balance);
+        const percentage = num(confirmation.payment_percentage, row.payment_percentage);
+        const insufficient = num(confirmation.insufficient_by, row.insufficient_by);
+        const excess = num(confirmation.excess_amount, row.excess_amount);
+        const result = row.verification_result || confirmation.verification_result || verification.result || "";
+        const statusLabel = row.verification_result_label || confirmation.verification_result_label || verification.result_label || row.verification_status || "—";
+        const verificationDate = row.verification_date || confirmation.verification_date || verification.reviewed_at || record.reviewed_at || record.verified_at;
+        const basis = verification.verification_basis_label || row.verification_basis_label || "";
+        const checks = (verification.checks || []).map((check) => h("li", { className: `ocr-check ocr-${check.state}` },
+            h("strong", { text: `${check.label}: ` }), h("span", { text: check.detail })));
+        const pending = row.entry_type === "submission";
+
+        host.replaceChildren(
+            h("h2", { className: "dialog-heading", text: "Payment verification details" }),
+            h("p", { className: "dialog-subtitle", text: `${row.reference} · ${row.customer_name} · ${row.method || "—"}` }),
+            h("div", { className: "verify-statuses" },
+                h("span", { className: `verify-status verify-${RESULT_TONES[result] || "info"}`, text: statusLabel }),
+                basis ? h("span", { className: "verify-status verify-info", text: basis }) : null),
+            h("div", { className: "verification-modal-grid" },
+                h("section", { className: "verify-pane" },
+                    h("h3", { text: "Original receipt" }),
+                    verificationReceipt(receiptUrl, receiptName, receiptMime),
+                    h("p", { className: "field-note", text: row.submitted_at ? `Submitted ${dateTime(row.submitted_at)}` : `Received ${dateTime(row.received_at)}` })),
+                h("section", { className: "verify-pane" },
+                    h("h3", { text: "Extracted payment information" }),
+                    detailList([
+                        ["Extracted reference", ocrFields.reference || row.ocr_reference || "Not read"],
+                        ["Actual amount paid", actual === null ? "Not read" : fmtAmount(actual)],
+                        ["Transaction date / time", ocrFields.date_time || row.ocr_date_time || "Not read"],
+                        ["Payment sender", ocrFields.sender || row.ocr_sender || "Not read"],
+                        ["Payment provider", ocrFields.method || row.ocr_method || record.method || "Not read"],
+                        ["Recipient / account", ocrFields.recipient || ocrFields.account_info || row.ocr_account_info || "Not read"],
+                        ["Receipt status", ocrFields.status || "Not read"],
+                        ["OCR confidence", Number.isFinite(Number(record.ocr?.confidence)) ? `${Math.round(Number(record.ocr.confidence) * 100)}%` : "—"],
+                        ["Verification status", statusLabel],
+                        ["Verification date", verificationDate ? dateTime(verificationDate) : "—"],
+                        ["Verification method", verification.verification_method || row.verification_method || "—"],
+                    ]))),
+            h("section", { className: "verify-pane verify-calculation" },
+                h("h3", { text: "Automatic down payment calculation" }),
+                detailList([
+                    ["Total order amount", total === null ? "—" : fmtAmount(total)],
+                    ["Required down payment", required === null ? "—" : fmtAmount(required)],
+                    ["Actual amount paid", actual === null ? "—" : fmtAmount(actual)],
+                    ["Remaining down payment", remainingDown === null ? "—" : fmtAmount(remainingDown)],
+                    ["Remaining balance", remainingBalance === null ? "—" : fmtAmount(remainingBalance)],
+                    ["Payment %", percentage === null ? "—" : `${percentage}%`],
+                    insufficient > 0 ? ["Insufficient by", fmtAmount(insufficient)] : null,
+                    excess > 0 ? ["Excess (admin review)", fmtAmount(excess)] : null,
+                ]),
+                h("p", { className: "field-note", text: "Figures are calculated on the server from the confirmed order total and earlier verified payments. Partial payments accumulate; confirmed payments are recorded only once." })),
+            checks.length ? h("details", { className: "od-disclosure" },
+                h("summary", {}, h("span", { text: "Validation checks" })),
+                h("ul", { className: "ocr-checks" }, ...checks)) : null,
+            (comparison.rows || []).length ? h("table", { className: "ocr-table" },
+                h("thead", {}, h("tr", {}, h("th", { text: "Field" }), h("th", { text: "Receipt" }), h("th", { text: "System" }), h("th", { text: "Result" }))),
+                h("tbody", {}, ...comparison.rows.map((item) => h("tr", { className: `ocr-row ocr-${item.state}` },
+                    h("th", { scope: "row", text: item.label }),
+                    h("td", { text: item.receipt_value }),
+                    h("td", { text: item.system_value || "—" }),
+                    h("td", { className: "ocr-state", text: { match: "Match", missing: "Missing", inconsistent: "Inconsistent" }[item.state] || item.state }))))) : null,
+            h("div", { className: "dialog-actions" },
+                !pending && excess > 0 && (payment?.excess_review_status || row.excess_review_status) !== "resolved"
+                    ? h("button", {
+                        className: "button button-small", type: "button", text: "Mark excess returned",
+                        onclick: async () => {
+                            const answer = await UI.confirm({
+                                title: "Resolve the flagged excess?",
+                                message: `PHP ${fmtAmount(excess)} was received above the order total and is not counted as paid. Confirm that it was returned to the customer.`,
+                                confirmLabel: "Mark returned",
+                                input: { label: "What happened to the excess? (recorded in the order history)", required: true, placeholder: "e.g. Returned via the original payment channel, ref 123456" },
+                                details: [["Received", fmtAmount(num(row.received_amount, payment?.amount) || 0)], ["Credited", fmtAmount(num(row.applied_amount, payment?.applied_amount) || 0)]],
+                            });
+                            if (!answer) return;
+                            try {
+                                await api(`/api/admin/orders/${encodeURIComponent(row.reference)}/payments/${row.payment_number}/excess`, {
+                                    method: "POST",
+                                    body: { resolution: "returned", note: answer.value, expected_version: order.version },
+                                });
+                                UI.closeModal();
+                                toast("The excess was marked returned. It was never counted as paid.", "success");
+                                if (reload) await reload();
+                            } catch (error) {
+                                toast(error.message, "error");
+                            }
+                        },
+                    })
+                    : null,
+                h("button", { className: "button button-small", type: "button", text: "Close", onclick: () => UI.closeModal() }),
+                h("button", {
+                    className: "button button-primary", type: "button",
+                    text: pending ? "Review & verify in order" : "Open payment history",
+                    onclick: () => openOrder(row.reference, { focus: pending ? "verify" : "payments" }),
+                })),
+        );
+    }
+
     function renderPayments() {
         const body = viewBody();
         if (!body) return;
@@ -2451,18 +2969,21 @@
         const methodSelect = selectInput([["", "All methods"]], f.method, (value) => apply({ method: value }));
         const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
         let balances = [];
-        /** Pending customer submissions get a direct Verify action; every other row opens its order. */
+        /** Every row opens the verification record: receipt, extracted details, calculations, and checks. */
         const verificationAction = (row) => {
-            const pending = row.entry_type === "submission" && row.verification_status === "Pending Verification" && Boolean(row.submission_id);
+            const pending = row.entry_type === "submission" && Boolean(row.submission_id) && row.verification_status === "Pending Verification";
             return h("button", {
                 className: `button button-small${pending ? " button-primary" : ""}`,
                 type: "button",
-                text: pending ? "Verify" : "Open",
-                title: pending ? `Verify the payment submission for ${row.reference}` : `Open order ${row.reference}`,
-                onclick: () => openOrder(row.reference, { focus: pending ? "verify" : "payments" }),
+                text: pending ? "Verify" : "Review",
+                title: pending ? `Verify the payment submission for ${row.reference}` : `Open verification details for ${row.reference}`,
+                onclick: () => openPaymentVerification(row, () => refreshActiveView()),
             });
         };
         const table = new UI.DataTable(tableHost, {
+            // Constrained to the facts needed to decide whether a payment can be verified.
+            // The full comparison (expected amount, prior payments, discrepancies, OCR)
+            // stays in the verification panel opened from the row.
             columns: [
                 { label: "Action", render: verificationAction },
                 { label: "Date", sortKey: "received", type: "date", render: (row) => cellPair(dateTime(row.received_at), row.entry_type === "submission" ? "Submitted by customer" : "Received") },
@@ -2472,27 +2993,27 @@
                 { label: "Reference no.", sortKey: "payment_reference", render: (row) => row.payment_reference
                     ? cellPair(row.payment_reference, row.reference_type_label)
                     : h("span", { className: "cell-pair" }, h("span", { className: "table-primary missing-reference", text: "No reference" }), h("span", { className: "table-secondary", text: "Open to add it" })) },
-                { label: "Receipt", render: (row) => row.receipt_url
-                    ? h("a", { href: row.receipt_url, target: "_blank", rel: "noopener", className: "table-link", text: "View receipt" })
-                    : h("span", { className: "table-secondary", text: "—" }) },
-                { label: "Extracted reference", sortKey: "ocr_reference", render: (row) => row.ocr_reference
-                    ? h("span", { className: "table-primary", text: row.ocr_reference }) : h("span", { className: "table-secondary", text: "Not read" }) },
-                { label: "Extracted amount", sortKey: "ocr_amount", align: "right", render: (row) => h("span", { className: "cell-pair" },
+                { label: "OCR (assist only)", sortKey: "ocr_amount", align: "right", render: (row) => h("span", { className: "cell-pair" },
                     h("strong", { text: row.ocr_amount === null || row.ocr_amount === undefined ? "Not read" : money(row.ocr_amount) }),
-                    h("span", { className: "table-secondary", text: `Due ${money(row.required_amount)}` })) },
-                { label: "OCR confidence", sortKey: "ocr_confidence", align: "right", render: (row) => Number.isFinite(row.ocr_confidence)
-                    ? h("span", { className: `ocr-confidence${row.ocr_confidence < 0.5 ? " low" : ""}`, text: `${Math.round(row.ocr_confidence * 100)}%` })
-                    : h("span", { className: "table-secondary", text: "—" }) },
-                { label: "Verification", sortKey: "verification", render: (row) => h("span", { className: "cell-pair", title: row.verification_detail },
-                    badge(row.verification_status),
-                    h("span", { className: "table-secondary", text: {
-                        "Reference Missing": "Older record · add its reference",
-                        "Pending Verification": "Not counted until verified",
-                        "Rejected": row.verified_by ? `Rejected by ${row.verified_by}` : "Not counted",
-                    }[row.verification_status] || (row.verified_by ? `By ${row.verified_by}` : "") })) },
-                { label: "Amount", sortKey: "amount", align: "right", render: (row) => h("span", { className: "cell-pair" },
+                    h("span", { className: "table-secondary", text: [
+                        row.ocr_reference ? `Ref ${row.ocr_reference}` : "",
+                        Number.isFinite(row.ocr_confidence) ? `${Math.round(row.ocr_confidence * 100)}% confidence` : "Reference not read",
+                    ].filter(Boolean).join(" · ") })) },
+                { label: "Amount counted", sortKey: "amount", align: "right", render: (row) => h("span", { className: "cell-pair" },
                     h(row.counts_as_paid ? "strong" : "span", { className: row.counts_as_paid ? "" : "not-counted", text: money(row.amount) }),
-                    row.counts_as_paid ? null : h("span", { className: "table-secondary", text: "Not counted as paid" })) },
+                    h("span", { className: "table-secondary", text: row.counts_as_paid ? "Recorded" : "Not counted until verified" })) },
+                { label: "Verification", sortKey: "verification_result", render: (row) => h("span", { className: "cell-pair", title: row.verification_detail },
+                    badge(row.verification_result_label || row.verification_status),
+                    h("span", { className: "table-secondary", text: [
+                        row.verification_basis_label || {
+                            "Reference Missing": "Older record · add its reference",
+                            "Pending Verification": "Not counted until verified",
+                            "Rejected": row.verified_by ? `Rejected by ${row.verified_by}` : "Not counted",
+                        }[row.verification_status] || (row.verified_by ? `By ${row.verified_by}` : ""),
+                        row.insufficient_by > 0 ? `Short by ${money(row.insufficient_by)}` : "",
+                        row.excess_review_status === "pending" && row.excess_amount > 0 ? `Excess ${money(row.excess_amount)} held for review` : "",
+                        row.duplicate_reference_status === "Duplicate detected" ? "Duplicate ref" : "",
+                    ].filter(Boolean).join(" · ") })) },
                 { label: "Order balance", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.order_payment_status),
                     h("span", { className: "table-secondary", title: row.order_total === null ? "" : `Paid ${money(row.order_paid)} of ${money(row.order_total)}`, text: row.order_total === null ? "Not quoted" : `Balance ${money(row.order_balance)}` })) },
             ],
@@ -2530,8 +3051,8 @@
                 }
             },
             emptyMessage: "No payments have been recorded yet.",
-            onRowClick: (row) => openOrder(row.reference, { focus: row.verification_status === "Pending Verification" ? "verify" : "payments" }),
-            rowTitle: (row) => `View transaction details for ${row.reference}`,
+            onRowClick: (row) => openPaymentVerification(row, () => table.reload()),
+            rowTitle: (row) => `View verification details for ${row.reference}`,
             filteredEmptyMessage: "No payments match the selected filters.",
         });
         const apply = (values) => {
@@ -2553,7 +3074,7 @@
                 field("Verification", verificationSelect),
                 field("Method", methodSelect),
                 field("Service", serviceSelect),
-                field("Order payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.slice(0, 3).map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
+                field("Order payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
                 field("Payment option", selectInput([["", "All"], ...PAYMENT_OPTIONS], f.payment_option, (value) => apply({ payment_option: value }))),
                 field("Received from", dateInput(f.date_from, (value) => apply({ date_from: value }))),
                 field("Received to", dateInput(f.date_to, (value) => apply({ date_to: value }))),
@@ -2562,7 +3083,7 @@
                     renderPayments();
                 } }),
             ),
-            panel(["Payment transactions ", countLabel], "Recorded payments (Verified) and customer submissions (Pending Verification or Rejected). Only verified payments count toward an order's paid amount. Select a row to review, verify, or add a missing reference.", tableHost,
+            panel(["Payment transactions ", countLabel], "Recorded payments (Verified) and customer submissions (Pending Verification or Rejected). Only verified payments count toward an order's paid amount. OCR readings are an assistant only — compare the receipt and reference yourself before verifying. Select a row to review.", tableHost,
                 UI.exportButtons("payments", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
         table.load();
@@ -2944,6 +3465,9 @@
             { label: "Customer", sortKey: "customer", render: (row) => row.customer_name },
             { label: "Service", sortKey: "service", render: (row) => row.service },
             { label: "Product / description", sortKey: "description", className: "wrap-cell", render: (row) => row.description },
+            { label: "Destination / shipping", render: (row) => row.delivery_province
+                ? cellPair(`${row.delivery_province} · ${row.destination_region}`, `Subtotal ${money(row.order_subtotal ?? row.total_amount)} · fee ${money(row.shipping_fee || 0)}`)
+                : "—" },
             { label: "Total amount", sortKey: "total", align: "right", render: (row) => money(row.total_amount) },
             { label: "Amount paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
             { label: "Request date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
@@ -2995,7 +3519,7 @@
             h("div", { className: "filter-bar report-filters" },
                 field("Service", serviceSelect),
                 field("Customer", (() => { const input = h("input", { type: "search", placeholder: "Name or email", value: f.customer }); input.addEventListener("input", UI.debounce(() => apply({ customer: input.value.trim() }), 300)); return input; })()),
-                field("Payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.slice(0, 3).map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
+                field("Payment status", selectInput([["", "All"], ...PAYMENT_STATUSES.map((value) => [value, value])], f.payment_status, (value) => apply({ payment_status: value }))),
                 field("Requested from", dateInput(f.request_from, (value) => apply({ request_from: value }))),
                 field("Requested to", dateInput(f.request_to, (value) => apply({ request_to: value }))),
                 field("Completed from", dateInput(f.completed_from, (value) => apply({ completed_from: value }))),
@@ -3362,7 +3886,7 @@
             const counts = chosen.data.counts || {};
             const answer = await UI.confirm({
                 title: "Restore this backup?",
-                message: "Restoring replaces ALL current customers, orders, payments, catalog, packages, and notifications with the data in this backup. Anything added or changed after the backup was created will be lost. Your administrator sign-in is not changed. Download a backup of the current data first if you may need it. The details below are claims made by the selected file; the server verifies its signature and contents before applying anything. Type RESTORE to continue.",
+                message: "Restoring replaces ALL current customers, orders, payments, catalog, packages, and notifications with the data in this backup. Anything added or changed after the backup was created will be lost. The audit trail is never erased: every existing audit entry is kept, the backup's entries are merged in, and the restore itself is recorded. Your administrator sign-in is not changed. Download a backup of the current data first if you may need it. The details below are claims made by the selected file; the server verifies its signature and contents before applying anything. Type RESTORE to continue.",
                 confirmLabel: "Restore backup",
                 tone: "danger",
                 input: { label: "Type RESTORE to confirm", required: true, multiline: false, maxlength: 20, placeholder: "RESTORE" },
@@ -3429,7 +3953,7 @@
                     h("p", { className: "field-note", text: `Backup signing key: ${info.signing_key_source}. Rotate it with PRINTSHOP_BACKUP_PREVIOUS_SIGNING_KEYS so older backups remain restorable.` })),
                 h("section", { className: "backup-card" },
                     h("h3", { text: "Restore" }),
-                    h("p", { className: "field-note", text: lastRestore ? `Last restore: ${dateTime(lastRestore.at)} by ${lastRestore.by}.` : "Replaces the current data with a backup. Everything is checked first; if anything fails, nothing is changed." }),
+                    h("p", { className: "field-note", text: lastRestore ? `Last restore: ${dateTime(lastRestore.at)} by ${lastRestore.by}. The audit trail was kept.` : "Replaces the current data with a backup. Everything is checked first; if anything fails, nothing is changed. The audit trail is never erased." }),
                     h("div", { className: "form-field" }, h("label", { for: "restore-file", text: "Backup file" }), fileInput),
                     fileNote,
                     restoreButton)),

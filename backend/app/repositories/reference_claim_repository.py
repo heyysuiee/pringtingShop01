@@ -8,7 +8,8 @@ remains only to give the customer a friendly message.
 
 A claim can be released (a rejected receipt or a request for a clearer receipt frees its reference)
 or archived (after a reprint an old tracking number may not be reused), so existing business rules
-are preserved.
+are preserved. A receipt-file claim is taken only when the file backs a verified payment: one receipt
+can be submitted more than once for review, but it can never credit two payments.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from backend.app.database.connection import connection_scope, exclusive_write
 
 
 KIND_PAYMENT = "payment"
+KIND_RECEIPT = "receipt"
 KIND_REFUND = "refund"
 KIND_REFUND_ID = "refund_id"
 KIND_TRACKING = "tracking"

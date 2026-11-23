@@ -42,6 +42,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 METHOD_ACCOUNTS = {
     "GCash": "Print Works GCash",
     "Maya": "Print Works Maya",
+    "MariBank": "Print Works MariBank",
     "Bank Transfer": "Print Works Bank Account",
 }
 
@@ -471,9 +472,18 @@ class OCRPaymentVerificationTests(unittest.TestCase):
     def test_full_payment_cannot_be_shortcut_before_the_down_payment(self) -> None:
         reference = self.place_order(1200)
         full_amount_ref = unique_ref("FULL")
-        response = self.submit(reference, "GCash", full_amount_ref, self.receipt_text(full_amount_ref, 1200, "GCash"),
-                               amount=1200, expect=422)
-        self.assertIn("amount due", response["detail"].casefold())
+        declared = self.submit(reference, "GCash", full_amount_ref, self.receipt_text(full_amount_ref, 1200, "GCash"),
+                               amount=1200)
+        submission = next(item for item in declared["payment_submissions"] if item["reference"] == full_amount_ref)
+        self.assertEqual(submission["amount"], 1200.0)
+        self.assertEqual(submission["status"], "pending")
+        # The browser's declared amount is a claim, not money: nothing is credited until the shop verifies it.
+        self.assertEqual(declared["payments"], [])
+        self.assertEqual(declared["payment"]["amount_paid"], 0.0)
+        self.assertEqual(declared["payment"]["payment_status"], "No Payment")
+        self.admin_post(reference, f"payment-submissions/{submission['id']}/reject", {
+            "note": "Customer declared the full amount before the down payment was verified",
+        })
 
         # The correct 50% down payment is accepted; the remaining 50% is still outstanding.
         down_ref = unique_ref("DOWN")
@@ -682,6 +692,65 @@ class OCRPaymentVerificationTests(unittest.TestCase):
         finally:
             reset = self.admin.patch(endpoint, json={"verification_method": "manual", "gateway_config": {}})
             self.assertEqual(reset.status_code, 200, reset.text)
+
+    def test_maribank_receipt_is_detected_and_stays_pending(self) -> None:
+        reference = self.place_order()
+        payment_reference = unique_ref("MARI")
+        result = self.scan(reference, "MariBank", payment_reference, self.receipt_text(payment_reference, 500, "MariBank"))
+
+        self.assertEqual(result["method"], "MariBank")
+        self.assertEqual(result["ocr"]["fields"]["method"], "MariBank")
+        self.assertEqual(result["ocr_status"], "Detected")
+        self.assertEqual(result["verification"]["status"], "pending")
+        self.assertFalse(result["duplicate_reference"])
+
+    def test_scan_reports_duplicate_message_and_amount_match(self) -> None:
+        first = self.place_order()
+        payment_reference = unique_ref("DUPMSG")
+        self.submit(first, "GCash", payment_reference, self.receipt_text(payment_reference, 500, "GCash"))
+
+        second = self.place_order()
+        result = self.scan(second, "GCash", payment_reference, self.receipt_text(payment_reference, 500, "GCash"))
+        self.assertTrue(result["duplicate_reference"])
+        self.assertEqual(
+            result["duplicate_message"],
+            "This reference number has already been submitted. Please check your payment details or upload a different transaction receipt.",
+        )
+        self.assertEqual(result["amount_match"], True)
+        self.assertEqual(
+            result["reference_message"],
+            "This reference number has already been submitted. Please check your payment details or upload a different transaction receipt.",
+        )
+
+    def test_scan_reports_reference_detected_message_when_unique(self) -> None:
+        reference = self.place_order()
+        payment_reference = unique_ref("UNIQ")
+        result = self.scan(reference, "GCash", payment_reference, self.receipt_text(payment_reference, 500, "GCash"))
+        self.assertFalse(result["duplicate_reference"])
+        self.assertEqual(
+            result["reference_message"],
+            "Reference number detected. Please review your payment details before submitting.",
+        )
+
+    def test_multiple_reference_candidates_are_returned(self) -> None:
+        reference = self.place_order()
+        primary = unique_ref("REFA")
+        secondary = unique_ref("REFB")
+        text = "\n".join([
+            "GCash payment receipt",
+            f"Reference No.: {primary}",
+            f"Transaction ID: {secondary}",
+            f"Amount: PHP 500.00",
+            f"Recipient: {METHOD_ACCOUNTS['GCash']}",
+            f"Date: {date.today().isoformat()} 14:30",
+            "Status: Success",
+        ])
+        result = self.scan(reference, "GCash", primary, text)
+        candidates = result["ocr"].get("reference_candidates", [])
+        values = [item.get("value") for item in candidates]
+        self.assertIn(primary, values)
+        self.assertIn(secondary, values)
+        self.assertIn("multiple_reference_candidates", result["ocr"].get("flags", []))
 
 
 if __name__ == "__main__":  # pragma: no cover

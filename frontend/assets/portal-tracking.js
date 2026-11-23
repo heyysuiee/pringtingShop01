@@ -38,6 +38,22 @@
         return context.make(tag, className, text);
     }
 
+    /** Read the canonical cumulative figures supplied by the server, with legacy fields as a fallback. */
+    function paymentMoney(order) {
+        const payment = order.payment || {};
+        const calc = payment.payment_calculation || {};
+        const number = (value, fallback = null) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
+        const total = number(calc.total_order_amount, number(payment.total_amount, number(order.total_amount)));
+        const paid = number(calc.confirmed_payments, number(payment.amount_paid, 0));
+        return {
+            total,
+            paid,
+            balanceDue: number(calc.balance_due, number(payment.balance, total === null ? null : Math.max(0, total - paid))),
+            status: calc.payment_status || order.payment_status || payment.payment_status || "",
+            excess: number(calc.excess_amount, number(payment.excess_amount, 0)),
+        };
+    }
+
     function link(text, href) {
         const anchor = el("a", "", text);
         anchor.href = href;
@@ -194,7 +210,7 @@
             if (f.pickup_confirmation) rows.push(["Claimed", `${f.pickup_confirmation.claimant_name} (${f.pickup_confirmation.claimant_type_label}) · ${context.formatDate(f.pickup_confirmation.claimed_at)}`]);
         }
         const reprint = p.reprint;
-        if (reprint) rows.unshift(["Reprint", `${reprint.status === "in_progress" ? "In progress" : "Completed"} · ${reprint.quantity} pc(s) · ${reprint.chargeable ? `agreed charge ${context.money(reprint.charge_amount)}` : "no additional charge"}`]);
+        if (reprint) rows.unshift(["Reprint", `${{ in_progress: "In progress", completed: "Completed", cancelled: "Cancelled" }[reprint.status] || reprint.status} · ${reprint.quantity} pc(s) · ${reprint.chargeable ? `agreed charge ${context.money(reprint.charge_amount)}` : "no additional charge"}`]);
         const show = rows.length > 2 || reprint || f.courier || f.pickup_code || ["Ready for Pickup", "Order Claimed", "Ready for Dispatch", "Out for Delivery", "Delivery Failed", "Delivered"].includes(order.status) || p.started_at;
         tracking.hidden = !show;
         if (!show) return;
@@ -208,7 +224,7 @@
             tracking.append(el("p", "notice", `The shop is reprinting ${reprint.quantity} pc(s) of your order: ${reprint.reason}. It goes through quality checking and packaging again before release.`));
         }
         if (order.status === "Awaiting Full Payment") {
-            tracking.append(el("p", "notice", `Your order is packed. Pay the remaining balance of ${context.money(order.payment?.balance || 0)} below so the shop can release it for ${f.method === "delivery" ? "dispatch" : "pickup"}.`));
+            tracking.append(el("p", "notice", `Your order is packed. Pay the remaining balance of ${context.money(paymentMoney(order).balanceDue || 0)} below so the shop can release it for ${f.method === "delivery" ? "dispatch" : "pickup"}.`));
         }
         if (order.status === "Delivery Failed") {
             const last = (f.attempts || []).filter((item) => item.status === "failed").pop();
@@ -279,7 +295,7 @@
         const form = el("form", "request-form");
         const reason = select(CANCEL_REASONS, "reason");
         const remarks = textarea("remarks", "Anything the shop should know (required for Other)");
-        const paid = (order.payment?.amount_paid || 0) > 0;
+        const paid = paymentMoney(order).paid > 0;
         const hasPendingPayment = (order.payment_submissions || []).some((item) => item.status === "pending");
         const recipientRequired = paid || hasPendingPayment || (order.payments || []).length > 0;
         const recipient = recipientFields(recipientRequired);
@@ -289,7 +305,7 @@
         const submit = el("button", "btn btn-dark", "Send cancellation request");
         submit.type = "submit";
         form.append(
-            el("p", "field-hint", `Order ${order.reference} · ${order.status} · total ${context.money(order.total_amount)} · verified payments ${context.money(order.payment?.amount_paid || 0)}${order.payments?.length ? ` via ${[...new Set(order.payments.map((item) => item.method))].join(", ")}` : ""}.`),
+            el("p", "field-hint", `Order ${order.reference} · ${order.status} · total ${context.money(order.total_amount)} · confirmed payments ${context.money(paymentMoney(order).paid)}${order.payments?.length ? ` via ${[...new Set(order.payments.map((item) => item.method))].join(", ")}` : ""}.`),
             labelled("Reason", reason),
             labelled("Additional remarks", remarks),
             recipientRequired ? el("p", "field-hint", "Where should a refund be sent if one is approved? Provide your e-wallet details now so the shop can process any approved refund without delay.") : null,
@@ -397,16 +413,22 @@
         if (!order) return;
         const money = context.money;
         const payment = order.payment || {};
-        const rows = (order.payments || []).map((item) => `<tr><td>${escapeHtml(context.formatDate(item.received_at))}</td><td>${escapeHtml(item.kind || "Payment")}</td><td>${escapeHtml(item.method)}</td><td>${escapeHtml(item.reference)}</td><td class="r">${escapeHtml(money(item.amount))}</td></tr>`).join("");
-        const refunds = (order.refunds || []).filter((item) => item.status === "refunded").map((item) => `<tr><td>${escapeHtml(context.formatDate(item.refunded_at))}</td><td>Refund ${escapeHtml(item.id)}</td><td>${escapeHtml(item.method)}</td><td>${escapeHtml(item.transaction_reference)}</td><td class="r">−${escapeHtml(money(item.amount))}</td></tr>`).join("");
+        const calc = paymentMoney(order);
+        let running = 0;
+        const rows = (order.payments || []).map((item) => {
+            running = Math.round((running + Number(item.amount || 0)) * 100) / 100;
+            return `<tr><td>${escapeHtml(context.formatDate(item.received_at))}</td><td>${escapeHtml(item.kind || "Payment")}</td><td>${escapeHtml(item.method)}</td><td>${escapeHtml(item.reference)}</td><td class="r">${escapeHtml(money(item.amount))}</td><td class="r">${escapeHtml(money(running))}</td></tr>`;
+        }).join("");
+        const refunds = (order.refunds || []).filter((item) => item.status === "refunded").map((item) => `<tr><td>${escapeHtml(context.formatDate(item.refunded_at))}</td><td>Refund ${escapeHtml(item.id)}</td><td>${escapeHtml(item.method)}</td><td>${escapeHtml(item.transaction_reference)}</td><td class="r">−${escapeHtml(money(item.amount))}</td><td class="r">—</td></tr>`).join("");
         const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Receipt ${escapeHtml(order.reference)}</title>
 <style>body{font-family:system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px;margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border-bottom:1px solid #ddd;padding:6px 4px;text-align:left;font-size:13px}.r{text-align:right}.muted{color:#555;font-size:12px}dl{display:grid;grid-template-columns:200px 1fr;gap:4px 12px;font-size:13px}dt{color:#555}</style></head><body>
 <h1>ImPRESSion PrintShop — Payment receipt</h1><p class="muted">Order ${escapeHtml(order.reference)} · printed ${escapeHtml(new Date().toLocaleString("en-PH"))}</p>
 <dl><dt>Customer</dt><dd>${escapeHtml(order.customer?.name)}</dd><dt>Item</dt><dd>${escapeHtml(order.product?.name)} × ${escapeHtml(order.customization?.quantity)}</dd>
 <dt>Fulfillment</dt><dd>${escapeHtml(order.fulfillment?.label)}</dd>${payment.delivery_fee ? `<dt>Delivery fee</dt><dd>${escapeHtml(money(payment.delivery_fee))}</dd>` : ""}
-<dt>Order total</dt><dd>${escapeHtml(money(order.total_amount))}</dd><dt>Verified payments</dt><dd>${escapeHtml(money(payment.amount_paid))}</dd>
-<dt>Remaining balance</dt><dd>${escapeHtml(money(payment.balance))}</dd><dt>Status</dt><dd>${escapeHtml(order.status)}</dd></dl>
-<table><thead><tr><th>Date</th><th>Type</th><th>Method</th><th>Reference</th><th class="r">Amount</th></tr></thead><tbody>${rows}${refunds}</tbody></table>
+<dt>Order total</dt><dd>${escapeHtml(money(calc.total))}</dd><dt>Confirmed payments</dt><dd>${escapeHtml(money(calc.paid))}</dd>
+<dt>Remaining balance</dt><dd>${escapeHtml(money(calc.balanceDue))}</dd><dt>Payment status</dt><dd>${escapeHtml(calc.status || order.status)}</dd>
+${calc.excess > 0.005 ? `<dt>Excess (admin review)</dt><dd>${escapeHtml(money(calc.excess))}</dd>` : ""}</dl>
+<table><thead><tr><th>Date</th><th>Type</th><th>Method</th><th>Reference</th><th class="r">Amount</th><th class="r">Cumulative paid</th></tr></thead><tbody>${rows}${refunds}</tbody></table>
 <p class="muted">Only payments verified by the shop are listed. This receipt is generated from the shop's records.</p></body></html>`;
         const frame = document.createElement("iframe");
         frame.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";

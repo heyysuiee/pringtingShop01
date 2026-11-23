@@ -2,26 +2,31 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin, require_session
 from backend.app.schemas.order import (
     AdminConfirmation,
     AdminDraft,
+    AdminExcessResolution,
     AdminOrderStatus,
     AdminPayment,
     AdminPaymentNote,
     AdminPaymentOption,
     AdminPaymentReference,
     AdminQuotation,
+    AdminPaymentTerms,
     AdminReceiptRequest,
     AdminSubmissionReview,
+    AdminWorkPreview,
     CustomerOrderAction,
     CustomerOrderChanges,
     CustomerPaymentScan,
     CustomerPaymentSubmission,
     CustomerQuotationResponse,
+    CustomerWorkReview,
+    CustomerWorkRevision,
     NotificationsRead,
     OrderSubmission,
 )
@@ -29,6 +34,11 @@ from backend.app.services import notification_services, order_services
 
 
 router = APIRouter(tags=["orders"])
+
+
+def admin_claims(request: Request) -> dict[str, Any]:
+    """Authenticate before FastAPI validates the body, so malformed admin requests still get 401."""
+    return require_admin(request)
 
 
 @router.post("/api/orders", status_code=201)
@@ -97,6 +107,30 @@ def request_draft_changes(
     require_same_origin(request)
     claims = require_session(request, "customer")
     return order_services.request_draft_changes(reference, payload.email, payload.note, claims["sub"])
+
+
+@router.post("/api/orders/{reference}/work/approve")
+def approve_finished_work(
+    reference: str,
+    payload: CustomerWorkReview,
+    request: Request,
+) -> dict[str, Any]:
+    """The customer approves the finished work, unlocking the remaining balance."""
+    require_same_origin(request)
+    claims = require_session(request, "customer")
+    return order_services.approve_work(reference, payload.email, payload.note, claims["sub"])
+
+
+@router.post("/api/orders/{reference}/work/revision")
+def request_work_revision(
+    reference: str,
+    payload: CustomerWorkRevision,
+    request: Request,
+) -> dict[str, Any]:
+    """The customer asks for changes to the finished work before paying the remaining balance."""
+    require_same_origin(request)
+    claims = require_session(request, "customer")
+    return order_services.request_work_revision(reference, payload.email, payload.note, claims["sub"])
 
 
 @router.post("/api/orders/{reference}/cancel")
@@ -208,8 +242,8 @@ def admin_quote(
     reference: str,
     payload: AdminQuotation,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.set_quotation(reference, payload.model_dump(), actor=admin["sub"])
 
 
@@ -218,13 +252,35 @@ def admin_confirm_package(
     reference: str,
     payload: AdminConfirmation,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
     """Approve a fixed-price package order at its published total and request the 50% down payment.
 
     The order becomes Confirmed only when its down payment is verified.
     """
-    admin = require_admin(request)
     return order_services.confirm_package_order(reference, payload.model_dump(), actor=admin["sub"])
+
+
+@router.post("/api/admin/orders/{reference}/payment-terms")
+def admin_set_payment_terms(
+    reference: str,
+    payload: AdminPaymentTerms,
+    request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
+) -> dict[str, Any]:
+    """Set the agreed total and required down payment while the order awaits its down payment."""
+    return order_services.set_payment_terms(reference, payload.model_dump(), actor=admin["sub"])
+
+
+@router.post("/api/admin/orders/{reference}/work-preview")
+def admin_send_work_preview(
+    reference: str,
+    payload: AdminWorkPreview,
+    request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
+) -> dict[str, Any]:
+    """Upload the finished work for the customer to approve before final payment."""
+    return order_services.send_work_preview(reference, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/verify")
@@ -233,8 +289,8 @@ def admin_verify_submission(
     submission_id: str,
     payload: AdminSubmissionReview,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.verify_payment_submission(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
@@ -244,8 +300,8 @@ def admin_reject_submission(
     submission_id: str,
     payload: AdminSubmissionReview,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.reject_payment_submission(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
@@ -255,8 +311,8 @@ def admin_payment_note(
     submission_id: str,
     payload: AdminPaymentNote,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.add_payment_verification_note(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
@@ -266,8 +322,8 @@ def admin_request_receipt(
     submission_id: str,
     payload: AdminReceiptRequest,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.request_clearer_receipt(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
@@ -276,9 +332,21 @@ def admin_record_payment(
     reference: str,
     payload: AdminPayment,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.record_payment(reference, payload.model_dump(), actor=admin["sub"])
+
+
+@router.post("/api/admin/orders/{reference}/payments/{payment_number}/excess")
+def admin_resolve_payment_excess(
+    reference: str,
+    payment_number: int,
+    payload: AdminExcessResolution,
+    request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
+) -> dict[str, Any]:
+    """Close an excess-payment review without changing the agreed total or crediting the excess."""
+    return order_services.resolve_payment_excess(reference, payment_number, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payments/{payment_number}/reference")
@@ -287,9 +355,9 @@ def admin_add_payment_reference(
     payment_number: int,
     payload: AdminPaymentReference,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
     """Add the missing receipt or transaction number to an older payment recorded without one."""
-    admin = require_admin(request)
     return order_services.add_payment_reference(reference, payment_number, payload.model_dump(), actor=admin["sub"])
 
 
@@ -298,8 +366,8 @@ def admin_update_payment_option(
     reference: str,
     payload: AdminPaymentOption,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.update_payment_option(reference, payload.model_dump(), actor=admin["sub"])
 
 
@@ -308,8 +376,8 @@ def admin_upload_draft(
     reference: str,
     payload: AdminDraft,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.upload_draft(reference, payload.model_dump(), actor=admin["sub"])
 
 
@@ -318,6 +386,6 @@ def admin_update_status(
     reference: str,
     payload: AdminOrderStatus,
     request: Request,
+    admin: dict[str, Any] = Depends(admin_claims),
 ) -> dict[str, Any]:
-    admin = require_admin(request)
     return order_services.update_order_status(reference, payload.status, payload.model_dump(), actor=admin["sub"])

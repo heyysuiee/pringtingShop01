@@ -30,11 +30,11 @@
     white-space: nowrap;
 }
 
-.status-badge.cb-badge-warn::before { background: var(--accent-orange) !important; }
-.status-badge.cb-badge-ok::before { background: var(--accent-green) !important; }
-.status-badge.cb-badge-info::before { background: var(--accent-cyan) !important; }
-.status-badge.cb-badge-source::before { background: var(--accent-purple-light) !important; }
-.status-badge.cb-badge-muted { opacity: 0.75; }
+.status-badge.cb-badge-warn::before { background:var(--accent-orange) !important; }
+.status-badge.cb-badge-ok::before { background:var(--accent-green) !important; }
+.status-badge.cb-badge-info::before { background:var(--accent-cyan) !important; }
+.status-badge.cb-badge-source::before { background:var(--accent-purple-light) !important; }
+.status-badge.cb-badge-muted { opacity:0.75; }
 
 /* Latest conversations / linked inquiries */
 .cb-recent {
