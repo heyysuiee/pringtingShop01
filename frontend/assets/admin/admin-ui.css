@@ -1209,6 +1209,555 @@ button.hbar-row {
     text-underline-offset: 3px;
 }
 
+/* ---------------------------------------------------------------- reorganized order details */
+
+.order-modal .od-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px 16px;
+    margin: 0 36px 16px 0;
+}
+
+.order-modal .od-header-main {
+    flex: 1 1 420px;
+    min-width: 0;
+}
+
+.order-modal .od-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 12px;
+}
+
+.order-modal .od-title-row .eyebrow {
+    margin: 0;
+}
+
+.order-modal .od-title-row .dialog-heading {
+    margin: 0;
+    font-size: 24px;
+}
+
+.order-modal .od-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin-top: 8px;
+    color: var(--ui-muted);
+    font-size: 12.5px;
+}
+
+.order-modal .od-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.order-modal .od-meta-item::before {
+    color: var(--line-strong);
+    content: "•";
+}
+
+.order-modal .od-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: auto;
+}
+
+.order-modal .od-header-actions .button {
+    min-height: 34px;
+}
+
+.order-modal .od-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    gap: 14px;
+    align-items: start;
+}
+
+.order-modal .od-column {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+}
+
+.order-modal .od-panel {
+    min-width: 0;
+    padding: 14px 16px;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--radius-md);
+    background: var(--ui-surface);
+}
+
+.order-modal .od-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.order-modal .od-panel-head h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.order-modal .od-panel-meta {
+    color: var(--ui-muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: right;
+}
+
+.order-modal .od-eyebrow,
+.order-modal .od-section-label {
+    color: var(--ui-muted);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.order-modal .od-section-label {
+    margin: 12px 0 6px;
+}
+
+.order-modal .od-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.order-modal .od-status i {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.order-modal .od-status-good { color: var(--status-good); }
+.order-modal .od-status-warn { color: var(--status-warning); }
+.order-modal .od-status-muted { color: var(--status-neutral); }
+
+.order-modal .od-disclosure {
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--ui-border);
+}
+
+.order-modal .od-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-weight: 700;
+}
+
+.order-modal .od-disclosure > summary::-webkit-details-marker {
+    display: none;
+}
+
+.order-modal .od-disclosure > summary::after {
+    color: var(--ui-muted);
+    content: "▾";
+    font-size: 12px;
+    transition: transform var(--dur) var(--ease);
+}
+
+.order-modal .od-disclosure[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.order-modal .od-disclosure-hint {
+    margin-left: auto;
+    color: var(--ui-muted);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.order-modal .od-disclosure-body {
+    display: grid;
+    gap: 10px;
+    padding-top: 10px;
+}
+
+.order-modal .od-disclosure-body .fact-card {
+    padding: 10px 12px;
+    background: var(--ui-subtle);
+}
+
+.order-modal .od-disclosure-body .fact-card h3 {
+    font-size: 13px;
+}
+
+.order-modal .od-disclosure-body .detail-list {
+    font-size: 13px;
+}
+
+/* Product preview: a bounded image well, with product/category separated from the ledger. */
+.order-modal .od-product-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.order-modal .od-product-info > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.order-modal .od-product-info strong {
+    font-size: 13px;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.order-modal .od-preview .gallery-main {
+    min-height: 150px;
+    max-height: 220px;
+    padding: 8px;
+    border-color: var(--ui-border);
+    background: var(--ui-subtle);
+}
+
+.order-modal .od-preview .gallery-main img {
+    max-height: 204px;
+}
+
+.order-modal .od-preview .gallery-zoom-hint {
+    font-size: 11.5px;
+}
+
+.order-modal .od-preview .gallery-thumb {
+    width: 56px;
+    height: 48px;
+    border-color: var(--ui-border);
+    background: var(--ui-subtle);
+}
+
+.order-modal .od-preview .gallery-empty {
+    min-height: 140px;
+    border-color: var(--ui-border);
+}
+
+.order-modal .od-customer-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.order-modal .od-avatar {
+    display: inline-grid;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--grad-brand);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.order-modal .od-customer-identity {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.order-modal .od-customer-identity strong {
+    font-size: 14px;
+}
+
+.order-modal .od-customer-identity span {
+    color: var(--ui-muted);
+    font-size: 12.5px;
+}
+
+.order-modal .od-customer .table-link {
+    margin-top: 8px;
+    font-size: 12.5px;
+}
+
+/* Financial figures are the strongest block in the right column. */
+.order-modal .od-payment {
+    border-color: var(--line-accent);
+}
+
+.order-modal .od-total {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line-accent);
+    border-radius: 12px;
+    background: var(--accent-soft);
+}
+
+.order-modal .od-total > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.order-modal .od-total span {
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.order-modal .od-total strong {
+    font-size: 22px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+}
+
+.order-modal .od-money-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.order-modal .od-money {
+    min-width: 0;
+    padding: 9px 11px;
+    border: 1px solid var(--ui-border);
+    border-radius: 10px;
+    background: var(--ui-subtle);
+}
+
+.order-modal .od-money span {
+    display: block;
+    color: var(--ui-muted);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.order-modal .od-money strong {
+    display: block;
+    margin-top: 3px;
+    font-size: 13.5px;
+    overflow-wrap: anywhere;
+}
+
+.order-modal .od-balance-due {
+    color: var(--accent-orange);
+}
+
+.order-modal .od-inline-note {
+    margin: 9px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+/* Collapsible quotation and payment-history sections. */
+.order-modal .od-quotation > summary,
+.order-modal .od-history > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.order-modal .od-quotation > summary::-webkit-details-marker,
+.order-modal .od-history > summary::-webkit-details-marker {
+    display: none;
+}
+
+.order-modal .od-quotation > summary::after,
+.order-modal .od-history > summary::after {
+    color: var(--ui-muted);
+    content: "▾";
+    font-size: 12px;
+    transition: transform var(--dur) var(--ease);
+}
+
+.order-modal .od-quotation[open] > summary::after,
+.order-modal .od-history[open] > summary::after {
+    transform: rotate(180deg);
+}
+
+.order-modal .od-panel-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+}
+
+.order-modal .od-panel-summary > span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.order-modal .od-panel-summary h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.order-modal .od-panel-summary small {
+    color: var(--ui-muted);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.order-modal .od-quote-body,
+.order-modal .od-history-body {
+    display: grid;
+    gap: 10px;
+    padding-top: 10px;
+}
+
+.order-modal .od-quote-body .detail-list {
+    gap: 6px 10px;
+    margin: 0;
+    font-size: 12.5px;
+}
+
+.order-modal .od-quote-response {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--ui-border);
+    font-size: 12px;
+}
+
+.order-modal .od-quote-response > span:first-child {
+    color: var(--ui-muted);
+    font-weight: 600;
+}
+
+.order-modal .od-note {
+    margin: 0;
+    color: var(--ui-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.order-modal .od-pay-table th,
+.order-modal .od-pay-table td {
+    padding: 7px 8px;
+    vertical-align: top;
+}
+
+.order-modal .od-pay-table .od-amount {
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.order-modal .od-cell-sub {
+    display: block;
+    margin-top: 2px;
+    color: var(--ui-muted);
+    font-size: 10.5px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+
+/* Price provenance stays secondary to the payment summary. */
+.order-modal .od-price-note {
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--ui-border);
+    border-radius: 12px;
+    background: var(--ui-subtle);
+}
+
+.order-modal .od-price-icon {
+    display: inline-grid;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid var(--line-accent);
+    border-radius: 50%;
+    color: var(--accent-pink);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.order-modal .od-price-copy {
+    min-width: 0;
+}
+
+.order-modal .od-price-copy p {
+    margin: 0;
+    color: var(--ui-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.order-modal .od-price-note .od-disclosure {
+    margin-top: 6px;
+    padding-top: 6px;
+}
+
+.order-modal .od-price-detail h4 {
+    margin: 0 0 6px;
+    font-size: 12.5px;
+}
+
+.order-modal .actions-card {
+    padding: 14px 16px;
+    border: 1px solid var(--line-accent);
+    border-radius: var(--radius-md);
+    background: var(--glass-1);
+}
+
+.order-modal .od-timeline {
+    max-height: 210px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.order-modal .od-timeline li {
+    padding: 7px 0 7px 14px;
+    font-size: 12.5px;
+}
+
+.order-modal .od-timeline time {
+    font-size: 11.5px;
+    text-align: right;
+    white-space: normal;
+}
+
+.order-modal .od-activity .audit-card {
+    margin-top: 10px;
+    padding: 9px 11px;
+}
+
+.order-modal .od-activity .audit-card h3 {
+    font-size: 12.5px;
+}
+
+.order-modal .od-operations {
+    margin-top: 14px;
+}
+
 /* Customer modal */
 
 .mini-stats {
@@ -1578,7 +2127,8 @@ button.notification-item:hover {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
-    .order-top {
+    .order-top,
+    .order-modal .od-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -1631,6 +2181,36 @@ button.notification-item:hover {
 
     .order-modal-header {
         margin-right: 30px;
+    }
+
+    .order-modal .od-header {
+        margin-right: 28px;
+    }
+
+    .order-modal .od-header-actions {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .order-modal .od-header-actions .button {
+        flex: 1 1 auto;
+    }
+
+    .order-modal .od-title-row .dialog-heading {
+        font-size: 21px;
+    }
+
+    .order-modal .od-price-note {
+        align-items: flex-start;
+    }
+
+    .order-modal .od-quote-body .detail-list {
+        grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+    }
+
+    .order-modal .od-pay-table th,
+    .order-modal .od-pay-table td {
+        padding: 6px;
     }
 
     .gallery-main {

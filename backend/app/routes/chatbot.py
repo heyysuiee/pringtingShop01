@@ -41,7 +41,7 @@ def chatbot_config(request: Request, response: Response) -> dict[str, Any]:
 @router.post("/api/chatbot/messages")
 def chatbot_message(payload: ChatMessage, request: Request) -> dict[str, Any]:
     require_same_origin(request)
-    address = _client_address(request)
+    address = _client_address(request) or (f"conversation:{payload.conversation_id}" if payload.conversation_id else None)
     _throttle("chat-burst", address, CHAT_BURST_LIMIT, "You're sending messages very quickly. Please wait a moment and try again.", throttle_store)
     _throttle("chat-daily", address, CHAT_DAILY_LIMIT, "The chat limit for today has been reached. Please contact the shop directly.", throttle_store)
     return chatbot_services.chat(payload.model_dump(), request)
@@ -56,7 +56,8 @@ def chatbot_history(conversation_id: str, request: Request, response: Response) 
 @router.post("/api/chatbot/inquiries", status_code=201)
 def chatbot_inquiry(payload: ChatInquiry, request: Request) -> dict[str, Any]:
     require_same_origin(request)
-    _throttle("chat-inquiry", _client_address(request), INQUIRY_LIMIT, "Too many messages were sent. Please try again later.", throttle_store)
+    address = _client_address(request) or (f"conversation:{payload.conversation_id}" if payload.conversation_id else None)
+    _throttle("chat-inquiry", address, INQUIRY_LIMIT, "Too many messages were sent. Please try again later.", throttle_store)
     return chatbot_services.submit_inquiry(payload.model_dump(), request)
 
 

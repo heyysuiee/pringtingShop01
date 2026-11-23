@@ -7,7 +7,7 @@
  */
 (() => {
     const UI = window.AdminUI;
-    const { h, api, query, money, date, dateTime, days, number, badge, toast } = UI;
+    const { h, api, query, money, date, dateTime, days, number, badge, slug, toast } = UI;
 
     fetch("/api/admin/session", { credentials: "same-origin" })
         .then((response) => {
@@ -622,7 +622,39 @@
         }
         if (activeView !== "dashboard") return;
         const st = data.stages;
+        const sc = data.status_counts || {};
         const plural = (count, word) => `${number(count)} ${word}${count === 1 ? "" : "s"}`;
+        const goTo = (view, apply) => { apply?.(); navigate(view); };
+        const releaseDue = Number(sc["Ready for Pickup"] || 0) + Number(sc["Ready for Dispatch"] || 0)
+            + Number(sc["Out for Delivery"] || 0) + Number(sc["Delivery Failed"] || 0);
+
+        // Only the four queues that need an administrator first are shown at full weight.
+        const priorityCards = h("section", { className: "stats-grid stats-grid-4 dashboard-kpis", "aria-label": "Priority metrics" },
+            statCard({ label: "Open / pending orders", value: number(data.pending_orders), foot: `${plural(st.to_review, "order")} to review · ${plural(st.awaiting_customer, "order")} waiting on the customer`, icon: "⌕", tone: data.pending_orders ? "highlight" : "", onClick: () => showOrders("pending") }),
+            statCard({ label: "Payment verification", value: number(data.payments_to_verify), foot: data.payments_to_verify ? `${money(data.payments_to_verify_amount)} submitted by customers` : "No submissions waiting", icon: "₱", tone: data.payments_to_verify ? "highlight" : "", onClick: () => goTo("payments", () => { filters.payments = { ...filters.payments, verification: "pending" }; }) }),
+            statCard({ label: "Production / fulfillment due", value: number(st.production + st.release), foot: `${plural(st.production, "order")} in production · ${plural(releaseDue, "order")} to release`, icon: "⚒", tone: releaseDue ? "highlight" : "", onClick: () => navigate(st.production >= releaseDue ? "production" : "fulfillment") }),
+            statCard({ label: "Refunds pending", value: number((data.pending_cancellations || 0) + (data.pending_refunds || 0)), foot: `${plural(data.pending_cancellations || 0, "cancellation")} · ${plural(data.pending_refunds || 0, "refund")}`, icon: "↺", tone: (data.pending_cancellations || data.pending_refunds) ? "highlight" : "", onClick: () => navigate("refunds") }),
+        );
+
+        /** Each tile is an ordinary deep link; filtered queues set their filter before navigate(). */
+        function attentionItem(label, count, href, view, apply) {
+            const link = h("a", {
+                className: `attention-item${count ? " has-items" : ""}`,
+                href,
+                ...(apply ? {} : { "data-view": view }),
+            }, h("span", { text: label }), h("strong", { text: number(count) }));
+            if (apply) link.addEventListener("click", (event) => { event.preventDefault(); apply(); navigate(view); });
+            return link;
+        }
+        const needsAttention = panel("Needs attention", "Counts that need action now · select a tile to open its queue",
+            h("div", { className: "attention-grid" },
+                attentionItem("Orders to review", st.to_review, "/admin/orders", "orders", () => { filters.orders = { ...filters.orders, status: "to_review" }; }),
+                attentionItem("Payments to verify", data.payments_to_verify, "/admin/payments", "payments", () => { filters.payments = { ...filters.payments, verification: "pending" }; }),
+                attentionItem("In production", st.production, "/admin/production", "production"),
+                attentionItem("Ready for pickup / delivery", releaseDue, "/admin/fulfillment", "fulfillment"),
+                attentionItem("Cancellations & refunds", (data.pending_cancellations || 0) + (data.pending_refunds || 0), "/admin/refunds", "refunds"),
+            ));
+
         // Order workflow: every order that is not cancelled or rejected is counted in exactly one card.
         const orderCards = h("section", { className: "stats-grid stats-grid-4 dashboard-stages", "aria-label": "Orders by stage" },
             statCard({ label: "New orders", value: number(st.new), foot: "Just submitted · not yet opened", icon: "⚑", tone: st.new ? "highlight" : "", onClick: () => showOrders("Pending Confirmation") }),
@@ -635,8 +667,6 @@
             statCard({ label: "All orders", value: number(data.total_orders), foot: `${plural(data.cancelled_orders, "cancelled or rejected order")}`, icon: "▤", onClick: () => showOrders("") }),
         );
 
-        const sc = data.status_counts || {};
-        const goTo = (view, apply) => { apply?.(); navigate(view); };
         const operationCards = h("section", { className: "stats-grid stats-grid-4 dashboard-stages op-stats", "aria-label": "Production, fulfillment, cancellations and refunds" },
             statCard({ label: "Confirmed orders", value: number(sc["Confirmed"] || 0), foot: "Down payment verified · start the draft", icon: "✔", onClick: () => showOrders("Confirmed") }),
             statCard({ label: "Quality checking", value: number(sc["Quality Checking"] || 0), foot: "Printed · inspect before packing", icon: "⌕", onClick: () => navigate("production") }),
@@ -685,9 +715,15 @@
             rowTitle: (row) => `Open order ${row.reference}`,
         }).load();
 
-        body.replaceChildren(
+        // The full metric set stays available, but collapsed so it no longer buries the work queues.
+        const secondaryMetrics = h("details", { className: "dashboard-secondary" },
+            h("summary", {}, h("strong", { text: "All order-stage & operations metrics" }), h("span", { className: "table-secondary", text: " · 16 detailed counters" })),
             orderCards,
             operationCards,
+        );
+        body.replaceChildren(
+            priorityCards,
+            needsAttention,
             data.payments_missing_reference ? h("p", { className: "notice-card notice-warning dashboard-notice" },
                 `${plural(data.payments_missing_reference, "older payment")} ${data.payments_missing_reference === 1 ? "has" : "have"} no reference number. `,
                 h("button", { className: "table-link", type: "button", text: "Review in Payments & Verification →", onclick: () => { filters.payments = { ...filters.payments, verification: "missing" }; navigate("payments"); } })) : null,
@@ -695,6 +731,7 @@
                 h("button", { className: "button button-small", type: "button", text: "Open Sales & Reports", onclick: () => navigate("reports") })),
             panel("Recent orders", "Newest requests · select a row for details", recentTable,
                 h("button", { className: "button button-small", type: "button", text: "All orders", onclick: () => showOrders("") })),
+            secondaryMetrics,
         );
         refreshActiveView = renderDashboard;
     }
@@ -709,6 +746,17 @@
     }
 
     // ================================================================ orders
+
+    /** The next step for an order, derived only from fields already present in the orders row. */
+    function requiredAction(row) {
+        if (row.payments_to_verify) return { text: "Verify payment", tone: "verify" };
+        if (ACTION_LABELS[row.status]) return { text: ACTION_LABELS[row.status], tone: "action" };
+        if (row.status === "Awaiting Down Payment") return { text: "Await down payment", tone: "" };
+        if (row.status === "Awaiting Full Payment") return { text: "Collect remaining balance", tone: "action" };
+        if (["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent"].includes(row.status)) return { text: "Review request", tone: "action" };
+        if (["Ready for Pickup", "Ready for Dispatch", "Out for Delivery", "Delivery Failed"].includes(row.status)) return { text: "Release / deliver", tone: "action" };
+        return { text: "View details", tone: "" };
+    }
 
     function renderOrders() {
         const body = viewBody();
@@ -756,22 +804,30 @@
         let lastCounts = {};
         const table = new UI.DataTable(tableHost, {
             columns: [
-                { label: "Reference no.", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "cell-pair" },
-                    h("span", { className: "table-primary", text: row.reference }),
-                    row.image_count ? h("span", { className: "table-chip", text: `🖼 ${row.image_count} image${row.image_count === 1 ? "" : "s"}` }) : null) },
+                {
+                    label: "Order Reference", sortKey: "reference", className: "ref-cell", render: (row) => h("span", { className: "cell-pair" },
+                        h("span", { className: "table-primary", text: row.reference }),
+                        h("button", { className: "button button-small table-open", type: "button", text: "Open", title: `Open order ${row.reference}`, onclick: () => openOrder(row.reference) }),
+                        row.image_count ? h("span", { className: "table-chip", text: `🖼 ${row.image_count} image${row.image_count === 1 ? "" : "s"}` }) : null),
+                },
                 { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
-                { label: "Service / product", sortKey: "service", render: (row) => h("span", { className: "cell-pair" },
+                { label: "Service", sortKey: "service", render: (row) => h("span", { className: "cell-pair" },
                     h("span", { className: "table-primary", text: row.product }),
                     h("span", { className: "table-secondary", text: row.service }),
                     row.order_kind ? h("span", { className: "table-chip", text: orderKindChip(row) }) : null) },
-                { label: "Date requested", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
-                { label: "Amount", sortKey: "total", align: "right", render: (row) => totalText(row) },
-                { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
-                { label: "Payment", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.payment_status),
+                { label: "Order Date", sortKey: "request_date", type: "date", render: (row) => date(row.request_date) },
+                { label: "Order Status", sortKey: "status", render: (row) => h("span", { className: "cell-pair" }, badge(row.status),
+                    h("span", { className: "table-secondary", text: row.fulfillment_label })) },
+                { label: "Payment Status", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.payment_status),
                     h("span", { className: "table-secondary", text: row.payment_option === "cod" ? "COD" : row.payment_option ? `50% DP · ${row.down_payment_status}` : "Option after quotation" }),
                     row.payments_to_verify ? h("span", { className: "table-chip", text: "⚑ Payment to verify" }) : null) },
-                { label: "Status", sortKey: "status", render: (row) => h("span", { className: "cell-pair" }, badge(row.status),
-                    h("span", { className: "table-secondary", text: row.fulfillment_label })) },
+                { label: "Total Amount", sortKey: "total", align: "right", render: (row) => totalText(row) },
+                { label: "Amount Paid", sortKey: "paid", align: "right", render: (row) => money(row.amount_paid) },
+                { label: "Remaining Balance", align: "right", render: (row) => row.balance === null || row.balance === undefined ? "—" : money(row.balance) },
+                { label: "Required Action", render: (row) => {
+                    const action = requiredAction(row);
+                    return h("span", { className: `required-action${action.tone ? ` action-${action.tone}` : ""}`, text: action.text });
+                } },
             ],
             defaultSort: { key: "request_date", dir: "desc" },
             initialQuery: { ...f },
@@ -803,7 +859,8 @@
         } });
         body.replaceChildren(
             tabs,
-            h("div", { className: "filter-bar" },
+            h("div", { className: "filter-bar orders-filter-bar", role: "search", "aria-label": "Order search and filters" },
+                h("span", { className: "filter-bar-label", text: "Search & filters" }),
                 search,
                 field("Category", serviceSelect),
                 field("Printing service", productSelect),
@@ -815,7 +872,7 @@
                 field("Requested to", toInput),
                 clear,
             ),
-            panel(["Customer requests ", countLabel], "Every customer request with its reference number, customer, service, date requested, amount, and status. Select a row for the complete transaction details.", tableHost,
+            panel(["Customer requests ", countLabel], "Reference, customer, service, date, statuses, amounts, balance, and the next required action. Use Open or select a row for the complete transaction details.", tableHost,
                 UI.exportButtons("orders", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
         table.load();
@@ -836,7 +893,16 @@
         }
         if (!dialog.open || !container.isConnected) return;
         container.replaceChildren(...orderModalContent(order, { back, focus }));
-        if (focus) container.querySelector(`[data-focus="${focus}"]`)?.scrollIntoView({ block: "start" });
+        const nav = container.querySelector(".order-section-nav");
+        if (nav) watchOrderSections(container, nav);
+        if (focus) {
+            const target = revealOrderTarget(container.querySelector(`[data-focus="${focus}"]`) || orderSectionTarget(container, focus));
+            target?.scrollIntoView({ block: "start" });
+            const section = ORDER_SECTIONS.some(([key]) => key === focus)
+                ? focus
+                : (target?.closest("[data-order-section]")?.dataset.orderSection || "overview");
+            nav?.setActive?.(section);
+        }
     }
 
     function orderKindChip(row) {
@@ -908,7 +974,7 @@
             }, h("img", { src: image.src, alt: "", loading: "lazy", decoding: "async" }))));
             main.addEventListener("click", () => UI.openViewer(images, current));
             section.append(main, name, ...(images.length > 1 ? [thumbs] : []),
-                h("button", { className: "button button-small gallery-open", type: "button", text: `Open large preview (${images.length} image${images.length === 1 ? "" : "s"})`, onclick: () => UI.openViewer(images, current) }));
+                h("button", { className: "button button-small gallery-open", type: "button", text: `View all images (${images.length}) · fullscreen`, onclick: () => UI.openViewer(images, current) }));
             select(0);
         }
         if (documents.length) {
@@ -1012,153 +1078,371 @@
         );
     }
 
+    const ORDER_SECTIONS = [["overview", "Overview"], ["payments", "Payment"], ["operations", "Processing"], ["history", "Activity"]];
+
+    /** Navigation anchors can live inside the two-column layout or inside a collapsed panel. */
+    function orderSectionTarget(container, key) {
+        return container?.querySelector?.(`[data-order-section="${key}"]`) || null;
+    }
+
+    /** Open every collapsed panel around a target before scrolling to it (deep links keep working). */
+    function revealOrderTarget(node) {
+        if (!node) return null;
+        if (node instanceof HTMLDetailsElement) node.open = true;
+        let parent = node.parentElement;
+        while (parent) {
+            if (parent instanceof HTMLDetailsElement) parent.open = true;
+            parent = parent.parentElement;
+        }
+        return node;
+    }
+
+    /** Small, consistent heading used by the compact order cards. */
+    function odPanelHead(title, meta) {
+        return h("div", { className: "od-panel-head" },
+            h("h3", { text: title }),
+            meta ? h("span", { className: "od-panel-meta", text: meta }) : null);
+    }
+
+    /** Quiet dot + text status. Used instead of stacking several loud badges. */
+    function odStatus(text) {
+        const value = String(text || "—");
+        const key = slug(value);
+        const bad = /declined|rejected|cancelled|unpaid|not-quoted|failed/.test(key);
+        const warn = /partial|pending|waiting|verification|review|due|after/.test(key);
+        const good = !bad && !warn && /paid|verified|accepted|completed|available|shown|delivered|claimed/.test(key);
+        const tone = bad ? "muted" : good ? "good" : warn ? "warn" : "muted";
+        return h("span", { className: `od-status od-status-${tone}` }, h("i", { "aria-hidden": "true" }), h("span", { text: value }));
+    }
+
+    /** Native disclosure used for every secondary panel on the order detail screen. */
+    function odDisclosure(label, { focus = "", hint = "", body = [] } = {}) {
+        return h("details", { className: "od-disclosure", ...(focus ? { dataset: { focus } } : {}) },
+            h("summary", {}, h("span", { text: label }), hint ? h("span", { className: "od-disclosure-hint", text: hint }) : null),
+            h("div", { className: "od-disclosure-body" }, ...body.filter(Boolean)));
+    }
+
+    /** Sticky chip bar: jumps to the existing sections without changing any of their content. */
+    function orderSectionNav() {
+        const nav = h("nav", { className: "order-section-nav", "aria-label": "Order detail sections" });
+        nav.setActive = (key) => {
+            nav.querySelectorAll(".order-section-chip").forEach((chip) => {
+                const active = chip.dataset.section === key;
+                chip.classList.toggle("active", active);
+                chip.setAttribute("aria-pressed", String(active));
+            });
+        };
+        ORDER_SECTIONS.forEach(([key, label], index) => nav.append(h("button", {
+            className: `order-section-chip${index === 0 ? " active" : ""}`,
+            type: "button",
+            dataset: { section: key },
+            "aria-pressed": String(index === 0),
+            text: label,
+            onclick: () => {
+                nav.setActive(key);
+                revealOrderTarget(orderSectionTarget(nav.closest(".order-modal"), key))
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            },
+        })));
+        return nav;
+    }
+
+    /** Keep the active chip in step with manual scrolling inside the modal frame. */
+    function watchOrderSections(container, nav) {
+        const frame = container.closest(".dialog-frame");
+        if (!frame) return;
+        const handler = () => {
+            const line = frame.getBoundingClientRect().top + 120;
+            let active = ORDER_SECTIONS[0][0];
+            ORDER_SECTIONS.forEach(([key]) => {
+                if ((orderSectionTarget(container, key)?.getBoundingClientRect().top ?? Infinity) <= line) active = key;
+            });
+            nav.setActive(active);
+        };
+        frame.addEventListener("scroll", handler, { passive: true });
+        container.closest("dialog")?.addEventListener("close", () => frame.removeEventListener("scroll", handler), { once: true });
+    }
+
+    /** Reorganized order detail: compact header, two focus columns, then one collapsed processing panel. */
     function orderModalContent(order, { back, focus }) {
         const summary = order.summary;
         const reload = () => openOrder(order.reference, { back, focus });
-        const header = h("header", { className: "order-modal-header" },
+        const actions = actionsPanel(order, reload);
+        const opsSections = OPS()?.orderSections(order, reload, opsContext()) || [];
+        const deliveryOps = opsSections.filter((node) => node?.dataset?.focus === "fulfillment");
+        const otherOps = opsSections.filter((node) => node?.dataset?.focus !== "fulfillment");
+
+        const header = h("header", { className: "od-header", dataset: { orderSection: "overview" } },
             back ? h("button", { className: "button button-small back-button", type: "button", text: "← Back", onclick: back }) : null,
-            h("div", {},
-                h("p", { className: "eyebrow", text: `${summary.service} · ${summary.product}` }),
-                h("h2", { className: "dialog-heading", text: `Order ${order.reference}` }),
-                h("div", { className: "badge-row" }, badge(order.status), badge(summary.payment_status), h("span", { className: "table-secondary", text: `Requested ${dateTime(order.created_at)}` })),
-            ),
-        );
-        const customerLink = order.customer_id
-            ? h("button", { className: "table-link", type: "button", text: "View customer profile →", onclick: () => openCustomer(order.customer_id, { back: () => openOrder(order.reference, { back }) }) })
+            h("div", { className: "od-header-main" },
+                h("div", { className: "od-title-row" },
+                    h("p", { className: "eyebrow", text: `${summary.service} · ${summary.product}` }),
+                    h("h2", { className: "dialog-heading", text: `Order ${order.reference}` })),
+                h("div", { className: "od-meta" },
+                    badge(order.status),
+                    h("span", { className: "od-meta-item", text: `Requested ${dateTime(order.created_at)}` }),
+                    h("span", { className: "od-meta-item", text: `${number(order.customization?.quantity)} pcs` }),
+                    summary.completed_at ? h("span", { className: "od-meta-item", text: `Completed ${dateTime(summary.completed_at)}` }) : null,
+                    summary.completion_days !== null ? h("span", { className: "od-meta-item", text: `${days(summary.completion_days)} to complete` }) : null)),
+            h("div", { className: "od-header-actions" },
+                h("button", {
+                    className: "button button-primary", type: "button", text: "Update status",
+                    disabled: typeof actions.triggerPrimary !== "function",
+                    onclick: () => actions.triggerPrimary?.(),
+                }),
+                h("button", { className: "button", type: "button", text: "More actions", onclick: () => actions.openMore?.() })));
+
+        const main = h("div", { className: "od-grid", dataset: { orderSection: "overview" } },
+            h("div", { className: "od-column" },
+                previewCard(order),
+                pricingNoticeCard(order),
+                customerCard(order, back),
+                specificationsCard(order),
+                deliverySummaryCard(order, deliveryOps)),
+            h("div", { className: "od-column" },
+                paymentSummaryCard(order),
+                quotationCard(order),
+                paymentHistoryCard(order, reload),
+                actions,
+                activityCard(order)));
+
+        const operations = h("section", { className: "od-panel od-operations", dataset: { focus: "operations", orderSection: "operations" } },
+            odPanelHead("Processing & fulfillment", order.status),
+            otherOps.length
+                ? odDisclosure("View processing details", { focus: "operations-details", hint: `${otherOps.length} record${otherOps.length === 1 ? "" : "s"}`, body: otherOps })
+                : h("p", { className: "field-note", text: "No production, draft, cancellation, or refund records for this order yet." }));
+
+        return [header, orderSectionNav(), main, operations].filter(Boolean);
+    }
+
+    function previewCard(order) {
+        const summary = order.summary;
+        return h("section", { className: "od-panel od-preview", dataset: { focus: "preview" } },
+            odPanelHead("Product & design"),
+            h("div", { className: "od-product-info" },
+                h("div", {},
+                    h("span", { className: "od-eyebrow", text: "Product" }),
+                    h("strong", { text: summary.product || "Custom order" })),
+                h("div", {},
+                    h("span", { className: "od-eyebrow", text: "Category" }),
+                    h("strong", { text: summary.service || "—" })),
+                order.design?.name ? h("div", {},
+                    h("span", { className: "od-eyebrow", text: "Design" }),
+                    h("strong", { text: order.design.name })) : null),
+            gallery(order));
+    }
+
+    /** Compact identity + contact. The full address lives here, not in the delivery card. */
+    function customerCard(order, back) {
+        const customer = order.customer || {};
+        const f = order.fulfillment || {};
+        const address = (f.address || []).filter((row) => row.value);
+        const profileLink = order.customer_id
+            ? h("button", {
+                className: "table-link", type: "button", text: "View customer profile →",
+                onclick: () => openCustomer(order.customer_id, { back: () => openOrder(order.reference, { back }) }),
+            })
             : null;
-        const facts = h("div", { className: "order-facts" },
-            h("section", { className: "fact-card" }, h("h3", { text: "Customer" }), detailList([
-                ["Name", order.customer.name],
-                ["Email", h("a", { href: `mailto:${order.customer.email}`, text: order.customer.email })],
-                ["Contact number", order.customer.phone],
-                order.customer.messenger ? ["Messenger", order.customer.messenger] : null,
-            ]), customerLink),
-            h("section", { className: "fact-card" }, h("h3", { text: "Order" }), detailList([
-                ["Order ID", order.reference],
+        const initials = String(customer.name || "?").trim().slice(0, 2).toUpperCase();
+        const body = [
+            address.length
+                ? h("div", {}, h("strong", { text: "Complete delivery address" }), detailList(address.map((row) => [row.label, row.value])))
+                : h("p", { className: "field-note", text: "No delivery address on file — this order is set for store pickup." }),
+            f.method === "delivery" ? h("div", {}, detailList([["Delivery area", f.area_label || "—"]])) : null,
+            detailList([
+                ["Email", customer.email ? h("a", { href: `mailto:${customer.email}`, text: customer.email }) : "—"],
+                customer.messenger ? ["Messenger", customer.messenger] : null,
+                ["Account", order.customer_id ? "Registered customer" : "Guest / not linked"],
+            ]),
+            profileLink,
+        ];
+        return h("section", { className: "od-panel od-customer", dataset: { focus: "customer" } },
+            odPanelHead("Customer"),
+            h("div", { className: "od-customer-summary" },
+                h("span", { className: "od-avatar", "aria-hidden": "true", text: initials }),
+                h("div", { className: "od-customer-identity" },
+                    h("strong", { text: customer.name || "—" }),
+                    h("span", { text: customer.phone || "No contact number" }))),
+            odDisclosure("View customer details", { focus: "customer-details", body }));
+    }
+
+    /** Only the fields relevant to this service are shown; deeper customization is one disclosure. */
+    function specificationsCard(order) {
+        const summary = order.summary;
+        const specs = specifications(order);
+        const events = eventRows(order);
+        const notes = order.customization?.notes || order.customization?.instructions || "";
+        const count = specs.length + events.length + (order.package ? 1 : 0) + (order.design ? 1 : 0) + (notes ? 1 : 0);
+        const body = [
+            specs.length ? detailList(specs) : h("p", { className: "field-note", text: "No extra customization fields for this service." }),
+            events.length ? h("div", {}, h("strong", { text: "Event details" }), detailList(events)) : null,
+            packageCard(order),
+            designCard(order),
+            h("div", {}, h("strong", { text: "Special instructions" }), h("p", { className: "prewrap", text: notes || "None provided." })),
+            order.admin_notes ? h("div", {}, h("strong", { text: "Latest internal note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
+        ];
+        return h("section", { className: "od-panel od-specs", dataset: { focus: "specifications" } },
+            odPanelHead("Order specifications", `${number(order.customization?.quantity)} pcs`),
+            detailList([
                 ["Service", summary.service],
                 ["Product", summary.product],
                 order.order_kind ? ["Order type", orderKindLabel(order)] : null,
-                order.package?.name ? ["Package", order.package.name] : null,
-                order.design?.name ? ["Design", order.design.name] : null,
                 ["Quantity", number(order.customization?.quantity)],
-                ["Request date", dateTime(order.created_at)],
-                ["Completion date", summary.completed_at ? dateTime(summary.completed_at) : "Not completed"],
-                summary.completion_days !== null ? ["Completion duration", `${days(summary.completion_days)} (calendar)`] : null,
-            ])),
-            paymentFactCard(order),
-            fulfillmentCard(order),
-            quotationCard(order),
-        );
-
-        const specs = specifications(order);
-        const events = eventRows(order);
-        const details = h("div", { className: "order-detail-sections" },
-            specs.length ? h("section", { className: "fact-card" }, h("h3", { text: "Customer specifications" }), detailList(specs)) : null,
-            packageCard(order),
-            designCard(order),
-            h("section", { className: "fact-card" }, h("h3", { text: "Special instructions" }),
-                h("p", { className: "prewrap", text: order.customization?.notes || order.customization?.instructions || "None provided." })),
-            events.length ? h("section", { className: "fact-card" }, h("h3", { text: "Event details" }), detailList(events)) : null,
-            pricingCard(order.pricing, order),
-            order.admin_notes ? h("section", { className: "fact-card" }, h("h3", { text: "Latest note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
-        );
-
-        const payments = h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: `Payment history (${order.payments.length})` }),
-            order.payments.length ? h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
-                h("thead", {}, h("tr", {}, ...["Received", "Type", "Method", "Reference no.", "Verification", "Amount"].map((text, index) => h("th", { scope: "col", className: index === 5 ? "align-right" : "", text })))),
-                h("tbody", {}, ...order.payments.map((payment) => {
-                    const check = payment.verification_view || {};
-                    return h("tr", {},
-                        h("td", { text: dateTime(payment.received_at) }),
-                        h("td", { text: `${payment.kind || "Payment"}${payment.source === "customer submission" ? " (verified submission)" : ""}` }),
-                        h("td", { text: payment.method }),
-                        h("td", {}, payment.reference
-                            ? cellPair(payment.reference, check.reference_type_label)
-                            : addReferenceButton(order, payment, reload)),
-                        h("td", {}, badge(check.status || "—"), check.verified_by ? h("span", { className: "table-secondary", text: ` by ${check.verified_by}` }) : null),
-                        h("td", { className: "align-right", text: money(payment.amount) }));
-                })),
-            )) : h("p", { className: "field-note", text: "No payments recorded yet." }),
-            h("p", { className: "field-note", text: `Total amount ${order.total_amount === null ? "not set yet" : money(order.total_amount)} · Paid (verified) ${money(summary.amount_paid)} · Remaining balance ${summary.balance === null ? "—" : money(summary.balance)} · ${summary.payment_status}` }),
-            submissionHistory(order),
-            order.payment_instructions ? h("p", { className: "field-note" }, h("strong", { text: "Payment instructions shared: " }), order.payment_instructions) : null,
-        );
-
-        const history = h("section", { className: "fact-card" }, h("h3", { text: "Order activity" }),
-            h("ol", { className: "timeline" }, ...[...order.history].reverse().map((entry) => h("li", {},
-                h("span", { text: entry.text }), h("time", { text: dateTime(entry.at) })))));
-
-        return [
-            header,
-            h("div", { className: "order-top" }, gallery(order), h("div", { className: "order-top-side" }, facts, actionsPanel(order, reload))),
-            details,
-            ...(OPS()?.orderSections(order, reload, opsContext()) || []),
-            quotationHistoryCard(order),
-            payments,
-            history,
-            auditCard(order),
-        ].filter(Boolean);
+                order.package?.name ? ["Selected package", order.package.name] : null,
+                order.design?.name ? ["Selected design", order.design.name] : null,
+            ]),
+            odDisclosure("View customization details", {
+                focus: "customization",
+                hint: count ? `${count} item${count === 1 ? "" : "s"}` : "",
+                body,
+            }));
     }
 
-    /** Payment option, the 50% down payment (or COD), amount paid, and balance for one order. */
-    function paymentFactCard(order) {
+    /** Fulfillment at a glance; the address is intentionally omitted (it lives in Customer). */
+    function deliverySummaryCard(order, deliveryOps = []) {
+        const f = order.fulfillment || {};
+        const tracking = f.tracking_number
+            ? (f.tracking_url
+                ? h("a", { href: f.tracking_url, target: "_blank", rel: "noopener", text: f.tracking_number })
+                : f.tracking_number)
+            : null;
+        return h("section", { className: "od-panel od-delivery", dataset: { focus: "fulfillment-summary" } },
+            odPanelHead("Delivery & pickup", f.method === "delivery" ? "Delivery" : "Pickup"),
+            detailList([
+                ["Method", h("strong", { text: f.label || "Store Pickup" })],
+                f.courier ? ["Courier", `${f.courier}${f.courier_service ? ` · ${f.courier_service}` : ""}`] : null,
+                tracking ? ["Tracking number", tracking] : null,
+                f.estimate_text ? ["Estimated delivery", f.estimate_text] : null,
+                f.scheduled_date ? ["Scheduled delivery", date(f.scheduled_date)] : null,
+                f.pickup_schedule ? ["Pickup schedule", `${date(f.pickup_schedule.date)} ${f.pickup_schedule.time || ""}`.trim()] : null,
+                f.preferred_pickup_date ? ["Preferred pickup date", date(f.preferred_pickup_date)] : null,
+                f.pickup_location ? ["Pickup location", `${f.pickup_location.name} · ${f.pickup_location.address}`] : null,
+                f.pickup_notes ? ["Pickup notes", f.pickup_notes] : null,
+                f.method === "delivery" ? ["Delivery fee", money(f.delivery_fee || 0)] : null,
+                ["Status", badge(f.release_status || "Ready for Pickup")],
+                f.recorded ? null : ["Note", "Placed before delivery options existed: store pickup."],
+            ]),
+            deliveryOps.length
+                ? odDisclosure("View delivery history", { focus: "delivery-history", hint: `${deliveryOps.length} record${deliveryOps.length === 1 ? "" : "s"}`, body: deliveryOps })
+                : null);
+    }
+
+    /** Primary financial snapshot. Every figure is the server-calculated value from the order view. */
+    function paymentSummaryCard(order) {
         const summary = order.summary;
         const payment = order.payment || {};
         const cod = payment.payment_option === "cod";
-        const chosen = payment.payment_option_chosen;
-        const basis = order.total_amount === null ? " (from the estimate)" : "";
-        return h("section", { className: "fact-card", dataset: { focus: "payments" } }, h("h3", { text: "Payment" }), detailList([
-            ["Payment option", h("strong", { text: payment.payment_option_label || "50% Down Payment" })],
-            [order.fixed_price ? `${order.fixed_price_label || "Package total"} (fixed)` : "Confirmed total", order.total_amount === null ? "Waiting for quotation" : money(order.total_amount)],
-            order.fixed_price ? null : [order.order_kind === "package" ? "Package estimate" : "Catalog estimate", summary.estimated_total === null ? "Needs a custom quotation" : money(summary.estimated_total)],
-            ["Down payment (50%)", cod ? "Not required (COD)" : payment.down_payment_required === null ? "Half of the quotation" : `${money(payment.down_payment_required)}${basis}`],
-            ["Down payment status", badge(payment.down_payment_status || "—")],
-            ["Amount paid (verified)", money(summary.amount_paid)],
-            payment.pending_verification ? ["Waiting for verification", h("strong", { text: money(payment.pending_verification) })] : null,
-            [cod ? "Due on delivery" : "Balance", summary.balance === null ? "—" : money(summary.balance)],
-            ["Payment status", badge(summary.payment_status)],
-        ]), order.total_amount !== null && chosen ? h("div", { className: "payment-split" },
-            h("div", {}, h("span", { text: cod ? "Down payment" : "Down payment due" }), h("strong", { text: cod ? "None (COD)" : money(payment.down_payment_remaining || 0) })),
-            h("div", {}, h("span", { text: "Paid so far" }), h("strong", { text: money(summary.amount_paid) })),
-            h("div", {}, h("span", { text: cod ? "Collect on delivery" : "Remaining balance" }), h("strong", { text: money(summary.balance || 0) })),
-        ) : null);
+        const downValue = cod
+            ? (payment.down_payment_required === 0 ? "Not required (COD)" : money(payment.down_payment_required))
+            : (payment.down_payment_required === null || payment.down_payment_required === undefined
+                ? "Half of the quotation"
+                : money(payment.down_payment_required));
+        const metrics = [
+            h("div", { className: "od-money" },
+                h("span", { text: cod ? "Down payment" : "Required down payment (50%)" }),
+                h("strong", { text: downValue })),
+            h("div", { className: "od-money" },
+                h("span", { text: "Amount paid" }),
+                h("strong", { text: money(summary.amount_paid) })),
+            h("div", { className: "od-money" },
+                h("span", { text: cod ? "Due on delivery" : "Remaining balance" }),
+                h("strong", { className: summary.balance > 0 ? "od-balance-due" : "", text: summary.balance === null ? "—" : money(summary.balance) })),
+            h("div", { className: "od-money" },
+                h("span", { text: "Down payment status" }),
+                h("strong", {}, odStatus(payment.down_payment_status || "—"))),
+        ];
+        return h("section", { className: "od-panel od-payment", dataset: { focus: "payments", orderSection: "payments" } },
+            odPanelHead("Payment summary"),
+            h("div", { className: "od-total" },
+                h("div", {}, h("span", { text: "Confirmed total" }),
+                    h("strong", { text: summary.total_amount === null || summary.total_amount === undefined ? "Awaiting quotation" : summary.total_amount })),
+                odStatus(summary.payment_status || "—")),
+            h("p", { className: "od-section-label", text: "Payment breakdown" }),
+            h("div", { className: "od-money-grid" }, ...metrics),
+            payment.pending_verification
+                ? h("p", { className: "od-inline-note" }, h("strong", { text: `${money(payment.pending_verification)} waiting for verification.` }), " It is not counted as paid yet.")
+                : null);
     }
 
-    function fulfillmentCard(order) {
-        const fulfillment = order.fulfillment || {};
-        return h("section", { className: "fact-card", dataset: { focus: "fulfillment" } }, h("h3", { text: "Delivery or pickup" }), detailList([
-            ["Method", h("strong", { text: fulfillment.label || "Store Pickup" })],
-            ...(fulfillment.address || []).filter((row) => row.value).map((row) => [row.label, row.value]),
-            fulfillment.method === "delivery" ? ["Delivery area", fulfillment.area_label || "—"] : null,
-            fulfillment.method === "delivery" ? ["Delivery fee", money(fulfillment.delivery_fee || 0)] : null,
-            fulfillment.estimate_text ? ["Estimated delivery", fulfillment.estimate_text] : null,
-            fulfillment.pickup_location ? ["Pickup location", `${fulfillment.pickup_location.name} · ${fulfillment.pickup_location.address}`] : null,
-            fulfillment.preferred_pickup_date ? ["Preferred pickup date", date(fulfillment.preferred_pickup_date)] : null,
-            fulfillment.pickup_notes ? ["Pickup notes", fulfillment.pickup_notes] : null,
-            fulfillment.courier ? ["Courier", `${fulfillment.courier}${fulfillment.tracking_number ? ` · ${fulfillment.tracking_number}` : ""}`] : null,
-            fulfillment.recorded ? null : ["Note", "Placed before delivery options existed: store pickup."],
-            ["After packaging", fulfillment.release_status || "Ready for Pickup"],
-        ]));
+    /** Compact payment ledger. The header carries the record count and the whole section collapses. */
+    function paymentHistoryCard(order, reload) {
+        const count = order.payments.length;
+        const table = count
+            ? h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table od-pay-table" },
+                h("thead", {}, h("tr", {}, ...["Date received", "Payment type", "Payment method", "Amount", "Verification status"].map((text, index) => h("th", {
+                    scope: "col", className: index === 3 ? "align-right" : "", text,
+                })))),
+                h("tbody", {}, ...order.payments.map((payment) => {
+                    const check = payment.verification_view || {};
+                    const reference = payment.reference
+                        ? h("span", { className: "od-cell-sub", text: `Ref ${payment.reference}${check.reference_type_label ? ` · ${check.reference_type_label}` : ""}` })
+                        : addReferenceButton(order, payment, reload);
+                    return h("tr", {},
+                        h("td", { text: dateTime(payment.received_at) }),
+                        h("td", {},
+                            h("span", { text: payment.kind || "Payment" }),
+                            payment.source === "customer submission" ? h("span", { className: "od-cell-sub", text: "Verified submission" }) : null),
+                        h("td", { text: payment.method || "—" }),
+                        h("td", { className: "align-right od-amount", text: money(payment.amount) }),
+                        h("td", {},
+                            odStatus(check.status || "—"),
+                            check.verified_by ? h("span", { className: "od-cell-sub", text: `by ${check.verified_by}` }) : null,
+                            reference));
+                }))))
+            : h("p", { className: "field-note", text: "No payments recorded yet." });
+        return h("details", { className: "od-panel od-history", dataset: { focus: "payment-history" } },
+            h("summary", { className: "od-panel-summary" },
+                h("span", {}, h("h3", { text: "Payment history" }), h("small", { text: `${count} record${count === 1 ? "" : "s"}` }))),
+            h("div", { className: "od-history-body" },
+                table,
+                submissionHistory(order),
+                order.payment_instructions ? h("p", { className: "od-note" }, h("strong", { text: "Payment instructions shared: " }), order.payment_instructions) : null));
     }
 
+    /** Compact chronological activity; the audit trail loads on demand below the visible events. */
+    function activityCard(order) {
+        const entries = [...(order.history || [])].reverse();
+        return h("section", { className: "od-panel od-activity", dataset: { focus: "activity", orderSection: "history" } },
+            odPanelHead("Activity", `${entries.length} event${entries.length === 1 ? "" : "s"}`),
+            entries.length
+                ? h("ol", { className: "timeline od-timeline" }, ...entries.map((entry) => h("li", {},
+                    h("span", { text: entry.text }),
+                    h("time", { text: [dateTime(entry.at), entry.by || entry.actor].filter(Boolean).join(" · ") }))))
+                : h("p", { className: "field-note", text: "No activity recorded yet." }),
+            auditCard(order));
+    }
+
+    /** Accepted / Pending / Rejected at a glance, mapped from the stored quotation status. */
+    function quoteResponseLabel(status) {
+        return { accepted: "Accepted", sent: "Pending", declined: "Rejected", superseded: "Superseded" }[status]
+            || (status ? String(status).replace(/^./, (letter) => letter.toUpperCase()) : "Pending");
+    }
+
+    /** Separate, collapsed quotation section. It reuses the figures already calculated by the API. */
     function quotationCard(order) {
         const quote = order.quotation;
         if (!quote) return null;
-        const state = { sent: "Waiting for the customer", accepted: "Accepted by the customer", declined: "Declined by the customer" }[quote.status] || quote.status;
-        return h("section", { className: "fact-card", dataset: { focus: "quotation" } }, h("h3", { text: `Quotation (revision ${quote.revision})` }), detailList([
-            ["Printing amount", money(quote.amount)],
-            quote.delivery_fee ? ["Delivery fee", money(quote.delivery_fee)] : null,
-            ["Quoted total", money(quote.total ?? quote.amount)],
-            typeof quote.previous_amount === "number" ? ["Previous total", money(quote.previous_amount)] : null,
-            ["50% down payment", money(quote.down_payment)],
-            ["Customer response", badge(state)],
-            quote.cod_allowed ? ["Cash on Delivery", "Allowed (older quotation)"] : null,
-            quote.cod_confirmed_at ? ["COD confirmed", dateTime(quote.cod_confirmed_at)] : null,
-            ["Sent", dateTime(quote.sent_at)],
-            quote.responded_at ? ["Responded", dateTime(quote.responded_at)] : null,
-            quote.decline_reason ? ["Decline reason", quote.decline_reason] : null,
-            quote.note ? ["Message to customer", quote.note] : null,
-        ]));
+        const response = quoteResponseLabel(quote.status);
+        const body = h("div", { className: "od-quote-body" },
+            detailList([
+                ["Revision number", number(quote.revision)],
+                ["Printing amount", money(quote.amount)],
+                ["Quoted total", money(quote.total ?? quote.amount)],
+                ["Required down payment", money(quote.down_payment)],
+                ["Date sent", dateTime(quote.sent_at)],
+                ["Date responded", quote.responded_at ? dateTime(quote.responded_at) : "—"],
+            ]),
+            h("div", { className: "od-quote-response" }, h("span", { text: "Customer response" }), odStatus(response)),
+            quote.note ? h("p", { className: "od-note" }, h("strong", { text: "Message sent: " }), quote.note) : null,
+            quote.decline_reason ? h("p", { className: "od-note" }, h("strong", { text: "Customer reason: " }), quote.decline_reason) : null,
+            order.quotation_history?.length
+                ? odDisclosure("View all revisions", { focus: "quotation-history", hint: `${order.quotation_history.length} total`, body: [quotationHistoryCard(order)] })
+                : null);
+        return h("details", { className: "od-panel od-quotation", dataset: { focus: "quotation" } },
+            h("summary", { className: "od-panel-summary" },
+                h("span", {}, h("h3", { text: "Quotation details" }), h("small", { text: `Revision ${number(quote.revision)}` })),
+                odStatus(response)),
+            body);
     }
 
     const QUOTE_STATES = { sent: "Waiting for the customer", accepted: "Accepted by the customer", declined: "Declined by the customer", superseded: "Superseded" };
@@ -1167,19 +1451,17 @@
     function quotationHistoryCard(order) {
         const items = order.quotation_history || [];
         if (!items.length) return null;
-        return h("section", { className: "fact-card", dataset: { focus: "quotation-history" } },
-            h("h3", { text: `Quotation history (${items.length})` }),
-            h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
-                h("thead", {}, h("tr", {}, ...["Rev.", "Sent", "Previous", "Amount", "Status", "Responded", "Note / reason", "By"].map((text) => h("th", { scope: "col", text })))),
-                h("tbody", {}, ...items.slice().reverse().map((item) => h("tr", {},
-                    h("td", { text: String(item.revision) }),
-                    h("td", { text: dateTime(item.sent_at) }),
-                    h("td", { text: typeof item.previous_amount === "number" ? money(item.previous_amount) : "—" }),
-                    h("td", { text: money(item.amount) }),
-                    h("td", {}, badge(QUOTE_STATES[item.status] || item.status)),
-                    h("td", { text: item.responded_at ? dateTime(item.responded_at) : (item.superseded_at ? `Superseded ${dateTime(item.superseded_at)}` : "—") }),
-                    h("td", { className: "prewrap", text: [item.note, item.decline_reason ? `Customer: ${item.decline_reason}` : ""].filter(Boolean).join(" · ") || "—" }),
-                    h("td", { text: item.sent_by || "—" })))))));
+        return h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table od-history-table" },
+            h("thead", {}, h("tr", {}, ...["Rev.", "Sent", "Previous", "Amount", "Status", "Responded", "Note / reason", "By"].map((text) => h("th", { scope: "col", text })))),
+            h("tbody", {}, ...items.slice().reverse().map((item) => h("tr", {},
+                h("td", { text: String(item.revision) }),
+                h("td", { text: dateTime(item.sent_at) }),
+                h("td", { text: typeof item.previous_amount === "number" ? money(item.previous_amount) : "—" }),
+                h("td", { text: money(item.amount) }),
+                h("td", {}, badge(QUOTE_STATES[item.status] || item.status)),
+                h("td", { text: item.responded_at ? dateTime(item.responded_at) : (item.superseded_at ? `Superseded ${dateTime(item.superseded_at)}` : "—") }),
+                h("td", { className: "prewrap", text: [item.note, item.decline_reason ? `Customer: ${item.decline_reason}` : ""].filter(Boolean).join(" · ") || "—" }),
+                h("td", { text: item.sent_by || "—" }))))));
     }
 
     const AUDIT_LABELS = {
@@ -1282,6 +1564,27 @@
             h("div", { className: "dialog-actions" }, button));
     }
 
+    /** Small, quiet note explaining the source of the price; the figures stay in Payment summary. */
+    function pricingNoticeCard(order) {
+        const pricing = order.pricing || {};
+        const quoteBased = order.price_basis === "quotation" && !order.fixed_price;
+        const message = quoteBased
+            ? order.quotation?.status === "accepted"
+                ? "This product has no published catalog price. The confirmed total was set through the accepted quotation."
+                : "This product has no published catalog price. The confirmed total is set through a quotation."
+            : order.fixed_price
+                ? order.price_basis === "standard_size"
+                    ? "Total saved from the published size price list when the order was placed. Later price-list changes do not affect it."
+                    : "Total saved from the published package price when the order was placed. Later package changes do not affect it."
+                : "Catalog prices are an estimate only. The confirmed total is shown in Payment summary.";
+        const detail = pricingCard(pricing, order);
+        return h("section", { className: "od-price-note", dataset: { focus: "pricing" } },
+            h("span", { className: "od-price-icon", "aria-hidden": "true", text: "i" }),
+            h("div", { className: "od-price-copy" },
+                h("p", { text: message }),
+                detail ? odDisclosure("View price breakdown", { focus: "pricing-details", body: [detail] }) : null));
+    }
+
     function pricingCard(pricing, order = null) {
         if (!pricing || !Object.keys(pricing).length) return null;
         const packageOrder = order?.order_kind === "package" || pricing.pricing_mode === "package";
@@ -1293,8 +1596,8 @@
                 pricing.area_sqft ? h("li", { text: `Print area: ${pricing.area_sqft} sq ft per piece` }) : null,
                 h("li", { className: "strong", text: pricing.estimated_total === null ? "No total calculated." : `Estimated total: ${money(pricing.estimated_total)}` }),
             ];
-        return h("section", { className: "fact-card" },
-            h("h3", { text: packageOrder ? "Package price" : priceListOrder && order?.fixed_price ? "Price from the standard size price list" : "Price estimate from catalog prices" }),
+        return h("div", { className: "od-price-detail" },
+            h("h4", { text: packageOrder ? "Package price" : priceListOrder && order?.fixed_price ? "Price from the standard size price list" : "Price estimate from catalog prices" }),
             order?.price_list ? detailList([
                 ["Selected size", order.price_list.size],
                 ["Unit price (as ordered)", typeof order.price_list.unit_price === "number" ? money(order.price_list.unit_price) : "—"],
@@ -1314,8 +1617,9 @@
     function actionsPanel(order, reload) {
         const summary = order.summary;
         const actions = order.actions;
-        const section = h("section", { className: "actions-card", dataset: { focus: "actions" } }, h("h3", { text: "Available actions" }));
+        const section = h("section", { className: "actions-card", dataset: { focus: "actions" } }, odPanelHead("Available actions", "Next steps"));
         const buttons = h("div", { className: "action-buttons" });
+        let primary = null;
 
         order.allowed_statuses.forEach((status) => {
             const danger = status === "Rejected" || status === "Cancelled";
@@ -1327,17 +1631,24 @@
                 disabled: blocked,
                 title: ACTION_HELP[status] || "",
             });
+            if (!primary && !danger && !blocked) {
+                primary = button;
+                button.classList.add("od-primary-status");
+            }
             button.addEventListener("click", async () => {
                 const answer = await UI.confirm({
                     title: `${ACTION_LABELS[status] || status}?`,
                     message: `${ACTION_HELP[status] || ""} Order ${order.reference} will move from “${order.status}” to “${status}”.`,
                     confirmLabel: ACTION_LABELS[status] || "Confirm",
                     tone: danger ? "danger" : "primary",
-                    input: danger ? { label: status === "Rejected" ? "Reason for rejection (recorded in the order history)" : "Reason (optional)", required: status === "Rejected", placeholder: "e.g. Artwork cannot be reproduced at this size" } : null,
+                    input: danger ? { label: status === "Rejected" ? "Reason for rejection (recorded in the order history)" : "Reason for cancellation (recorded in the order history)", required: true, placeholder: "e.g. Artwork cannot be reproduced at this size" } : null,
                     details: status === "Completed" ? [["Confirmed total", money(order.total_amount)], ["Amount paid", money(summary.amount_paid)], ["Completion date", "Today"]] : [],
                 });
                 if (!answer) return;
-                await submitAction(button, order, "status", { status, note: answer.value || "" }, reload, `Order marked as ${status}.`);
+                const note = (answer.value || "").trim();
+                // UI.confirm blocks an empty required input; keep this guard for unexpected confirm implementations.
+                if (danger && !note) return;
+                await submitAction(button, order, "status", { status, note }, reload, `Order marked as ${status}.`);
             });
             buttons.append(button);
         });
@@ -1366,17 +1677,38 @@
         if (actions.start_production_blocked) {
             section.append(h("p", { className: "notice-card notice-warning", text: "Production cannot start until the required 50% down payment is verified." }));
         }
-        if (actions.confirm_package) section.append(confirmPackageForm(order, reload));
-        if (actions.verify_payments) section.append(...(order.payment_submissions || []).filter((item) => item.status === "pending").map((item) => verifySubmissionForm(order, item, reload)));
-        if (actions.quote) section.append(quoteForm(order, reload));
-        if (actions.record_payment) section.append(paymentForm(order, reload));
-        if (actions.send_draft) section.append(draftForm(order, reload));
-        if (actions.change_payment_option) section.append(paymentOptionForm(order, reload));
-        section.append(...(OPS()?.orderActions(order, reload, opsContext()) || []));
+
         if (section.childElementCount === 1) {
-            const final = { Completed: "This order is completed and fully paid. No further actions are needed.", Rejected: "This request was rejected.", Cancelled: "This order was cancelled. Any refund is handled in the Refunds section below." }[order.status];
+            const final = { Completed: "This order is completed and fully paid. No further actions are needed.", Rejected: "This request was rejected.", Cancelled: "This order was cancelled. Any refund is handled in Processing & fulfillment below." }[order.status];
             section.append(h("p", { className: "field-note", text: final || "No administrator action is available at this stage." }));
         }
+
+        // Forms are secondary: one disclosure keeps the initial view short without removing any capability.
+        const advanced = [];
+        if (actions.confirm_package) advanced.push(confirmPackageForm(order, reload));
+        if (actions.verify_payments) advanced.push(...(order.payment_submissions || []).filter((item) => item.status === "pending").map((item) => verifySubmissionForm(order, item, reload)));
+        if (actions.quote) advanced.push(quoteForm(order, reload));
+        if (actions.record_payment) advanced.push(paymentForm(order, reload));
+        if (actions.send_draft) advanced.push(draftForm(order, reload));
+        if (actions.change_payment_option) advanced.push(paymentOptionForm(order, reload));
+        advanced.push(...(OPS()?.orderActions(order, reload, opsContext()) || []));
+        const more = advanced.length
+            ? odDisclosure("More actions", { focus: "more-actions", hint: `${advanced.length} form${advanced.length === 1 ? "" : "s"}`, body: advanced })
+            : null;
+        if (more) section.append(more);
+
+        section.triggerPrimary = () => {
+            if (primary && !primary.disabled) primary.click();
+            else revealOrderTarget(section).scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+        section.openMore = () => {
+            if (more) {
+                more.open = true;
+                revealOrderTarget(more).scrollIntoView({ behavior: "smooth", block: "start" });
+                return;
+            }
+            revealOrderTarget(section).scrollIntoView({ behavior: "smooth", block: "start" });
+        };
         return section;
     }
 
@@ -1405,7 +1737,7 @@
         // The amount is entered by the administrator; the catalog estimate is shown only as a reference.
         const fee = order.payment?.delivery_fee || 0;
         const amount = h("input", { id: "quote-amount", name: "total_amount", type: "number", min: "0.01", step: "0.01", required: true, value: order.payment?.subtotal ?? order.total_amount ?? "" });
-        const instructions = h("textarea", { id: "quote-instructions", name: "payment_instructions", maxlength: 1000, placeholder: "The shop's approved payment instructions (GCash number, bank details, etc.)" });
+        const instructions = h("textarea", { id: "quote-instructions", name: "payment_instructions", maxlength: 1000, placeholder: "The shop's approved payment instructions (configured e-wallet number, bank details, etc.)" });
         instructions.value = order.payment_instructions || "";
         const note = h("textarea", { id: "quote-note", name: "note", maxlength: 1000, placeholder: "Optional message shown with the quotation (what it includes, lead time, …)" });
         note.value = quote?.note || "";
@@ -1447,12 +1779,12 @@
 
     function confirmPackageForm(order, reload) {
         const cod = order.payment?.payment_option === "cod";
-        const instructions = h("textarea", { id: "confirm-instructions", maxlength: 1000, placeholder: "The shop's GCash number and account name" });
+        const instructions = h("textarea", { id: "confirm-instructions", maxlength: 1000, placeholder: "The shop's configured e-wallet number and account name" });
         instructions.value = order.payment_instructions || "";
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Approve & request down payment" });
         const form = h("form", { className: "action-form" },
             h("h4", { text: order.price_basis === "standard_size" ? "Approve the standard-size order" : "Approve the package order" }),
-            h("p", { className: "field-note", text: `Fixed ${order.price_basis === "standard_size" ? "price-list" : "package"} total ${money(order.total_amount)}. The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)} through GCash; the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
+            h("p", { className: "field-note", text: `Fixed ${order.price_basis === "standard_size" ? "price-list" : "package"} total ${money(order.total_amount)}. The customer then pays the 50% down payment of ${money(order.payment?.down_payment_required)} through the shop's configured e-wallet(s); the order is confirmed when you verify it.${cod ? " This order was placed with Cash on Delivery, which is no longer offered: approving switches it to the down payment." : ""}` }),
             h("div", { className: "form-field full" }, h("label", { for: "confirm-instructions", text: "Payment instructions" }), instructions),
             h("div", { className: "dialog-actions" }, submit),
         );
@@ -1465,35 +1797,87 @@
         return form;
     }
 
+    function ocrReviewPanel(order, item) {
+        const comparison = item.comparison || { rows: [] };
+        const verification = item.verification || {};
+        const receipt = item.proof
+            ? (item.proof.mime_type.startsWith("image/")
+                ? h("a", { href: item.proof.url, target: "_blank", rel: "noopener", className: "proof-preview" }, h("img", { src: item.proof.url, alt: `Uploaded receipt ${item.proof.name}` }))
+                : h("a", { href: item.proof.url, target: "_blank", rel: "noopener", className: "button button-small", text: `📄 Open ${item.proof.name}` }))
+            : h("p", { className: "field-note", text: "No receipt attached (older submission)." });
+        const rows = (comparison.rows || []).map((row) => h("tr", { className: `ocr-row ocr-${row.state}` },
+            h("th", { scope: "row", text: row.label }),
+            h("td", { text: row.receipt_value }),
+            h("td", { text: row.system_value || "—" }),
+            h("td", { className: "ocr-state", text: { match: "Match", missing: "Missing", inconsistent: "Inconsistent", pending: "Not checked" }[row.state] || row.state })));
+        const checks = (verification.checks || []).map((check) => h("li", { className: `ocr-check ocr-${check.state}` },
+            h("strong", { text: `${check.label}: ` }), h("span", { text: check.detail })));
+        return h("div", { className: "ocr-review" },
+            h("p", { className: "notice-card", text: `Receipt reading: ${verification.status_label || item.verification_status_label || "Not available"} · ${Math.round((verification.confidence || 0) * 100)}% confidence. OCR is not proof of payment; confirm the money in the shop's account before approving.` }),
+            h("div", { className: "ocr-compare" },
+                h("section", { className: "ocr-side" }, h("h5", { text: "Uploaded receipt" }), receipt),
+                h("section", { className: "ocr-side" }, h("h5", { text: "Extracted information vs. order" }),
+                    rows.length ? h("table", { className: "ocr-table" }, h("thead", {}, h("tr", {}, h("th", { text: "Field" }), h("th", { text: "Receipt" }), h("th", { text: "System" }), h("th", { text: "Result" }))), h("tbody", {}, ...rows)) : h("p", { className: "field-note", text: "No receipt information was extracted." }))),
+            checks.length ? h("details", { className: "od-disclosure" }, h("summary", {}, h("span", { text: "Validation results" })), h("ul", { className: "ocr-checks" }, ...checks)) : null,
+            (item.admin_notes || []).length ? h("p", { className: "field-note", text: `Verification notes: ${item.admin_notes.map((note) => `${note.by}: ${note.note}`).join(" · ")}` }) : null,
+        );
+    }
+
     function verifySubmissionForm(order, item, reload) {
         const amount = h("input", { id: `verify-amount-${item.id}`, type: "number", min: "0.01", step: "0.01", max: String(order.summary.balance), required: true, value: item.amount.toFixed(2) });
         const received = h("input", { id: `verify-received-${item.id}`, type: "checkbox", required: true });
         const verify = h("button", { className: "button button-primary", type: "submit", text: "Verify payment" });
         const reject = h("button", { className: "button button-danger-strong", type: "button", text: "Reject" });
-        const proof = item.proof
-            ? (item.proof.mime_type.startsWith("image/")
-                ? h("a", { href: item.proof.url, target: "_blank", rel: "noopener", className: "proof-preview" }, h("img", { src: item.proof.url, alt: `Proof of payment ${item.proof.name}` }))
-                : h("a", { href: item.proof.url, target: "_blank", rel: "noopener", text: `📄 ${item.proof.name}` }))
-            : h("p", { className: "field-note", text: "No receipt attached (older submission); check the reference number in the shop's GCash account." });
+        const review = h("button", { className: "button button-small", type: "button", text: "Review receipt & OCR" });
+        const request = h("button", { className: "button button-small", type: "button", text: "Request clearer receipt" });
+        const note = h("button", { className: "button button-small", type: "button", text: "Add verification note" });
         const form = h("form", { className: "action-form", dataset: { focus: "verify" } },
             h("h4", { text: `Verify a customer payment${item.stage === "balance" ? " (balance)" : item.stage === "down_payment" ? " (50% down payment)" : ""}` }),
+            h("p", { className: "field-note", text: `Receipt reading: ${item.verification_status_label || "Not available"}${Number.isFinite(item.ocr?.confidence) ? ` · ${Math.round(item.ocr.confidence * 100)}% confidence` : ""}` }),
             item.stage === "down_payment" ? h("p", { className: "field-note", text: "Verifying the full down payment confirms the order automatically and notifies the customer." }) : null,
             detailList([
                 ["Amount due (set by the shop)", money(item.amount)],
                 ["Method", item.method],
                 ["Reference", item.reference],
+                ["Extracted reference", item.ocr?.fields?.reference || "Not read"],
+                ["Extracted amount", item.ocr?.fields?.amount ? money(Number(item.ocr.fields.amount)) : "Not read"],
                 ["Submitted", dateTime(item.submitted_at)],
             ]),
-            proof,
+            odDisclosure("Receipt and OCR comparison", { hint: "Side-by-side review", body: [ocrReviewPanel(order, item)] }),
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: amount.id, text: "Amount actually received (PHP)" }), amount),
                 h("label", { className: "check-field full", for: received.id }, received, " I checked the shop's account and this money was received.")),
-            h("div", { className: "dialog-actions" }, reject, verify),
+            h("div", { className: "dialog-actions" }, reject, request, note, review, verify),
         );
+        review.addEventListener("click", () => {
+            UI.openModal(h("div", { className: "customer-modal" },
+                h("header", { className: "order-modal-header" }, h("div", {}, h("h2", { className: "dialog-heading", text: "Receipt and OCR comparison" }), h("p", { className: "table-secondary", text: `Order ${order.reference} · ${item.method} · ${item.reference}` }))),
+                ocrReviewPanel(order, item)), { wide: true, size: "xl" });
+        });
+        request.addEventListener("click", async () => {
+            const answer = await UI.confirm({
+                title: "Request a clearer receipt?",
+                message: "The customer is notified and can upload a new receipt. The earlier submission stays in the audit history and no payment is recorded.",
+                confirmLabel: "Request new receipt",
+                input: { label: "What should the customer show clearly?", required: false, placeholder: "e.g. the reference number and recipient name" },
+            });
+            if (!answer) return;
+            await submitAction(request, order, `payment-submissions/${encodeURIComponent(item.id)}/request-receipt`, { note: answer.value || "" }, reload, "The customer was asked for a clearer receipt.");
+        });
+        note.addEventListener("click", async () => {
+            const answer = await UI.confirm({
+                title: "Add a verification note?",
+                message: "The note is kept with the submission's audit history and shown to the customer.",
+                confirmLabel: "Add note",
+                input: { label: "Verification note", required: true, placeholder: "e.g. Reference matched the shop's account after callback" },
+            });
+            if (!answer) return;
+            await submitAction(note, order, `payment-submissions/${encodeURIComponent(item.id)}/notes`, { note: answer.value }, reload, "Verification note added.");
+        });
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
-            const answer = await UI.confirm({ title: "Verify this payment?", message: "It is recorded once in the payment history and cannot be edited.", confirmLabel: "Verify payment", details: [["Amount", money(Number(amount.value))], ["Reference", item.reference]] });
+            const answer = await UI.confirm({ title: "Verify this payment?", message: "It is recorded once in the payment history and cannot be edited. Only verify after confirming the money in the shop's account.", confirmLabel: "Verify payment", details: [["Amount", money(Number(amount.value))], ["Reference", item.reference]] });
             if (!answer) return;
             await submitAction(verify, order, `payment-submissions/${encodeURIComponent(item.id)}/verify`, { amount: Number(amount.value), received: true }, reload, "Payment verified and recorded.");
         });
@@ -1503,7 +1887,7 @@
                 message: "The customer sees the reason and can submit the payment again.",
                 confirmLabel: "Reject submission",
                 tone: "danger",
-                input: { label: "Reason (shown to the customer)", required: true, placeholder: "e.g. Reference number not found in our GCash account" },
+                input: { label: "Reason (shown to the customer)", required: true, placeholder: "e.g. Reference number not found in our e-wallet account" },
             });
             if (!answer) return;
             await submitAction(reject, order, `payment-submissions/${encodeURIComponent(item.id)}/reject`, { note: answer.value }, reload, "Payment submission rejected.");
@@ -1515,7 +1899,7 @@
 
     function paymentForm(order, reload) {
         const summary = order.summary;
-        const amount = h("input", { id: "payment-amount", type: "number", min: "0.01", step: "0.01", max: String(summary.balance), required: true });
+        const amount = h("input", { id: "payment-amount", type: "number", min: "0.01", step: "0.01", max: summary.balance === null || summary.balance === undefined ? undefined : String(summary.balance), required: true });
         const cod = order.payment?.payment_option === "cod";
         const methods = order.payment_methods || ["GCash", "Maya", "Bank transfer", "Cash", "Cash on Delivery", "Other"];
         const method = selectInput(methods.map((value) => [value, value]), cod ? "Cash on Delivery" : "GCash", () => updateReferenceField());
@@ -1529,7 +1913,7 @@
         const down = cod ? 0 : order.total_amount * 0.5;
         const fill = (value) => h("button", { className: "button button-small", type: "button", text: value === summary.balance ? `Full balance ${money(value)}` : `50% down ${money(value)}`, onclick: () => { amount.value = value.toFixed(2); } });
 
-        /** GCash, Maya, bank transfers, and other providers need their reference; cash may use an official receipt. */
+        /** E-wallet and bank payments need their reference; cash may use an official receipt. */
         function updateReferenceField() {
             const cash = CASH_METHODS.includes(method.value);
             reference.required = !cash;
@@ -1557,8 +1941,25 @@
             event.preventDefault();
             if (!form.reportValidity()) return;
             const value = Number(amount.value);
-            const remaining = Math.round((summary.balance - value) * 100) / 100;
+            const balance = Number(summary.balance);
             const cash = CASH_METHODS.includes(method.value);
+            // Check in the browser too: an over-balance payment must never reach the confirm step.
+            if (!Number.isFinite(value) || value <= 0) {
+                toast("Enter a payment amount greater than zero.", "error");
+                amount.focus();
+                return;
+            }
+            if (!Number.isFinite(balance) || value > balance + 0.005) {
+                toast(`The amount cannot exceed the remaining balance of ${money(summary.balance)}.`, "error");
+                amount.focus();
+                return;
+            }
+            if (!cash && !reference.value.trim()) {
+                toast(`Enter the ${method.value} reference number before recording this payment.`, "error");
+                reference.focus();
+                return;
+            }
+            const remaining = Math.round((balance - value) * 100) / 100;
             const answer = await UI.confirm({
                 title: "Record this payment?",
                 message: "Payments cannot be edited after they are saved.",
@@ -1696,17 +2097,19 @@
 
         const table = new UI.DataTable(tableHost, {
             columns: [
-                { label: "Customer ID", render: (row) => h("span", { className: "mono", text: row.display_id }) },
-                { label: "Customer name", sortKey: "name", render: (row) => cellPair(row.name, row.last_order_date ? `Last order ${date(row.last_order_date)}` : "No orders yet") },
-                { label: "Email address", sortKey: "email", render: (row) => row.email },
-                { label: "Contact number", render: (row) => row.phone || "—" },
-                { label: "Registered", sortKey: "registered", type: "date", render: (row) => date(row.registered_date) },
-                { label: "Total orders", sortKey: "orders", align: "right", render: (row) => cellPair(number(row.total_orders), `${number(row.completed_orders)} completed · ${number(row.pending_orders)} open`) },
-                { label: "Total transactions", sortKey: "transactions", align: "right", render: (row) => h("strong", { text: money(row.total_transaction_amount) }) },
-                { label: "Paid", sortKey: "paid", align: "right", render: (row) => money(row.total_paid) },
-                { label: "Balance", sortKey: "balance", align: "right", render: (row) => money(row.outstanding_balance) },
-                { label: "Amount spent", sortKey: "spent", align: "right", render: (row) => money(row.total_spent) },
-                { label: "Payment status", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+                { label: "Customer name", sortKey: "name", render: (row) => h("span", { title: `Registered ${date(row.registered_date)}` },
+                    cellPair(row.name, `${row.display_id}${row.last_order_date ? ` · Last order ${date(row.last_order_date)}` : " · No orders yet"}`)) },
+                { label: "Contact", render: (row) => cellPair(row.phone || "—", row.email) },
+                { label: "Total orders", sortKey: "orders", align: "right", render: (row) => number(row.total_orders) },
+                { label: "Completed orders", sortKey: "completed", align: "right", render: (row) => number(row.completed_orders) },
+                { label: "Outstanding balance", sortKey: "balance", align: "right", render: (row) => h("span", {
+                    title: `Transactions ${money(row.total_transaction_amount)} · Paid ${money(row.total_paid)} · Spent ${money(row.total_spent)}`,
+                    text: money(row.outstanding_balance),
+                }) },
+                { label: "Account status", sortKey: "payment_status", render: (row) => badge(row.payment_status) },
+                { label: "Actions", render: (row) => h("span", { className: "row-actions" },
+                    h("button", { className: "button button-small", type: "button", text: "View", title: `Open ${row.name}'s profile`, onclick: () => openCustomer(row.id) }),
+                    h("button", { className: "button button-small", type: "button", text: "Print report", title: `Print ${row.name}'s report`, onclick: (event) => printCustomer(row.id, event.currentTarget) })) },
             ],
             defaultSort: { key: "registered", dir: "desc" },
             initialQuery: { ...f },
@@ -1747,7 +2150,7 @@
                     renderCustomers();
                 } }),
             ),
-            panel(["Customers ", countLabel], "Total transactions = confirmed totals of orders that are not cancelled. Amount spent counts only completed and fully paid orders. Select a row for the full transaction history.", h("div", {}, viewNote, summaryLine, tableHost),
+            panel(["Customers ", countLabel], "Priority columns with direct View and Print report actions; select a row for the full transaction history. Balance tooltips show transactions, paid, and spent figures.", h("div", {}, viewNote, summaryLine, tableHost),
                 printButton,
                 UI.exportButtons("customers", () => ({ ...f, sort: table.sort.key, dir: table.sort.dir }))),
         );
@@ -2044,11 +2447,24 @@
         const cards = h("section", { className: "stats-grid stats-grid-6", "aria-label": "Payment summary" }, loadingBlock());
         const tableHost = h("div");
         const countLabel = h("span", { className: "table-secondary" });
+        const awaiting = h("p", { className: "notice-card notice-warning payment-awaiting", role: "status" }, loadingBlock("Checking pending submissions…"));
         const methodSelect = selectInput([["", "All methods"]], f.method, (value) => apply({ method: value }));
         const serviceSelect = selectInput(serviceOptions(), f.service, (value) => apply({ service: value }));
         let balances = [];
+        /** Pending customer submissions get a direct Verify action; every other row opens its order. */
+        const verificationAction = (row) => {
+            const pending = row.entry_type === "submission" && row.verification_status === "Pending Verification" && Boolean(row.submission_id);
+            return h("button", {
+                className: `button button-small${pending ? " button-primary" : ""}`,
+                type: "button",
+                text: pending ? "Verify" : "Open",
+                title: pending ? `Verify the payment submission for ${row.reference}` : `Open order ${row.reference}`,
+                onclick: () => openOrder(row.reference, { focus: pending ? "verify" : "payments" }),
+            });
+        };
         const table = new UI.DataTable(tableHost, {
             columns: [
+                { label: "Action", render: verificationAction },
                 { label: "Date", sortKey: "received", type: "date", render: (row) => cellPair(dateTime(row.received_at), row.entry_type === "submission" ? "Submitted by customer" : "Received") },
                 { label: "Order ID", sortKey: "reference", className: "ref-cell", render: (row) => cellPair(row.reference, row.entry_type === "payment" ? `Payment #${row.payment_number}` : "Submission") },
                 { label: "Customer", sortKey: "customer", render: (row) => cellPair(row.customer_name, row.customer_email) },
@@ -2056,6 +2472,17 @@
                 { label: "Reference no.", sortKey: "payment_reference", render: (row) => row.payment_reference
                     ? cellPair(row.payment_reference, row.reference_type_label)
                     : h("span", { className: "cell-pair" }, h("span", { className: "table-primary missing-reference", text: "No reference" }), h("span", { className: "table-secondary", text: "Open to add it" })) },
+                { label: "Receipt", render: (row) => row.receipt_url
+                    ? h("a", { href: row.receipt_url, target: "_blank", rel: "noopener", className: "table-link", text: "View receipt" })
+                    : h("span", { className: "table-secondary", text: "—" }) },
+                { label: "Extracted reference", sortKey: "ocr_reference", render: (row) => row.ocr_reference
+                    ? h("span", { className: "table-primary", text: row.ocr_reference }) : h("span", { className: "table-secondary", text: "Not read" }) },
+                { label: "Extracted amount", sortKey: "ocr_amount", align: "right", render: (row) => h("span", { className: "cell-pair" },
+                    h("strong", { text: row.ocr_amount === null || row.ocr_amount === undefined ? "Not read" : money(row.ocr_amount) }),
+                    h("span", { className: "table-secondary", text: `Due ${money(row.required_amount)}` })) },
+                { label: "OCR confidence", sortKey: "ocr_confidence", align: "right", render: (row) => Number.isFinite(row.ocr_confidence)
+                    ? h("span", { className: `ocr-confidence${row.ocr_confidence < 0.5 ? " low" : ""}`, text: `${Math.round(row.ocr_confidence * 100)}%` })
+                    : h("span", { className: "table-secondary", text: "—" }) },
                 { label: "Verification", sortKey: "verification", render: (row) => h("span", { className: "cell-pair", title: row.verification_detail },
                     badge(row.verification_status),
                     h("span", { className: "table-secondary", text: {
@@ -2069,7 +2496,8 @@
                 { label: "Order balance", sortKey: "payment_status", render: (row) => h("span", { className: "cell-pair" }, badge(row.order_payment_status),
                     h("span", { className: "table-secondary", title: row.order_total === null ? "" : `Paid ${money(row.order_paid)} of ${money(row.order_total)}`, text: row.order_total === null ? "Not quoted" : `Balance ${money(row.order_balance)}` })) },
             ],
-            defaultSort: { key: "received", dir: "desc" },
+            // "Pending Verification" sorts before the other statuses, so submissions needing review come first.
+            defaultSort: { key: "verification", dir: "asc" },
             initialQuery: { ...f },
             fetch: (params) => api(`/api/admin/payments${query(params)}`),
             onLoad: (result) => {
@@ -2084,8 +2512,13 @@
                     statCard({ label: "Fully paid orders", value: number(s.fully_paid_orders), foot: "Verified payments cover the confirmed total", icon: "✓", onClick: () => { filters.orders = { ...filters.orders, status: "", payment_status: "Fully Paid" }; navigate("orders"); } }),
                     statCard({ label: "Payments missing a reference", value: number(s.missing_reference), foot: s.missing_reference ? "Older records · open each one to add its reference" : "Every payment has a reference", icon: "✕", tone: s.missing_reference ? "highlight" : "", onClick: () => setVerification("missing") }),
                 );
+                awaiting.replaceChildren(
+                    h("strong", { text: `${number(s.payments_to_verify.length)} awaiting verification` }),
+                    s.payments_to_verify.length ? ` · ${money(pendingAmount)} submitted by customers. ` : " · Nothing waiting. ",
+                    h("button", { className: "table-link", type: "button", text: s.payments_to_verify.length ? "Review pending →" : "View all payments →", onclick: () => setVerification(s.payments_to_verify.length ? "pending" : "") }),
+                );
                 const extra = s.filtered_entries - s.filtered_count;
-                countLabel.textContent = `${number(s.filtered_count)} verified payment${s.filtered_count === 1 ? "" : "s"} · ${money(s.filtered_amount)}${extra ? ` · ${number(extra)} submission${extra === 1 ? "" : "s"} not counted` : ""}`;
+                countLabel.textContent = `${number(s.filtered_count)} verified payment${s.filtered_count === 1 ? "" : "s"} · ${money(s.filtered_amount)}${extra ? ` · ${number(extra)} submission${extra === 1 ? "" : "s"} not counted` : ""} · ${number(s.payments_to_verify.length)} awaiting verification`;
                 if (methodSelect.options.length <= 1 && result.methods.length) {
                     result.methods.forEach((method) => methodSelect.add(new Option(method, method)));
                     methodSelect.value = f.method;
@@ -2114,6 +2547,7 @@
         body.replaceChildren(
             h("div", { className: "page-actions-row" }, recordButton),
             cards,
+            awaiting,
             h("div", { className: "filter-bar" },
                 searchInput("Search order ID, customer, payment reference…", f.search, (value) => apply({ search: value })),
                 field("Verification", verificationSelect),
@@ -2163,23 +2597,75 @@
         const body = viewBody();
         if (!body) return;
         const requested = new URLSearchParams(window.location.search).get("tab");
-        if (requested && ["summary", "completed", "services"].includes(requested)) filters.reports.tab = requested;
-        const summaryHost = h("div");
-        const completedHost = h("div");
-        const servicesHost = h("div");
+        const reportTabs = ["summary", "payments", "completed", "services"];
+        if (requested && reportTabs.includes(requested)) filters.reports.tab = requested;
+        const hosts = {
+            summary: h("div"),
+            payments: h("div"),
+            completed: h("div"),
+            services: h("div"),
+        };
         const rendered = new Set();
+        // One summary request feeds the executive and payments tabs; both update when its filters change.
+        const summaryState = {
+            data: null,
+            error: null,
+            loading: false,
+            requestId: 0,
+            listeners: new Set(),
+            subscribe(listener) {
+                this.listeners.add(listener);
+                if (this.data) listener(this.data, null, false);
+                else if (this.error) listener(null, this.error, false);
+                return () => this.listeners.delete(listener);
+            },
+            notify(data, error, loading) {
+                this.listeners.forEach((listener) => listener(data, error, loading));
+            },
+            async load() {
+                const id = ++this.requestId;
+                this.loading = true;
+                this.notify(null, null, true);
+                let data;
+                try {
+                    data = await api(`/api/admin/reports/summary${query({ ...filters.reports.summary })}`);
+                } catch (error) {
+                    if (id !== this.requestId) return;
+                    this.loading = false;
+                    this.data = null;
+                    this.error = error;
+                    this.notify(null, error, false);
+                    return;
+                }
+                if (id !== this.requestId) return;
+                this.loading = false;
+                this.data = data;
+                this.error = null;
+                rememberServices(data.services);
+                this.notify(data, null, false);
+            },
+        };
+        const loadSummaryIfNeeded = () => {
+            if (!summaryState.data && !summaryState.error && !summaryState.loading) summaryState.load();
+        };
         const show = (key) => {
             filters.reports.tab = key;
-            if (rendered.has(key)) return;
-            rendered.add(key);
-            ({ summary: renderSummaryTab, completed: renderCompletedTab, services: renderServiceTab })[key](
-                { summary: summaryHost, completed: completedHost, services: servicesHost }[key],
-            );
+            if (!rendered.has(key)) {
+                rendered.add(key);
+                ({
+                    summary: renderSummaryTab,
+                    payments: renderPaymentReportTab,
+                    completed: renderCompletedTab,
+                    services: renderServiceTab,
+                })[key](hosts[key], summaryState);
+            }
+            if (key === "summary" || key === "payments") loadSummaryIfNeeded();
         };
         body.replaceChildren(tabSet([
-            ["summary", "Business summary & revenue", summaryHost],
-            ["completed", "Completed transactions", completedHost],
-            ["services", "Service reports", servicesHost],
+            ["summary", "Executive summary", hosts.summary],
+            ["payments", "Payments", hosts.payments],
+            ["completed", "Completed transactions", hosts.completed],
+            ["services", "Service reports", hosts.services],
         ], filters.reports.tab, show));
         refreshActiveView = () => {
             rendered.clear();
@@ -2187,13 +2673,34 @@
         };
     }
 
-    function renderSummaryTab(host) {
+    /** Collapsed section that builds its tables/charts only the first time it is opened. */
+    function lazyDetails(title, note, build) {
+        const body = h("div", { className: "report-details-body" });
+        const details = h("details", { className: "report-details" },
+            h("summary", {}, h("strong", { text: title }), h("span", { className: "table-secondary", text: ` · ${note}` })),
+            body,
+        );
+        let built = false;
+        details.addEventListener("toggle", () => {
+            if (!details.open || built) return;
+            built = true;
+            body.replaceChildren(loadingBlock("Preparing tables…"));
+            try {
+                body.replaceChildren(...build());
+            } catch (error) {
+                body.replaceChildren(errorBlock(error.message));
+            }
+        });
+        return details;
+    }
+
+    function renderSummaryTab(host, state) {
         const f = filters.reports.summary;
         const content = h("div", {}, loadingBlock("Calculating…"));
-        const fromInput = dateInput(f.date_from, (value) => { f.date_from = value; if (f.date_to) load(); });
-        const toInput = dateInput(f.date_to, (value) => { f.date_to = value; if (f.date_from) load(); });
+        const fromInput = dateInput(f.date_from, (value) => { f.date_from = value; if (f.date_to) state.load(); });
+        const toInput = dateInput(f.date_to, (value) => { f.date_to = value; if (f.date_from) state.load(); });
         const customFields = h("div", { className: "filter-inline" }, field("From", fromInput), field("To", toInput));
-        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => { f.service = value; load(); });
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => { f.service = value; state.load(); });
         const presetSelect = selectInput([
             ["all", "All time"], ["today", "Today"], ["week", "This week"], ["month", "This month"], ["year", "This year"], ["custom", "Custom date range"],
         ], f.preset, (value) => {
@@ -2201,9 +2708,9 @@
             f.group_by = "";
             groupSelect.value = "";
             customFields.hidden = value !== "custom";
-            if (value !== "custom" || (f.date_from && f.date_to)) load();
+            if (value !== "custom" || (f.date_from && f.date_to)) state.load();
         });
-        const groupSelect = selectInput([["", "Automatic"], ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["year", "Yearly"]], f.group_by, (value) => { f.group_by = value; load(); });
+        const groupSelect = selectInput([["", "Automatic"], ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["year", "Yearly"]], f.group_by, (value) => { f.group_by = value; state.load(); });
         customFields.hidden = f.preset !== "custom";
         const params = () => ({ ...f });
         const shortcut = (label, preset, group) => {
@@ -2218,7 +2725,7 @@
                     groupSelect.value = group;
                     customFields.hidden = true;
                     shortcuts.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
-                    load();
+                    state.load();
                 },
             });
             return button;
@@ -2230,7 +2737,7 @@
             shortcut("Year by month", "year", "month"));
         host.replaceChildren(
             shortcuts,
-            h("div", { className: "filter-bar report-filters" },
+            h("div", { className: "filter-bar report-filters", role: "search", "aria-label": "Report period and service" },
                 field("Report period", presetSelect), customFields,
                 field("Revenue grouping", groupSelect),
                 field("Service", serviceSelect),
@@ -2243,48 +2750,167 @@
         );
         host.querySelectorAll(".export-buttons button").forEach((button) => { button.textContent = button.textContent.trim(); });
 
-        let requestId = 0;
-        async function load() {
-            const id = ++requestId;
-            content.classList.add("is-refreshing");
-            if (!content.childElementCount) content.append(loadingBlock("Calculating…"));
-            let data;
-            try {
-                data = await api(`/api/admin/reports/summary${query(params())}`);
-            } catch (error) {
-                if (id === requestId) content.replaceChildren(errorBlock(error.message, load));
+        state.subscribe((data, error, loading) => {
+            content.classList.toggle("is-refreshing", Boolean(loading));
+            if (loading) return;
+            if (error) {
+                content.replaceChildren(errorBlock(error.message, () => state.load()));
                 return;
-            } finally {
-                if (id === requestId) content.classList.remove("is-refreshing");
             }
-            if (id !== requestId) return;
-            rememberServices(data.services);
+            if (!data) return;
             if (serviceSelect.options.length <= 1) {
                 serviceSelect.replaceChildren(...serviceOptions().map(([value, text]) => new Option(text, value)));
                 serviceSelect.value = f.service;
             }
             groupSelect.value = f.group_by;
             content.replaceChildren(...summaryContent(data));
-        }
-        load();
+        });
     }
 
     function summaryContent(data) {
         const t = data.totals;
+        const p = data.payments;
         const group = data.period.group_by;
         const groupName = { day: "Daily", week: "Weekly", month: "Monthly", year: "Yearly" }[group];
-        const cards = h("section", { className: "stats-grid stats-grid-8" },
-            statCard({ label: "Total customers", value: number(t.total_customers), foot: `${number(t.new_customers)} registered in this period`, icon: "👥" }),
-            statCard({ label: "Total orders", value: number(t.total_orders), foot: "Requested in this period", icon: "▤" }),
-            statCard({ label: "Completed orders", value: number(t.completed_orders), foot: "Completed in this period", icon: "✓" }),
-            statCard({ label: "Pending orders", value: number(t.pending_orders), foot: `${number(t.processing_orders)} more in progress`, icon: "◷" }),
-            statCard({ label: "Cancelled orders", value: number(t.cancelled_orders), foot: "Cancelled or rejected", icon: "✕" }),
-            statCard({ label: "Fully paid orders", value: number(t.fully_paid_orders), foot: "Requested in this period", icon: "₱" }),
-            statCard({ label: "Total sales", value: money(t.confirmed_revenue), foot: "Confirmed revenue: completed and fully paid", icon: "₱", tone: "highlight" }),
-            statCard({ label: "Avg. completion time", value: t.average_completion_days === null ? "—" : days(t.average_completion_days), foot: "Calendar days, request to completion", icon: "⏱" }),
+        const executiveCards = h("section", { className: "stats-grid stats-grid-4 report-kpis", "aria-label": "Executive figures" },
+            statCard({ label: "Confirmed sales", value: money(t.confirmed_revenue), foot: "Completed and fully paid orders", icon: "₱", tone: "highlight" }),
+            statCard({ label: "Orders requested", value: number(t.total_orders), foot: `${number(t.new_customers)} new customers in this period`, icon: "▤" }),
+            statCard({ label: "Completed orders", value: number(t.completed_orders), foot: `${number(t.pending_orders)} pending · ${number(t.processing_orders)} in progress`, icon: "✓" }),
+            statCard({ label: "Outstanding balance", value: money(p.outstanding_balance), foot: `${number(p.awaiting_down_payment)} awaiting down payment`, icon: "◷" }),
         );
+        const trendChart = h("div", { className: "chart-box" });
+        UI.columnChart(trendChart, data.trend.map((bucket) => ({
+            label: bucket.label, short: shortBucket(bucket.key, group), value: bucket.revenue, completed: bucket.completed_orders,
+        })), {
+            format: money, axisFormat: UI.compactMoney, emptyMessage: "No confirmed revenue in this period.",
+            detail: (point) => `${point.completed} completed order${point.completed === 1 ? "" : "s"}`,
+        });
+
+        const details = lazyDetails("Detailed revenue, service & period figures", "Expand for the full tables and charts", () => {
+            const allTotals = h("section", { className: "stats-grid stats-grid-8", "aria-label": "All summary totals" },
+                statCard({ label: "Total customers", value: number(t.total_customers), foot: `${number(t.new_customers)} registered in this period`, icon: "👥" }),
+                statCard({ label: "Total orders", value: number(t.total_orders), foot: "Requested in this period", icon: "▤" }),
+                statCard({ label: "Completed orders", value: number(t.completed_orders), foot: "Completed in this period", icon: "✓" }),
+                statCard({ label: "Pending orders", value: number(t.pending_orders), foot: `${number(t.processing_orders)} more in progress`, icon: "◷" }),
+                statCard({ label: "Cancelled orders", value: number(t.cancelled_orders), foot: "Cancelled or rejected", icon: "✕" }),
+                statCard({ label: "Fully paid orders", value: number(t.fully_paid_orders), foot: "Requested in this period", icon: "₱" }),
+                statCard({ label: "Total sales", value: money(t.confirmed_revenue), foot: "Confirmed revenue: completed and fully paid", icon: "₱", tone: "highlight" }),
+                statCard({ label: "Avg. completion time", value: t.average_completion_days === null ? "—" : days(t.average_completion_days), foot: "Calendar days, request to completion", icon: "⏱" }),
+            );
+            const revenueSummaryHost = h("div");
+            new UI.DataTable(revenueSummaryHost, {
+                columns: [
+                    { label: "Service name", sortKey: "service", render: (row) => h("strong", { text: row.service }) },
+                    { label: "Total completed transactions", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
+                    { label: "Total revenue", sortKey: "revenue", align: "right", render: (row) => h("strong", { text: money(row.revenue) }) },
+                    { label: "Date range", render: () => data.period.label },
+                ],
+                rows: () => [...data.by_service],
+                defaultSort: { key: "revenue", dir: "desc" },
+                pageSize: 25,
+                emptyMessage: "No services in the catalog.",
+            }).load();
+            const revenueChart = h("div", { className: "chart-box" });
+            UI.barChart(revenueChart, data.by_service.map((item) => ({ label: item.service, value: item.revenue, share: item.revenue_share })), {
+                format: money, emptyMessage: "No confirmed revenue in this period.", detail: (item) => `${item.share}% of revenue`,
+            });
+            const completedChart = h("div", { className: "chart-box" });
+            UI.barChart(completedChart, data.by_service.map((item) => ({ label: item.service, value: item.completed_orders })), { emptyMessage: "No orders were completed in this period." });
+            const trendHost = h("div");
+            new UI.DataTable(trendHost, {
+                columns: [
+                    { label: "Period", sortKey: "key", render: (row) => row.label },
+                    { label: "Completed orders", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
+                    { label: "Completed & fully paid", sortKey: "fully_paid_completed", align: "right", render: (row) => number(row.fully_paid_completed) },
+                    { label: "Confirmed revenue", sortKey: "revenue", align: "right", render: (row) => money(row.revenue) },
+                ],
+                rows: () => [...data.trend],
+                defaultSort: { key: "key", dir: "desc" },
+                pageSize: 10,
+                emptyMessage: "No periods to show.",
+            }).load();
+            const comparisonHost = h("div");
+            new UI.DataTable(comparisonHost, {
+                columns: [
+                    { label: "Service", sortKey: "service", render: (row) => h("strong", { text: row.service }) },
+                    { label: "Orders requested", sortKey: "total_orders", align: "right", render: (row) => number(row.total_orders) },
+                    { label: "Completed", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
+                    { label: "Completed & fully paid", sortKey: "fully_paid_completed", align: "right", render: (row) => number(row.fully_paid_completed) },
+                    { label: "Confirmed revenue", sortKey: "revenue", align: "right", render: (row) => h("strong", { text: money(row.revenue) }) },
+                    { label: "Share", sortKey: "revenue_share", align: "right", render: (row) => `${row.revenue_share.toFixed(1)}%` },
+                    { label: "Avg. completion", sortKey: "average_completion_days", align: "right", render: (row) => days(row.average_completion_days) },
+                ],
+                rows: () => [...data.by_service],
+                defaultSort: { key: "revenue", dir: "desc" },
+                pageSize: 25,
+                emptyMessage: "No services in the catalog.",
+                onRowClick: (row) => {
+                    filters.reports.service.service = row.service_id;
+                    filters.reports.tab = "services";
+                    renderReports();
+                },
+                rowTitle: (row) => `Open the ${row.service} service report`,
+            }).load();
+            const transactionsHost = h("div");
+            new UI.DataTable(transactionsHost, {
+                columns: [
+                    { label: "Completed", sortKey: "completed_at", type: "date", render: (row) => date(row.completion_date) },
+                    { label: "Transaction ID", sortKey: "reference", className: "ref-cell", render: (row) => row.reference },
+                    { label: "Customer", sortKey: "customer_name", render: (row) => row.customer_name },
+                    { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
+                    { label: "Revenue", sortKey: "confirmed_revenue", align: "right", render: (row) => money(row.confirmed_revenue) },
+                ],
+                rows: () => [...data.revenue_transactions],
+                defaultSort: { key: "completed_at", dir: "desc" },
+                pageSize: 10,
+                emptyMessage: "No completed and fully paid transactions in this period.",
+                onRowClick: (row) => openOrder(row.reference),
+            }).load();
+            return [
+                allTotals,
+                panel("Revenue summary", `Completed transactions and revenue per service · ${data.period.label}`, revenueSummaryHost),
+                h("div", { className: "dashboard-grid" },
+                    panel("Revenue per service", "Confirmed revenue in this period", revenueChart),
+                    panel("Completed orders per service", "Orders completed in this period", completedChart),
+                    panel(`Revenue by period (${groupName.toLowerCase()})`, "Table view of the revenue trend", trendHost),
+                ),
+                panel("Service performance comparison", "Select a service to open its report", comparisonHost),
+                panel("Revenue transactions", "Completed and fully paid orders in this period · select a row for details", transactionsHost),
+            ];
+        });
+
+        return [
+            h("p", { className: "report-period-note" }, h("strong", { text: data.period.label }),
+                data.service ? ` · ${data.service.label}` : " · All services",
+                " · Orders are counted by request date; completed orders and revenue by completion date. Revenue includes only completed and fully paid orders, each counted once."),
+            executiveCards,
+            panel(`Revenue trend (${groupName.toLowerCase()})`, data.period.label, trendChart),
+            details,
+        ];
+    }
+
+    /** Payments report reads the same summary response as the executive tab, so its figures cannot drift. */
+    function renderPaymentReportTab(host, state) {
+        const content = h("div", { className: "payment-report" }, loadingBlock("Calculating…"));
+        host.replaceChildren(
+            h("p", { className: "report-period-note", text: "Payments are cash flow by payment date; confirmed sales on the executive tab count only completed and fully paid orders. Change the reporting period and service there." }),
+            content,
+        );
+        state.subscribe((data, error, loading) => {
+            content.classList.toggle("is-refreshing", Boolean(loading));
+            if (loading) return;
+            if (error) {
+                content.replaceChildren(errorBlock(error.message, () => state.load()));
+                return;
+            }
+            if (!data) return;
+            content.replaceChildren(...paymentReportContent(data));
+        });
+    }
+
+    function paymentReportContent(data) {
         const p = data.payments;
-        const paymentCards = h("section", { className: "stats-grid", "aria-label": "Payment summary" },
+        const cards = h("section", { className: "stats-grid stats-grid-4", "aria-label": "Payment figures" },
             statCard({ label: "Payments received", value: money(p.received_total), foot: `${number(p.payment_count)} payment${p.payment_count === 1 ? "" : "s"} received in this period`, icon: "₱" }),
             statCard({ label: "Down payments (50%)", value: money(p.down_payments), foot: `Balance payments ${money(p.balance_payments)}`, icon: "½" }),
             statCard({ label: "Cash on Delivery collected", value: money(p.cod_collections), foot: `${number(p.orders_cod)} COD · ${number(p.orders_down_payment)} down-payment orders requested`, icon: "⛟" }),
@@ -2302,99 +2928,13 @@
             pageSize: 10,
             emptyMessage: "No payments were received in this period.",
         }).load();
-        const revenueSummaryHost = h("div");
-        new UI.DataTable(revenueSummaryHost, {
-            columns: [
-                { label: "Service name", sortKey: "service", render: (row) => h("strong", { text: row.service }) },
-                { label: "Total completed transactions", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
-                { label: "Total revenue", sortKey: "revenue", align: "right", render: (row) => h("strong", { text: money(row.revenue) }) },
-                { label: "Date range", render: () => data.period.label },
-            ],
-            rows: () => [...data.by_service],
-            defaultSort: { key: "revenue", dir: "desc" },
-            pageSize: 25,
-            emptyMessage: "No services in the catalog.",
-        }).load();
-        const trendChart = h("div", { className: "chart-box" });
-        UI.columnChart(trendChart, data.trend.map((bucket) => ({
-            label: bucket.label, short: shortBucket(bucket.key, group), value: bucket.revenue, completed: bucket.completed_orders,
-        })), {
-            format: money, axisFormat: UI.compactMoney, emptyMessage: "No confirmed revenue in this period.",
-            detail: (point) => `${point.completed} completed order${point.completed === 1 ? "" : "s"}`,
-        });
-        const revenueChart = h("div", { className: "chart-box" });
-        UI.barChart(revenueChart, data.by_service.map((item) => ({ label: item.service, value: item.revenue, share: item.revenue_share })), {
-            format: money, emptyMessage: "No confirmed revenue in this period.", detail: (item) => `${item.share}% of revenue`,
-        });
-        const completedChart = h("div", { className: "chart-box" });
-        UI.barChart(completedChart, data.by_service.map((item) => ({ label: item.service, value: item.completed_orders })), { emptyMessage: "No orders were completed in this period." });
-
-        const comparisonHost = h("div");
-        new UI.DataTable(comparisonHost, {
-            columns: [
-                { label: "Service", sortKey: "service", render: (row) => h("strong", { text: row.service }) },
-                { label: "Orders requested", sortKey: "total_orders", align: "right", render: (row) => number(row.total_orders) },
-                { label: "Completed", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
-                { label: "Completed & fully paid", sortKey: "fully_paid_completed", align: "right", render: (row) => number(row.fully_paid_completed) },
-                { label: "Confirmed revenue", sortKey: "revenue", align: "right", render: (row) => h("strong", { text: money(row.revenue) }) },
-                { label: "Share", sortKey: "revenue_share", align: "right", render: (row) => `${row.revenue_share.toFixed(1)}%` },
-                { label: "Avg. completion", sortKey: "average_completion_days", align: "right", render: (row) => days(row.average_completion_days) },
-            ],
-            rows: () => [...data.by_service],
-            defaultSort: { key: "revenue", dir: "desc" },
-            pageSize: 25,
-            emptyMessage: "No services in the catalog.",
-            onRowClick: (row) => {
-                filters.reports.service.service = row.service_id;
-                filters.reports.tab = "services";
-                renderReports();
-            },
-            rowTitle: (row) => `Open the ${row.service} service report`,
-        }).load();
-        const trendHost = h("div");
-        new UI.DataTable(trendHost, {
-            columns: [
-                { label: "Period", sortKey: "key", render: (row) => row.label },
-                { label: "Completed orders", sortKey: "completed_orders", align: "right", render: (row) => number(row.completed_orders) },
-                { label: "Completed & fully paid", sortKey: "fully_paid_completed", align: "right", render: (row) => number(row.fully_paid_completed) },
-                { label: "Confirmed revenue", sortKey: "revenue", align: "right", render: (row) => money(row.revenue) },
-            ],
-            rows: () => [...data.trend],
-            defaultSort: { key: "key", dir: "desc" },
-            pageSize: 10,
-            emptyMessage: "No periods to show.",
-        }).load();
-        const transactionsHost = h("div");
-        new UI.DataTable(transactionsHost, {
-            columns: [
-                { label: "Completed", sortKey: "completed_at", type: "date", render: (row) => date(row.completion_date) },
-                { label: "Transaction ID", sortKey: "reference", className: "ref-cell", render: (row) => row.reference },
-                { label: "Customer", sortKey: "customer_name", render: (row) => row.customer_name },
-                { label: "Service / product", sortKey: "service", render: (row) => cellPair(row.product, row.service) },
-                { label: "Revenue", sortKey: "confirmed_revenue", align: "right", render: (row) => money(row.confirmed_revenue) },
-            ],
-            rows: () => [...data.revenue_transactions],
-            defaultSort: { key: "completed_at", dir: "desc" },
-            pageSize: 10,
-            emptyMessage: "No completed and fully paid transactions in this period.",
-            onRowClick: (row) => openOrder(row.reference),
-        }).load();
-
         return [
             h("p", { className: "report-period-note" }, h("strong", { text: data.period.label }),
                 data.service ? ` · ${data.service.label}` : " · All services",
-                " · Orders are counted by request date; completed orders and revenue by completion date. Revenue includes only completed and fully paid orders, each counted once."),
+                " · Verified collections minus completed refunds", ` ${money(p.net_collections)}`, ` · Refunds completed ${number(p.refund_count)} (${money(p.refunds_completed)})`),
             cards,
-            panel("Revenue summary", `Completed transactions and revenue per service · ${data.period.label}`, revenueSummaryHost),
-            panel("Payment summary", "Money received in this period by payment date. Payments are cash flow; sales count only completed and fully paid orders.", h("div", {}, paymentCards, methodHost)),
-            h("div", { className: "dashboard-grid" },
-                panel(`Revenue trend (${groupName.toLowerCase()})`, data.period.label, trendChart),
-                panel("Revenue per service", "Confirmed revenue in this period", revenueChart),
-                panel("Completed orders per service", "Orders completed in this period", completedChart),
-                panel(`Revenue by period (${groupName.toLowerCase()})`, "Table view of the revenue trend", trendHost),
-            ),
-            panel("Service performance comparison", "Select a service to open its report", comparisonHost),
-            panel("Revenue transactions", "Completed and fully paid orders in this period · select a row for details", transactionsHost),
+            panel("Payment methods", `Money received in ${data.period.label} by payment date`, methodHost,
+                UI.exportButtons("payments", () => ({ date_from: data.period.start || "", date_to: data.period.end || "", service: data.service?.id || "" }))),
         ];
     }
 
@@ -2706,7 +3246,7 @@
                 panel("How figures are calculated", "Rules used by the dashboard, reports, customer totals, and exports", h("ul", { className: "rules-list" },
                     h("li", { text: "Confirmed revenue includes only orders that are Completed and fully paid. Each order counts once, for its confirmed total, on the date it was completed." }),
                     h("li", { text: "Only verified payments count as paid. Customer submissions stay Pending Verification until the administrator verifies them; rejected submissions never count." }),
-                    h("li", { text: "Every payment has a reference: the GCash/Maya/bank transaction number, the official receipt number, or a cash receipt number issued by the system." }),
+                    h("li", { text: "Every payment has a reference: the configured e-wallet or bank transaction number, the official receipt number, or a cash receipt number issued by the system." }),
                     h("li", { text: "A customer's amount spent uses the revenue rule, so customer totals add up to revenue." }),
                     h("li", { text: "Completion duration = completion date − request date, in calendar days (weekends included), on Philippine time." }),
                     h("li", { text: "An order can be marked Completed only after its full amount is recorded as paid." }),
@@ -2739,13 +3279,14 @@
         const statusLine = h("p", { className: "backup-status", role: "status", "aria-live": "polite" });
         const fileInput = h("input", { id: "restore-file", type: "file", accept: ".json,application/json" });
         const restoreButton = h("button", { className: "button button-danger-strong", type: "button", text: "Restore from backup…", disabled: true });
-        const fileNote = h("p", { className: "field-note", text: `Choose a .json backup file downloaded from this admin panel (up to ${info.max_upload_mb} MB).` });
+        const fileNote = h("p", { className: "field-note", text: `Choose a .json backup file downloaded from this admin panel (up to ${info.max_upload_mb} MB). Version 2 files also restore uploaded images, receipts, and database-backed files.` });
         let chosen = null;
+        let selectionToken = 0;
 
         const last = info.last_backup;
         const lastRestore = info.last_restore;
         statusLine.textContent = last
-            ? `Last backup: ${dateTime(last.at)} by ${last.by} · ${number(last.rows)} records · ${fileSizeText(last.size)}`
+            ? `Last backup: ${dateTime(last.at)} by ${last.by} · ${number(last.rows)} records${last.files ? ` · ${number(last.files)} files` : ""} · ${fileSizeText(last.size)}`
             : "No backup has been created yet.";
 
         backupButton.addEventListener("click", () => UI.busy(backupButton, async () => {
@@ -2781,11 +3322,13 @@
         }, "Creating backup…"));
 
         fileInput.addEventListener("change", async () => {
+            // A slower read of an earlier file must not replace a newer selection.
+            const token = ++selectionToken;
             chosen = null;
             restoreButton.disabled = true;
             const file = fileInput.files?.[0];
             if (!file) {
-                fileNote.textContent = `Choose a .json backup file downloaded from this admin panel (up to ${info.max_upload_mb} MB).`;
+                fileNote.textContent = `Choose a .json backup file downloaded from this admin panel (up to ${info.max_upload_mb} MB). Version 2 files also restore uploaded images, receipts, and database-backed files.`;
                 return;
             }
             const invalid = (message) => {
@@ -2801,14 +3344,16 @@
                 text = await file.text();
                 data = JSON.parse(text);
             } catch {
-                return invalid("This file is not a valid backup (it is not JSON).");
+                if (token === selectionToken) invalid("This file is not a valid backup (it is not JSON).");
+                return;
             }
+            if (token !== selectionToken) return;
             if (data?.format !== "impression-printshop-backup" || typeof data.tables !== "object" || !data.counts) {
                 return invalid("This file is not an ImPRESSion PrintShop backup.");
             }
             chosen = { file, data, text };
             const rows = Object.values(data.counts).reduce((sum, value) => sum + Number(value || 0), 0);
-            fileNote.textContent = `${file.name} · created ${dateTime(data.created_at)}${data.created_by ? ` by ${data.created_by}` : ""} · ${number(rows)} records. The server checks its signature and contents before restoring.`;
+            fileNote.textContent = `${file.name} · file claims: created ${dateTime(data.created_at)}${data.created_by ? ` by ${data.created_by}` : ""} · ${number(rows)} records${data.file_count ? ` · ${number(data.file_count)} files` : ""}. These details are not verified until the server checks the signature and contents.`;
             restoreButton.disabled = false;
         });
 
@@ -2817,15 +3362,16 @@
             const counts = chosen.data.counts || {};
             const answer = await UI.confirm({
                 title: "Restore this backup?",
-                message: "Restoring replaces ALL current customers, orders, payments, catalog, packages, and notifications with the data in this backup. Anything added or changed after the backup was created will be lost. Your administrator sign-in is not changed. Download a backup of the current data first if you may need it. Type RESTORE to continue.",
+                message: "Restoring replaces ALL current customers, orders, payments, catalog, packages, and notifications with the data in this backup. Anything added or changed after the backup was created will be lost. Your administrator sign-in is not changed. Download a backup of the current data first if you may need it. The details below are claims made by the selected file; the server verifies its signature and contents before applying anything. Type RESTORE to continue.",
                 confirmLabel: "Restore backup",
                 tone: "danger",
                 input: { label: "Type RESTORE to confirm", required: true, multiline: false, maxlength: 20, placeholder: "RESTORE" },
                 details: [
-                    ["Backup created", dateTime(chosen.data.created_at)],
-                    ["Customers", number(counts.customer_accounts || 0)],
-                    ["Orders", number(counts.orders || 0)],
-                    ["Catalog products", number(counts.catalog_products || 0)],
+                    ["Claimed creation time", dateTime(chosen.data.created_at)],
+                    ["Claimed customers", number(counts.customer_accounts || 0)],
+                    ["Claimed orders", number(counts.orders || 0)],
+                    ["Claimed catalog products", number(counts.catalog_products || 0)],
+                    ["Claimed attached files", number(chosen.data.file_count || 0)],
                 ],
             });
             if (!answer) return;
@@ -2838,7 +3384,7 @@
                 try {
                     const result = await api("/api/admin/backup/restore", { method: "POST", body: { confirmation: "RESTORE", backup_text: chosen.text } });
                     const total = Object.values(result.restored).reduce((sum, value) => sum + value, 0);
-                    toast(`Backup restored: ${number(total)} records.`, "success");
+                    toast(`Backup restored: ${number(total)} records${result.files_restored ? ` and ${number(result.files_restored)} files` : ""}.`, "success");
                     refreshBadges();
                     renderBackupPanel(host);
                 } catch (error) {
@@ -2866,8 +3412,8 @@
                         h("td", {}, badge(item.status === "success" ? "Success" : "Failed")),
                         h("td", { text: item.by || "—" }),
                         h("td", { className: "wrap-cell", text: item.status !== "success" ? (item.error || "—")
-                            : item.type === "backup" ? `${item.file} · ${number(item.rows)} records · ${fileSizeText(item.size)}`
-                                : `${number(item.rows)} records from the backup of ${dateTime(item.backup_created_at)}` }))))))
+                            : item.type === "backup" ? `${item.file} · ${number(item.rows)} records · ${item.files ? `${number(item.files)} files · ` : ""}${fileSizeText(item.size)}`
+                                : `${number(item.rows)} records${item.files ? ` · ${number(item.files)} files` : ""} from the backup of ${dateTime(item.backup_created_at)}` }))))))
                 : h("p", { className: "field-note", text: "No backups or restores yet." }));
         }
         renderHistory();
@@ -2876,10 +3422,11 @@
             h("div", { className: "backup-grid" },
                 h("section", { className: "backup-card" },
                     h("h3", { text: "Backup" }),
-                    h("p", { className: "field-note", text: `Saves customers, orders with payments and history, the catalog and packages, audit log, and notifications from the ${info.database} as a signed JSON file. Administrator credentials are never included.` }),
+                    h("p", { className: "field-note", text: `Saves customers, orders with payments and history, the catalog and packages, audit log, notifications, and uploaded files (${number(info.database_files)} in the database, ${number(info.disk_files)} on disk) from the ${info.database} as a signed JSON file (version ${info.version}, up to ${info.max_upload_mb} MB). Administrator credentials are never included.` }),
                     backupButton,
                     statusLine,
-                    info.signing_key_persistent ? null : h("p", { className: "notice-card notice-warning", text: "PRINTSHOP_SECRET_KEY is not set, so backups are signed with a temporary key and cannot be restored after the server restarts. Set the key in the server settings." })),
+                    info.signing_key_persistent ? null : h("p", { className: "notice-card notice-warning", text: "No persistent backup signing key is configured, so backups are signed with a temporary key and cannot be restored after the server restarts. Set PRINTSHOP_BACKUP_SIGNING_KEY or PRINTSHOP_SECRET_KEY in the server settings." }),
+                    h("p", { className: "field-note", text: `Backup signing key: ${info.signing_key_source}. Rotate it with PRINTSHOP_BACKUP_PREVIOUS_SIGNING_KEYS so older backups remain restorable.` })),
                 h("section", { className: "backup-card" },
                     h("h3", { text: "Restore" }),
                     h("p", { className: "field-note", text: lastRestore ? `Last restore: ${dateTime(lastRestore.at)} by ${lastRestore.by}.` : "Replaces the current data with a backup. Everything is checked first; if anything fails, nothing is changed." }),

@@ -23,6 +23,8 @@ from backend.app.schemas.user import (
     CustomerLogin,
     CustomerProfileUpdate,
     CustomerRegistration,
+    EmailVerificationRequest,
+    EmailVerificationVerify,
     PasswordResetConfirm,
     PasswordResetRequest,
     PasswordResetVerify,
@@ -34,19 +36,35 @@ from backend.app.services import admin_auth_services, auth_services
 router = APIRouter(tags=["authentication"])
 
 
-def _client_address(request: Request) -> str:
-    # Behind Vercel's proxy every request arrives from the proxy, so limiting by request.client
-    # would make all visitors share one sign-in limit. Vercel sets X-Real-IP to the visitor's
-    # address itself (a value sent by the client is overwritten), so it is safe to trust there.
+def _client_address(request: Request) -> str | None:
+    # Forwarded headers are trusted only from Vercel (which overwrites X-Real-IP itself) or from an
+    # explicitly configured proxy. Otherwise a client-supplied X-Forwarded-For must never become a
+    # rate-limit key: an attacker could rotate IP buckets at will. When untrusted we return None so
+    # only the IP bucket is skipped; per-account database buckets remain authoritative.
+    host = request.client.host if request.client else None
     if settings.behind_vercel_proxy:
-        forwarded = request.headers.get("x-real-ip", "").strip()
-        if forwarded:
-            return forwarded
-    return request.client.host if request.client else "unknown"
+        return request.headers.get("x-real-ip", "").strip() or host
+    if host and host in settings.trusted_proxy_ips:
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
+        hops = [part.strip() for part in request.headers.get("x-forwarded-for", "").split(",") if part.strip()]
+        # The right-most hop is the address the trusted proxy actually saw.
+        return hops[-1] if hops else host
+    if request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip"):
+        return None
+    return host
 
 
-def _throttle(bucket: str, key: str, limit: tuple[int, int], detail: str, store: Any = limiter) -> None:
-    """Raise 429 when the limit is reached. `store` is the in-memory limiter (default) or otp_store."""
+def _auth_throttle_store() -> Any:
+    """Production uses the shared database store so limits hold across restarts and instances."""
+    return otp_store if settings.production else limiter
+
+
+def _throttle(bucket: str, key: str | None, limit: tuple[int, int], detail: str, store: Any = limiter) -> None:
+    """Raise 429 when the limit is reached; a missing/untrusted key skips only that bucket."""
+    if not key:
+        return
     max_requests, window = limit
     if not store.allow(bucket, key, max_requests, window):
         raise HTTPException(status_code=429, detail=detail)
@@ -55,25 +73,79 @@ def _throttle(bucket: str, key: str, limit: tuple[int, int], detail: str, store:
 @router.post("/api/customer/register", status_code=201)
 def register_customer(payload: CustomerRegistration, request: Request, response: Response) -> dict[str, object]:
     require_same_origin(request)
-    _throttle("register", _client_address(request), (20, 60 * 60), "Too many registration attempts. Try again later.")
+    store = _auth_throttle_store()
+    _throttle("register-ip", _client_address(request), (20, 60 * 60), "Too many registration attempts. Try again later.", store)
+    _throttle("register-email", payload.email, (20, 60 * 60), "Too many registration attempts. Try again later.", store)
     try:
         customer = auth_services.register_customer(payload)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    create_session_cookie(response, request, customer["id"], "customer")
-    return {"customer": customer}
+    verification = customer.pop("email_verification", None)
+    # With verification enabled, no session is issued until the code sent to the address is accepted.
+    if verification is None:
+        create_session_cookie(response, request, customer["id"], "customer")
+    body: dict[str, object] = {"customer": customer}
+    if verification is not None:
+        # The registration code already started the 60-second resend window.
+        otp_store.allow("email-verify-cooldown", payload.email, 1, OTP_RESEND_COOLDOWN_SECONDS)
+        body["email_verification"] = verification
+    return body
 
 
 @router.post("/api/customer/session")
 def login_customer(payload: CustomerLogin, request: Request, response: Response) -> dict[str, object]:
     require_same_origin(request)
-    _throttle("login-ip", _client_address(request), LOGIN_LIMIT, "Too many sign-in attempts. Try again in a few minutes.")
-    _throttle("login-email", payload.email, LOGIN_LIMIT, "Too many sign-in attempts for this account. Try again in a few minutes.")
+    store = _auth_throttle_store()
+    _throttle("login-ip", _client_address(request), LOGIN_LIMIT, "Too many sign-in attempts. Try again in a few minutes.", store)
+    _throttle("login-email", payload.email, LOGIN_LIMIT, "Too many sign-in attempts for this account. Try again in a few minutes.", store)
     customer = auth_services.authenticate_customer(payload.email, payload.password)
     if customer is None:
         raise HTTPException(status_code=401, detail="Email address or password is incorrect.")
+    if settings.require_email_verification and not customer.get("email_verified", True):
+        raise HTTPException(
+            status_code=403,
+            detail="Verify your email address before signing in. Use the code we sent you, or request a new one.",
+        )
     create_session_cookie(response, request, customer["id"], "customer", remember=payload.remember)
     return {"customer": customer}
+
+
+# ---- Registration email ownership ------------------------------------------------
+
+@router.post("/api/customer/email-verification/request")
+def request_email_verification(payload: EmailVerificationRequest, request: Request) -> dict[str, Any]:
+    require_same_origin(request)
+    store = _auth_throttle_store()
+    _throttle("email-verify-ip", _client_address(request), OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.", store)
+    _throttle("email-verify-email", payload.email, OTP_REQUEST_LIMIT, "Too many verification requests. Try again later.", store)
+    cooled_down = not otp_store.allow("email-verify-cooldown", payload.email, 1, OTP_RESEND_COOLDOWN_SECONDS)
+    if cooled_down:
+        return {
+            "message": "A verification code was requested for this address less than a minute ago. Use that code, or wait to request a new one.",
+            "resend_after": OTP_RESEND_COOLDOWN_SECONDS,
+            "cooldown": True,
+        }
+    try:
+        result = auth_services.request_email_verification(payload.email)
+    except HTTPException:
+        otp_store.reset("email-verify-cooldown", payload.email)
+        raise
+    result["resend_after"] = OTP_RESEND_COOLDOWN_SECONDS
+    return result
+
+
+@router.post("/api/customer/email-verification/verify")
+def verify_email_verification(payload: EmailVerificationVerify, request: Request) -> dict[str, Any]:
+    require_same_origin(request)
+    _throttle(
+        "email-verify-attempt-ip", _client_address(request), OTP_VERIFY_LIMIT,
+        "Too many verification attempts. Try again later.", otp_store,
+    )
+    _throttle(
+        "email-verify-attempt-email", payload.email, OTP_VERIFY_LIMIT,
+        "Too many verification attempts. Try again later.", otp_store,
+    )
+    return auth_services.verify_email_address(payload.email, payload.code)
 
 
 @router.get("/api/customer/session")
@@ -88,7 +160,7 @@ def customer_session(request: Request) -> dict[str, object]:
 @router.delete("/api/customer/session", status_code=204)
 def logout_customer(request: Request, response: Response) -> Response:
     require_same_origin(request)
-    clear_session_cookie(response)
+    clear_session_cookie(response, request)
     response.status_code = 204
     return response
 
@@ -129,6 +201,7 @@ def request_password_reset(payload: PasswordResetRequest, request: Request) -> d
 def verify_password_reset(payload: PasswordResetVerify, request: Request) -> dict[str, str]:
     require_same_origin(request)
     _throttle("otp-verify-ip", _client_address(request), OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.", otp_store)
+    _throttle("otp-verify-email", payload.email, OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.", otp_store)
     token = auth_services.verify_password_reset_code(payload.email, payload.code)
     return {"reset_token": token, "message": "Code verified. Choose your new password."}
 
@@ -137,6 +210,7 @@ def verify_password_reset(payload: PasswordResetVerify, request: Request) -> dic
 def confirm_password_reset(payload: PasswordResetConfirm, request: Request) -> dict[str, str]:
     require_same_origin(request)
     _throttle("reset-confirm-ip", _client_address(request), RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.", otp_store)
+    _throttle("reset-confirm-email", payload.email, RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.", otp_store)
     auth_services.complete_password_reset(payload.email, payload.reset_token, payload.new_password)
     return {"message": "Your password has been changed. You can now sign in with your new password."}
 
@@ -169,7 +243,11 @@ def create_admin_session(payload: CustomerLogin, request: Request, response: Res
     require_same_origin(request)
     if not admin_auth_services.configured():
         raise HTTPException(status_code=503, detail="Administrator credentials have not been configured.")
-    _throttle("admin-login-ip", _client_address(request), LOGIN_LIMIT, "Too many sign-in attempts. Try again in a few minutes.")
+    # In production the admin login counter must survive restarts and serverless instances; local/test
+    # runs keep the in-process limiter so a full automated suite is not throttled by earlier tests.
+    store = otp_store if settings.production else limiter
+    _throttle("admin-login-ip", _client_address(request), LOGIN_LIMIT, "Too many sign-in attempts. Try again in a few minutes.", store)
+    _throttle("admin-login-email", payload.email, LOGIN_LIMIT, "Too many sign-in attempts for this account. Try again in a few minutes.", store)
     if not admin_auth_services.authenticate(payload.email, payload.password):
         raise HTTPException(status_code=401, detail="Administrator credentials are incorrect.")
     create_session_cookie(response, request, settings.admin_email, "admin")
@@ -213,6 +291,7 @@ def request_admin_password_reset(payload: PasswordResetRequest, request: Request
 def verify_admin_password_reset(payload: PasswordResetVerify, request: Request) -> dict[str, str]:
     require_same_origin(request)
     _throttle("admin-otp-verify-ip", _client_address(request), OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.", otp_store)
+    _throttle("admin-otp-verify-email", payload.email, OTP_VERIFY_LIMIT, "Too many verification attempts. Try again later.", otp_store)
     token = admin_auth_services.verify_password_reset_code(payload.email, payload.code)
     return {"reset_token": token, "message": "Code verified. Choose your new password."}
 
@@ -221,6 +300,7 @@ def verify_admin_password_reset(payload: PasswordResetVerify, request: Request) 
 def confirm_admin_password_reset(payload: PasswordResetConfirm, request: Request) -> dict[str, str]:
     require_same_origin(request)
     _throttle("admin-reset-confirm-ip", _client_address(request), RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.", otp_store)
+    _throttle("admin-reset-confirm-email", payload.email, RESET_CONFIRM_LIMIT, "Too many attempts. Try again later.", otp_store)
     admin_auth_services.complete_password_reset(payload.email, payload.reset_token, payload.new_password)
     return {"message": "Your administrator password has been changed. Sign in with your new password."}
 
@@ -234,6 +314,6 @@ def admin_session(request: Request) -> dict[str, str]:
 @router.delete("/api/admin/session", status_code=204)
 def delete_admin_session(request: Request, response: Response) -> Response:
     require_same_origin(request)
-    clear_session_cookie(response)
+    clear_session_cookie(response, request)
     response.status_code = 204
     return response

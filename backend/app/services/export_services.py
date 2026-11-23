@@ -22,6 +22,17 @@ from backend.app.utils.order_number import SHOP_TIMEZONE
 BUSINESS_NAME = "ImPRESSion PrintShop"
 FORMATS = {"pdf", "xlsx"}
 
+# A cell whose text starts with one of these characters is interpreted as a formula by Excel and
+# LibreOffice. Customer-entered names, references, descriptions and filter values reach the workbook,
+# so they are neutralised on the way in. A leading apostrophe keeps the visible text unchanged.
+_EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _excel_safe_text(value: Any) -> Any:
+    if isinstance(value, str) and value.startswith(_EXCEL_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 
 @dataclass
 class Column:
@@ -626,23 +637,23 @@ def render_xlsx(report: Report) -> bytes:
     stamp = generated_at()
     summary["A1"] = BUSINESS_NAME
     summary["A1"].font = Font(bold=True, size=14)
-    summary["A2"] = report.title
+    summary["A2"] = _excel_safe_text(report.title)
     summary["A2"].font = Font(bold=True, size=12)
     summary["A3"], summary["B3"] = "Date generated", stamp.replace(tzinfo=None)
     summary["B3"].number_format = "mmm d, yyyy h:mm AM/PM"
-    summary["A4"], summary["B4"] = "Report period", report.period
+    summary["A4"], summary["B4"] = "Report period", _excel_safe_text(report.period)
     row = 6
     summary.cell(row=row, column=1, value="Applied filters").font = Font(bold=True)
     row += 1
     for label, value in report.filters:
-        summary.cell(row=row, column=1, value=label)
-        summary.cell(row=row, column=2, value=value)
+        summary.cell(row=row, column=1, value=_excel_safe_text(label))
+        summary.cell(row=row, column=2, value=_excel_safe_text(value))
         row += 1
     row += 1
     summary.cell(row=row, column=1, value="Summary").font = Font(bold=True)
     row += 1
     for label, value, kind in report.summary:
-        summary.cell(row=row, column=1, value=label)
+        summary.cell(row=row, column=1, value=_excel_safe_text(label))
         cell = summary.cell(row=row, column=2, value=_excel_value(value, kind))
         _excel_format(cell, kind, money_format, date_format)
         row += 1
@@ -651,12 +662,12 @@ def render_xlsx(report: Report) -> bytes:
 
     for section in report.sections:
         sheet = workbook.create_sheet(_sheet_name(section.sheet or section.title, used))
-        sheet["A1"] = f"{BUSINESS_NAME} — {section.title}"
+        sheet["A1"] = _excel_safe_text(f"{BUSINESS_NAME} — {section.title}")
         sheet["A1"].font = Font(bold=True, size=12)
-        sheet["A2"] = f"{report.title} · {report.period} · generated {stamp:%b %d, %Y %I:%M %p}"
+        sheet["A2"] = _excel_safe_text(f"{report.title} · {report.period} · generated {stamp:%b %d, %Y %I:%M %p}")
         header_row = 4
         for index, column in enumerate(section.columns, start=1):
-            cell = sheet.cell(row=header_row, column=index, value=column.label)
+            cell = sheet.cell(row=header_row, column=index, value=_excel_safe_text(column.label))
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = header_fill
             cell.alignment = Alignment(vertical="center", wrap_text=True)
@@ -670,7 +681,7 @@ def render_xlsx(report: Report) -> bytes:
                 _excel_format(cell, column.kind, money_format, date_format)
             current += 1
         if not section.rows:
-            sheet.cell(row=current, column=1, value=section.note or "No records match the selected filters.")
+            sheet.cell(row=current, column=1, value=_excel_safe_text(section.note or "No records match the selected filters."))
             current += 1
         if section.totals:
             for index, column in enumerate(section.columns, start=1):
@@ -693,10 +704,10 @@ def _excel_value(value: Any, kind: str) -> Any:
         return None
     if kind == "date":
         parsed = _as_date(value)
-        return parsed if parsed else value
+        return parsed if parsed else _excel_safe_text(value)
     if kind == "percent" and isinstance(value, (int, float)):
         return value / 100
-    return value
+    return _excel_safe_text(value)
 
 
 def _excel_format(cell: Any, kind: str, money_format: str, date_format: str) -> None:

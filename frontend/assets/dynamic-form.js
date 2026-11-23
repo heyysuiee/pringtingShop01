@@ -28,6 +28,13 @@
 
     const money = (value) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value);
 
+    /** Today's date in the Philippines (UTC is still yesterday from midnight to 8 a.m. PHT). */
+    function manilaToday() {
+        return new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+        }).format(new Date());
+    }
+
     function el(tag, attributes = {}, ...children) {
         const element = document.createElement(tag);
         for (const [name, value] of Object.entries(attributes)) {
@@ -189,7 +196,7 @@
                     if (field.min_value !== null) control.min = String(field.min_value);
                     if (field.max_value !== null) control.max = String(field.max_value);
                 }
-                if (field.field_type === "date") control.min = new Date().toISOString().slice(0, 10);
+                if (field.field_type === "date") control.min = manilaToday();
             }
             if (field.required) control.required = true;
             if (field.placeholder) control.placeholder = field.placeholder;
@@ -413,5 +420,5 @@
         };
     }
 
-    window.PrintShopDynamicForm = { create, optionPriceHint, money, uploadLimit, limitText, formatBytes };
+    window.PrintShopDynamicForm = { create, optionPriceHint, money, uploadLimit, limitText, formatBytes, manilaToday };
 })();

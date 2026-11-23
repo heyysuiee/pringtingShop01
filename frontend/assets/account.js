@@ -48,6 +48,13 @@
     // "Pending Confirmation" → "pending-confirmation": the class that colours the status badge.
     const statusSlug = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+    /** Same PH mobile/landline rule as registration and the server. */
+    function validPhone(value) {
+        if (window.PrintShopPhone?.valid) return window.PrintShopPhone.valid(value);
+        const digits = String(value || "").replace(/\D/g, "");
+        return /^(?:0|63)9\d{9}$/.test(digits) || /^0\d{7,9}$/.test(digits);
+    }
+
     function showMessage(text, isError = false) {
         if (!message) return;
         message.textContent = text;
@@ -267,8 +274,19 @@
     });
     document.addEventListener("customer-session-ended", sessionEnded);
 
+    profileForm?.elements.phone?.addEventListener("input", () => profileForm.elements.phone.setCustomValidity(""));
+
     profileForm?.addEventListener("submit", async (event) => {
         event.preventDefault();
+        const phoneField = profileForm.elements.phone;
+        if (phoneField) {
+            phoneField.setCustomValidity("");
+            if (!validPhone(phoneField.value)) {
+                phoneField.setCustomValidity("Enter a valid Philippine mobile or landline number.");
+                phoneField.reportValidity();
+                return;
+            }
+        }
         if (!profileForm.reportValidity() || !activeCustomer) return;
         showMessage("");
         const button = profileForm.querySelector('[type="submit"]');

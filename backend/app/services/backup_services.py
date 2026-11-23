@@ -5,25 +5,35 @@ document with the rows of every application table, read through the normal datab
 database file path or credential is ever exposed or needed.
 
 * **Backup** contains the shop's data: customers, the catalog and packages, orders (with their payments,
-  submissions, quotations, and history), the audit log, customer notifications, and app settings. It
-  leaves out administrator credentials, password-reset codes, and sign-in throttling records, so a
-  restore can never change the administrator's password or lock anyone out.
-* Each file carries a SHA-256 checksum of its data and an HMAC signature made with the server's
-  ``PRINTSHOP_SECRET_KEY``. A restore accepts only files signed by this installation and unchanged
-  since they were created, so an edited or foreign file cannot be loaded into the database.
-* **Restore** validates the whole file first (format, tables, columns, value types, JSON fields), then
-  replaces the tables inside one transaction: either every table is restored or nothing changes.
+  submissions, quotations, and history), the audit log, customer notifications, app settings, and the
+  database-backed uploads (``stored_files`` / ``file_chunks``). Files kept on disk are added as base64
+  entries in the same document. It leaves out administrator credentials, password-reset codes, and
+  sign-in throttling records, so a restore can never change the administrator's password or lock anyone out.
+* Every table is read from one database snapshot, so an order cannot be backed up against a payment or
+  audit row from a different moment.
+* Each file carries a SHA-256 checksum of its data and an HMAC signature made with
+  ``PRINTSHOP_BACKUP_SIGNING_KEY`` (or ``PRINTSHOP_SECRET_KEY`` when no dedicated key is set). A restore
+  accepts only files signed by this installation and unchanged since they were created. Retired keys can
+  be listed in ``PRINTSHOP_BACKUP_PREVIOUS_SIGNING_KEYS`` while old backups are still needed.
+* **Restore** validates the whole file first (format, tables, columns, value types, JSON fields, file
+  paths), stages disk files, then replaces the tables inside one transaction: either every table is
+  restored or nothing changes. If the database write fails, staged disk changes are rolled back too.
 * Backup and restore events (time, administrator, result, row counts) are kept in ``app_meta``.
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import logging
+import os
+import shutil
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fastapi import HTTPException
@@ -36,7 +46,10 @@ from backend.app.repositories import admin_repository
 logger = logging.getLogger("printshop.backup")
 
 FORMAT = "impression-printshop-backup"
-VERSION = 1
+VERSION = 2
+# Version 1 backups did not contain upload bytes; they are still accepted so an upgrade never strands an
+# older backup file. Their signature/checksum are computed with their own version number.
+SUPPORTED_VERSIONS = (1, 2)
 # Restored in this order (parents before the tables that reference them); cleared in reverse.
 BACKUP_TABLES = (
     "app_meta",
@@ -50,13 +63,17 @@ BACKUP_TABLES = (
     "invitation_packages",
     "shop_designs",
     "shop_design_images",
+    # Uploaded order files kept in the database. Their bytes are base64-encoded by _encode_value.
+    "stored_files",
+    "file_chunks",
     "orders",
     "order_audit_log",
     "customer_notifications",
 )
 # Tables added after backups were first made. A backup without them is still restored; this installation's
 # rows of such a table are kept (those that still belong to a restored category).
-OPTIONAL_TABLES = ("standard_sizes", "payment_methods")
+OPTIONAL_TABLES = ("standard_sizes", "payment_methods", "stored_files", "file_chunks")
+FILE_TABLES = ("stored_files", "file_chunks")
 # Columns holding JSON text that the application decodes; checked before a restore.
 JSON_COLUMNS = {
     "orders": ("customer", "product", "customization", "event_details", "payments", "attachments", "history",
@@ -72,7 +89,9 @@ JSON_COLUMNS = {
 LOCAL_META_PREFIXES = admin_repository.SETTING_PREFIXES
 HISTORY_KEY = "backup.history"
 HISTORY_LIMIT = 20
-MAX_BACKUP_BYTES = 25 * 1024 * 1024
+# Backups now carry upload files too, so the local/API limit is larger. Vercel's request-body limit still
+# applies to restores there; the Settings page reports this limit to the administrator.
+MAX_BACKUP_BYTES = 100 * 1024 * 1024
 RESTORE_CONFIRMATION = "RESTORE"
 
 
@@ -103,13 +122,32 @@ def _canonical(tables: Any) -> bytes:
     return json.dumps(_normalize(tables), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
-def _checksum(tables: Any) -> str:
-    return hashlib.sha256(_canonical(tables)).hexdigest()
+def _checksum_payload(tables: Any, files: dict[str, str] | None, version: int) -> Any:
+    # Version 1 checksummed tables only. Keeping that shape means old files remain verifiable.
+    return tables if version < 2 else {"tables": tables, "files": files or {}}
 
 
-def _signature(checksum: str, created_at: str) -> str:
-    message = f"{FORMAT}:{VERSION}:{created_at}:{checksum}".encode("utf-8")
-    return hmac.new(settings.secret_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
+def _checksum(tables: Any, files: dict[str, str] | None = None, version: int = VERSION) -> str:
+    return hashlib.sha256(_canonical(_checksum_payload(tables, files, version))).hexdigest()
+
+
+def _signing_keys() -> tuple[str, ...]:
+    keys = [settings.backup_signing_key or settings.secret_key]
+    keys.extend(settings.previous_backup_signing_keys)
+    return tuple(keys)
+
+
+def _signature(checksum: str, created_at: str, version: int = VERSION) -> str:
+    message = f"{FORMAT}:{version}:{created_at}:{checksum}".encode("utf-8")
+    return hmac.new(_signing_keys()[0].encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def _signature_matches(checksum: str, created_at: str, version: int, supplied: str) -> bool:
+    message = f"{FORMAT}:{version}:{created_at}:{checksum}".encode("utf-8")
+    return any(
+        hmac.compare_digest(hmac.new(key.encode("utf-8"), message, hashlib.sha256).hexdigest(), supplied)
+        for key in _signing_keys()
+    )
 
 
 def _encode_value(value: Any) -> Any:
@@ -130,6 +168,54 @@ def _table_columns(connection: Any, table: str) -> list[dict[str, Any]]:
 
 def _is_local_meta(key: Any) -> bool:
     return isinstance(key, str) and key.startswith(LOCAL_META_PREFIXES)
+
+
+def _upload_dir() -> Path:
+    return Path(settings.upload_dir)
+
+
+def _safe_file_path(value: Any) -> str | None:
+    """A relative POSIX path under the upload directory, or None for an unsafe key."""
+    if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
+        return None
+    path = PurePosixPath(value)
+    if path.is_absolute() or len(path.parts) > 3 or any(part in {"", ".", ".."} for part in path.parts):
+        return None
+    return value
+
+
+def _read_disk_files() -> dict[str, str]:
+    """Every file currently in PRINTSHOP_UPLOAD_DIR, keyed by its relative path and base64-encoded."""
+    files: dict[str, str] = {}
+    directory = _upload_dir()
+    if not directory.is_dir():
+        return files
+    for path in sorted(directory.rglob("*")):
+        if not path.is_file() or path.is_symlink() or path.name.startswith("."):
+            continue
+        key = path.relative_to(directory).as_posix()
+        if _safe_file_path(key) is None:
+            logger.warning("Skipping unsafe upload path in backup: %s", key)
+            continue
+        files[key] = base64.b64encode(path.read_bytes()).decode("ascii")
+    return files
+
+
+def _disk_file_count() -> int:
+    directory = _upload_dir()
+    if not directory.is_dir():
+        return 0
+    return sum(1 for path in directory.rglob("*") if path.is_file() and not path.is_symlink() and not path.name.startswith("."))
+
+
+def _database_file_count() -> int:
+    try:
+        with connection_scope() as connection:
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stored_files'").fetchone():
+                return 0
+            return int(connection.execute("SELECT COUNT(*) FROM stored_files").fetchone()[0])
+    except sqlite3.Error:  # pragma: no cover - status is informational
+        return 0
 
 
 def history() -> list[dict[str, Any]]:
@@ -155,13 +241,18 @@ def status() -> dict[str, Any]:
     restores = [item for item in items if item.get("type") == "restore" and item.get("status") == "success"]
     return {
         "database": "Turso (hosted SQLite)" if _database_kind() == "turso" else "SQLite database file",
+        "version": VERSION,
         "tables": list(BACKUP_TABLES),
+        "file_tables": list(FILE_TABLES),
+        "disk_files": _disk_file_count(),
+        "database_files": _database_file_count(),
         "last_backup": backups[0] if backups else None,
         "last_restore": restores[0] if restores else None,
         "history": items,
         "max_upload_mb": MAX_BACKUP_BYTES // (1024 * 1024),
         # A temporary signing key changes on restart, which would make today's backups unrestorable.
-        "signing_key_persistent": settings.secret_key_persistent,
+        "signing_key_persistent": settings.backup_signing_key_persistent,
+        "signing_key_source": "PRINTSHOP_BACKUP_SIGNING_KEY" if os.environ.get("PRINTSHOP_BACKUP_SIGNING_KEY", "").strip() else "PRINTSHOP_SECRET_KEY",
     }
 
 
@@ -169,11 +260,17 @@ def status() -> dict[str, Any]:
 
 
 def create_backup(actor: str) -> tuple[bytes, str, dict[str, Any]]:
-    """Read every backed-up table and return (file bytes, file name, history event)."""
+    """Read one consistent database snapshot plus the upload files, and return the backup document."""
     created_at = _now()
     try:
         tables: dict[str, Any] = {}
+        files: dict[str, str] = {}
         with connection_scope() as connection:
+            # One write lock covers both the disk scan and every table; an order cannot commit a newly
+            # saved file reference between the file scan and the SQL snapshot. Disk writes use an atomic
+            # rename, so the scan also never reads a half-written file.
+            connection.execute("BEGIN IMMEDIATE")
+            files = _read_disk_files()
             for table in BACKUP_TABLES:
                 columns = [column["name"] for column in _table_columns(connection, table)]
                 if not columns:
@@ -183,12 +280,12 @@ def create_backup(actor: str) -> tuple[bytes, str, dict[str, Any]]:
                 if table == "app_meta":
                     values = [row for row in values if not _is_local_meta(row[columns.index("key")])]
                 tables[table] = {"columns": columns, "rows": values}
-    except (sqlite3.Error, RuntimeError) as error:
+    except (OSError, sqlite3.Error, RuntimeError) as error:
         logger.exception("Database backup failed")
-        event = {"type": "backup", "status": "failed", "at": created_at, "by": actor, "error": "The database could not be read."}
+        event = {"type": "backup", "status": "failed", "at": created_at, "by": actor, "error": "The shop data could not be read."}
         _record(event)
-        raise HTTPException(status_code=500, detail="The backup could not be created because the database could not be read. Try again.") from error
-    checksum = _checksum(tables)
+        raise HTTPException(status_code=500, detail="The backup could not be created because the shop data could not be read. Try again.") from error
+    checksum = _checksum(tables, files, VERSION)
     counts = {table: len(data["rows"]) for table, data in tables.items()}
     document = {
         "format": FORMAT,
@@ -199,15 +296,17 @@ def create_backup(actor: str) -> tuple[bytes, str, dict[str, Any]]:
         "database": _database_kind(),
         "counts": counts,
         "tables": tables,
+        "files": files,
+        "file_count": len(files),
         "checksum": checksum,
-        "signature": _signature(checksum, created_at),
+        "signature": _signature(checksum, created_at, VERSION),
     }
     content = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     stamp = created_at[:19].replace("-", "").replace(":", "").replace("T", "-")
     filename = f"impression-printshop-backup-{stamp}.json"
     event = {
         "type": "backup", "status": "success", "at": created_at, "by": actor, "file": filename,
-        "size": len(content), "rows": sum(counts.values()), "checksum": checksum[:16],
+        "size": len(content), "rows": sum(counts.values()), "files": len(files), "checksum": checksum[:16],
     }
     _record(event)
     return content, filename, event
@@ -220,28 +319,47 @@ def _invalid(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=f"This backup file cannot be restored: {detail}")
 
 
-def validate_backup(document: Any) -> dict[str, Any]:
-    """Check a backup completely before anything is changed. Returns the table data to restore."""
+def validate_backup(document: Any) -> tuple[dict[str, Any], dict[str, bytes], int]:
+    """Check a backup completely before anything is changed.
+
+    Returns ``(tables, disk_files, version)``. Disk files are decoded here so no unsafe path or damaged
+    base64 can reach the restore step.
+    """
     if not isinstance(document, dict):
         raise _invalid("it is not an ImPRESSion PrintShop backup.")
     if document.get("format") != FORMAT:
         raise _invalid("it is not an ImPRESSion PrintShop backup.")
-    if document.get("version") != VERSION:
+    version = document.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) or version not in SUPPORTED_VERSIONS:
         raise _invalid(f"backup version {document.get('version')!r} is not supported.")
     tables = document.get("tables")
     created_at = document.get("created_at")
     if not isinstance(tables, dict) or not isinstance(created_at, str):
         raise _invalid("the file is incomplete.")
+    raw_files = document.get("files", {})
+    if version >= 2 and not isinstance(raw_files, dict):
+        raise _invalid("the attached upload files are malformed.")
+    files: dict[str, bytes] = {}
+    for key, value in raw_files.items() if isinstance(raw_files, dict) else []:
+        safe_key = _safe_file_path(key)
+        if safe_key is None:
+            raise _invalid(f"the attached file path {key!r} is unsafe.")
+        if not isinstance(value, str):
+            raise _invalid(f"the attached file {safe_key} is malformed.")
+        try:
+            files[safe_key] = base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise _invalid(f"the attached file {safe_key} is damaged.") from error
     required_tables = set(BACKUP_TABLES) - set(OPTIONAL_TABLES)
     if not required_tables <= set(tables) <= set(BACKUP_TABLES):
         missing = sorted(required_tables - set(tables))
         extra = sorted(set(tables) - set(BACKUP_TABLES))
         raise _invalid(f"unexpected tables (missing: {', '.join(missing) or 'none'}; unknown: {', '.join(extra) or 'none'}).")
     checksum = document.get("checksum")
-    if not isinstance(checksum, str) or not hmac.compare_digest(_checksum(tables), checksum):
+    if not isinstance(checksum, str) or not hmac.compare_digest(_checksum(tables, raw_files if isinstance(raw_files, dict) else {}, version), checksum):
         raise _invalid("the data does not match its checksum, so the file is damaged or was edited.")
     signature = document.get("signature")
-    if not isinstance(signature, str) or not hmac.compare_digest(_signature(checksum, created_at), signature):
+    if not isinstance(signature, str) or not _signature_matches(checksum, created_at, version, signature):
         raise _invalid(
             "it was not created by this shop's system (or the server's signing key has changed since). "
             "Only backups downloaded from this admin panel can be restored."
@@ -290,7 +408,7 @@ def validate_backup(document: Any) -> dict[str, Any]:
                     json.loads(row[position])
                 except (TypeError, ValueError) as error:
                     raise _invalid(f"row {number} of {table} has damaged {columns[position]} data.") from error
-    return tables
+    return tables, files, version
 
 
 def _run_many(connection: Any, statements: list[tuple[str, list[Any]]]) -> None:
@@ -302,13 +420,85 @@ def _run_many(connection: Any, statements: list[tuple[str, list[Any]]]) -> None:
         connection.execute(sql, parameters)
 
 
+class _DiskFileChanges:
+    """Apply a backup's disk files with a rollback path if the database restore fails.
+
+    Disk files cannot share a transaction with SQLite/Turso, so they are staged first, swapped into the
+    upload directory second, and only kept when the database transaction commits. A failure at any
+    point restores the previous files exactly.
+    """
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self.files = files
+        directory = _upload_dir()
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        self._temporary = tempfile.TemporaryDirectory(prefix=".impression-backup-", dir=str(directory.parent))
+        self._root = Path(self._temporary.name)
+        self._applied: list[Path] = []
+        self._undo: list[tuple[Path, Path]] = []
+        self._finished = False
+
+    def _backup_path(self, key: str, suffix: str = "") -> Path:
+        target = self._root / "removed" / f"{key}{suffix}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def apply(self) -> None:
+        directory = _upload_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        for key, contents in self.files.items():
+            staged = self._root / "new" / key
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_bytes(contents)
+        # Remove files that are not in the backup so the restored upload directory matches the file.
+        if directory.is_dir():
+            for path in sorted(directory.rglob("*")):
+                if not path.is_file() or path.is_symlink() or path.name.startswith("."):
+                    continue
+                key = path.relative_to(directory).as_posix()
+                if key in self.files:
+                    continue
+                saved = self._backup_path(key, ".removed")
+                shutil.move(str(path), str(saved))
+                self._undo.append((path, saved))
+        for key in self.files:
+            target = directory / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() or target.is_symlink():
+                saved = self._backup_path(key, ".previous")
+                shutil.move(str(target), str(saved))
+                self._undo.append((target, saved))
+            staged = self._root / "new" / key
+            shutil.move(str(staged), str(target))
+            self._applied.append(target)
+
+    def rollback(self) -> None:
+        for path in reversed(self._applied):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - best-effort rollback
+                logger.exception("Could not remove restored file during rollback: %s", path)
+        for target, saved in reversed(self._undo):
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(saved), str(target))
+            except OSError:  # pragma: no cover - best-effort rollback
+                logger.exception("Could not restore previous file during rollback: %s", target)
+        self.finish()
+
+    def finish(self) -> None:
+        if not self._finished:
+            self._temporary.cleanup()
+            self._finished = True
+
+
 def restore_backup(document: Any, confirmation: Any, actor: str) -> dict[str, Any]:
     """Replace the shop's data with a validated backup, in one transaction."""
     if confirmation != RESTORE_CONFIRMATION:
         raise HTTPException(status_code=422, detail=f'Type {RESTORE_CONFIRMATION} to confirm that the current data will be replaced.')
     started = _now()
     try:
-        tables = validate_backup(document)
+        tables, files, version = validate_backup(document)
     except HTTPException as error:
         _record({"type": "restore", "status": "failed", "at": started, "by": actor, "error": str(error.detail)[:300]})
         raise
@@ -327,7 +517,12 @@ def restore_backup(document: Any, confirmation: Any, actor: str) -> dict[str, An
             rows = [row for row in rows if not _is_local_meta(row[columns.index("key")])]
         statements.extend((sql, [_decode_value(value) for value in row]) for row in rows)
         counts[table] = len(rows)
+    disk: _DiskFileChanges | None = None
     try:
+        # Version 1 files have no disk-file section; leave the current upload directory untouched.
+        if version >= 2:
+            disk = _DiskFileChanges(files)
+            disk.apply()
         with connection_scope() as connection:
             connection.execute("BEGIN IMMEDIATE")
             _run_many(connection, statements)
@@ -335,16 +530,21 @@ def restore_backup(document: Any, confirmation: Any, actor: str) -> dict[str, An
             problems = connection.execute("PRAGMA foreign_key_check").fetchall()
             if problems:
                 raise sqlite3.IntegrityError(f"{len(problems)} records refer to missing records")
-    except sqlite3.Error as error:
-        logger.exception("Database restore failed and was rolled back")
+    except (sqlite3.Error, OSError) as error:
+        if disk is not None:
+            disk.rollback()
+        logger.exception("Restore failed and was rolled back")
         _record({"type": "restore", "status": "failed", "at": started, "by": actor, "error": "The data could not be written; nothing was changed."})
         raise HTTPException(
             status_code=422,
             detail=f"The backup could not be restored, so the current data was left unchanged. ({error})",
         ) from error
+    if disk is not None:
+        disk.finish()
     event = {
         "type": "restore", "status": "success", "at": _now(), "by": actor, "rows": sum(counts.values()),
+        "files": len(files) if version >= 2 else 0,
         "backup_created_at": document.get("created_at"), "backup_created_by": document.get("created_by", ""),
     }
     _record(event)
-    return {"restored": counts, "event": event, "status": status()}
+    return {"restored": counts, "files_restored": event["files"], "event": event, "status": status()}

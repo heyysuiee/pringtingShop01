@@ -23,7 +23,7 @@
     <div class="top-bar">
         <div class="top-bar-content">
             <p>(555) 123-4567 • (0949) 157-4778</p>
-            <p>Official email: shop email to be provided • Mon–Sat 8AM–6PM</p>
+            <p>Official email: printImpress@gmail.com • Mon–Sat 8AM–6PM</p>
         </div>
     </div>
 
@@ -162,10 +162,14 @@
                         it. The shop places your details on the design and sends you a draft to approve before
                         printing. Have your own design? Choose “Use my own design” in the gallery.</p>
                     <div id="design-section" class="design-gallery-section">
-                        <h3 class="invitation-subtitle">Choose your design</h3>
-                        <p class="field-hint">Select the design you like. Select a picture to see it larger.</p>
-                        <div class="design-filter" id="design-filter" role="group" aria-label="Filter designs by style" hidden></div>
-                        <div class="design-grid" id="design-list" aria-live="polite"></div>
+                        <details class="detail-toggle design-gallery" id="design-gallery" open>
+                            <summary class="detail-toggle-summary"><span class="invitation-subtitle" id="design-gallery-title">Choose your design</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary>
+                            <div class="detail-toggle-body">
+                                <p class="field-hint">Select the design you like. Select a picture to see it larger. “Use my own design” is first if you already have artwork.</p>
+                                <div class="design-filter" id="design-filter" role="group" aria-label="Filter designs by style" hidden></div>
+                                <div class="design-grid" id="design-list" aria-live="polite"></div>
+                            </div>
+                        </details>
                         <p class="field-error" id="design-error" role="alert"></p>
                     </div>
                     <h3 class="invitation-subtitle design-details-title" id="design-details-title">Add your details</h3>
@@ -319,6 +323,7 @@
                                 class="input" type="email" autocomplete="email" maxlength="254" required></div>
                         <div class="field"><label for="phone" class="field-label">Contact number</label><input
                                 id="phone" class="input" type="tel" autocomplete="tel" maxlength="40"
+                                pattern="(?:(?:\+?63|0)[\s()-]*9[\s()-]*(?:\d[\s()-]*){9}|0[\s()-]*(?:\d[\s()-]*){7,9})" title="Use a Philippine mobile (09XX XXX XXXX or +63 9XX XXX XXXX) or landline number."
                                 placeholder="09XX XXX XXXX" required></div>
                         <div class="field"><label for="messenger" class="field-label">Messenger name <span
                                     class="optional">(optional)</span></label><input id="messenger" class="input"
@@ -377,6 +382,7 @@
                                 <div class="field"><label for="delivery-phone" class="field-label">Contact
                                         number</label><input id="delivery-phone" class="input" type="tel"
                                         autocomplete="tel" maxlength="40" placeholder="09XX XXX XXXX"
+                                        pattern="(?:(?:\+?63|0)[\s()-]*9[\s()-]*(?:\d[\s()-]*){9}|0[\s()-]*(?:\d[\s()-]*){7,9})" title="Use a Philippine mobile or landline number."
                                         data-delivery-field="contact_number"></div>
                                 <div class="field"><label for="delivery-street" class="field-label">House number /
                                         Street</label><input id="delivery-street" class="input"
@@ -385,14 +391,20 @@
                                         class="field-label">Barangay</label><input id="delivery-barangay" class="input"
                                         autocomplete="address-line2" maxlength="120"
                                         data-delivery-field="barangay"></div>
-                                <div class="field"><label for="delivery-city" class="field-label">City /
-                                        Municipality</label><input id="delivery-city" class="input"
-                                        autocomplete="address-level2" maxlength="120" data-delivery-field="city"></div>
                                 <div class="field"><label for="delivery-province"
-                                        class="field-label">Province</label><input id="delivery-province"
-                                        class="input" autocomplete="address-level1" maxlength="120"
-                                        data-delivery-field="province"></div>
+                                        class="field-label">Province</label><select id="delivery-province"
+                                        class="input" autocomplete="address-level1"
+                                        data-delivery-field="province">
+                                        <option value="">Select province</option>
+                                    </select></div>
+                                <div class="field"><label for="delivery-city" class="field-label">City /
+                                        Municipality</label><select id="delivery-city" class="input"
+                                        autocomplete="address-level2" data-delivery-field="city">
+                                        <option value="">Select province first</option>
+                                    </select></div>
                             </div>
+                            <p class="field-hint" id="delivery-region" aria-live="polite">Select a province to see its
+                                region and available delivery area.</p>
                             <div class="field"><label for="delivery-landmark" class="field-label">Landmark <span
                                         class="optional">(optional)</span></label><input id="delivery-landmark"
                                     class="input" maxlength="200" placeholder="e.g. Beside the barangay hall"
@@ -426,16 +438,18 @@
                         <strong>Payment is arranged after your quotation</strong>
                         <p>Customized orders are priced by the shop. You will be notified when your quotation is
                             ready in the customer portal. Review it, then accept or decline it. After you accept, pay
-                            the 50% down payment through GCash and upload the screenshot or receipt; your order is
-                            confirmed once the shop verifies it. Nothing is paid now.</p>
+                            the 50% down payment through <span class="payment-methods-label">the shop's available
+                                e-wallets</span> and upload the screenshot or receipt; your order is confirmed once the
+                            shop verifies it. Nothing is paid now.</p>
                     </div>
 
                     <fieldset class="payment-options" id="payment-options" aria-describedby="payment-option-hint">
                         <legend class="field-label">Payment: 50% down payment</legend>
                         <p class="field-hint" id="payment-option-hint">This package has a fixed published price.
                             Every order requires a 50% down payment. After the shop approves your order, pay the down
-                            payment through GCash and upload the screenshot or receipt. Your order is confirmed once
-                            the shop verifies it; the remaining 50% is paid before release.</p>
+                            payment through <span class="payment-methods-label">the shop's available e-wallets</span> and
+                            upload the screenshot or receipt. Your order is confirmed once the shop verifies it; the
+                            remaining 50% is paid before release.</p>
                         <dl class="payment-breakdown" id="payment-breakdown" aria-live="polite"></dl>
                     </fieldset>
                 </section>
@@ -449,17 +463,19 @@
                     <section class="order-instructions" aria-labelledby="instructions-title">
                         <h3 id="instructions-title">Before you place your order</h3>
                         <ol>
-                            <li>Send your original, high-quality picture to <strong>[Official shop email to be
-                                    provided]</strong> for better print quality.</li>
+                            <li>Send your original, high-quality picture to <strong>printImpress@gmail.com</strong> for
+                                better print quality.</li>
                             <li>Provide the celebrant’s name and any applicable event details.</li>
                             <li>Include the event date, time, and location when applicable.</li>
                             <li>Package orders use the package's published price. Customized and shop design orders are
                                 priced by the administrator's quotation, which you accept or decline in the customer
                                 portal before any payment.</li>
                             <li>Every order requires a 50% down payment of the confirmed amount; the remaining 50% is
-                                paid before release. Pay through GCash and upload the screenshot or receipt in the
-                                customer portal. Your order is confirmed only after the shop verifies the down payment.
-                                Payment instructions come from the shop administrator.</li>
+                                paid before release. Choose one of <span class="payment-methods-label">the shop's
+                                    available e-wallets</span> in the customer portal, enter its reference number, and
+                                upload the screenshot or receipt. Your order is confirmed only after the shop verifies
+                                the down payment. The account details and instructions for each method are shown in
+                                your portal.</li>
                             <li>We will send a draft layout via chat for you to check and approve.</li>
                             <li class="approval-rule">NO APPROVAL, NO PRINT.</li>
                             <li>Order processing takes approximately 2–5 days. This is processing time, not a guaranteed
@@ -536,6 +552,7 @@
     </dialog>
 
     <script src="/assets/index.js"></script>
+    <script src="/assets/phone.js"></script>
     <script src="/assets/dynamic-form.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/order.js"></script>

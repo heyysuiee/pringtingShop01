@@ -15,6 +15,7 @@
     const SIGN_IN_EMAIL_KEY = "printshop.signInEmail";
     const SIGN_IN_NOTICE_KEY = "printshop.signInNotice";
     const RESET_EMAIL_KEY = "printshop.resetEmail";
+    const VERIFY_EMAIL_KEY = "printshop.verifyEmail";
 
     // ================================================================ helpers
 
@@ -43,6 +44,13 @@
         alertBox.hidden = !text;
     }
 
+    /** Match the backend's PH mobile/landline rule (shared helper with a local fallback). */
+    function validPhone(value) {
+        if (window.PrintShopPhone?.valid) return window.PrintShopPhone.valid(value);
+        const digits = String(value || "").replace(/\D/g, "");
+        return /^(?:0|63)9\d{9}$/.test(digits) || /^0\d{7,9}$/.test(digits);
+    }
+
     function fieldError(input, message) {
         const error = document.getElementById(`${input.id}-error`);
         if (error) error.textContent = message;
@@ -64,7 +72,7 @@
             const label = form.querySelector(`label[for="${input.id}"]`)?.childNodes[0]?.textContent.trim() || "This field";
             if (input.required && !value) message = `Enter your ${label.toLowerCase()}.`;
             else if (input.type === "email" && value && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) message = "Enter a valid email address, like name@example.com.";
-            else if (input.type === "tel" && value && value.replace(/\D/g, "").length < 7) message = "Enter a contact number with at least 7 digits.";
+            else if (input.type === "tel" && value && !validPhone(value)) message = "Enter a valid Philippine mobile or landline number.";
             else if (input.minLength > 0 && value && input.value.length < input.minLength) message = `Use at least ${input.minLength} characters.`;
             fieldError(input, message);
             if (message && !firstInvalid) firstInvalid = input;
@@ -239,6 +247,13 @@
                     });
                     window.location.assign(nextPath());
                 } catch (error) {
+                    if (error.status === 403 && /verify your email/i.test(error.message)) {
+                        sessionStorage.setItem(VERIFY_EMAIL_KEY, email.value.trim());
+                        const url = new URL("/verify-email", window.location.origin);
+                        if (nextPath() !== "/customer-portal") url.searchParams.set("next", nextPath());
+                        window.location.assign(url.pathname + url.search);
+                        return;
+                    }
                     showAlert(error.message, "error");
                     if (error.status === 401) {
                         password.value = "";
@@ -264,14 +279,21 @@
             const button = form.querySelector('[type="submit"]');
             withBusy(button, "Creating account…", async () => {
                 try {
-                    await postJson("/api/customer/register", {
+                    const result = await postJson("/api/customer/register", {
                         name: form.elements.name.value.trim(),
                         email: form.elements.email.value.trim(),
                         phone: form.elements.phone.value.trim(),
                         messenger: form.elements.messenger.value.trim(),
                         password: form.elements.password.value,
                     });
-                    window.location.assign(nextPath());
+                    if (result.email_verification?.required) {
+                        sessionStorage.setItem(VERIFY_EMAIL_KEY, form.elements.email.value.trim());
+                        const url = new URL("/verify-email", window.location.origin);
+                        if (nextPath() !== "/customer-portal") url.searchParams.set("next", nextPath());
+                        window.location.assign(url.pathname + url.search);
+                    } else {
+                        window.location.assign(nextPath());
+                    }
                 } catch (error) {
                     if (error.status === 409) {
                         fieldError(form.elements.email, "An account already exists for this email address.");
@@ -279,6 +301,64 @@
                         form.elements.email.focus();
                     } else {
                         showAlert(error.message, "error");
+                    }
+                }
+            });
+        });
+    }
+
+    // ================================================================ Verify Email
+
+    function setupVerifyEmail() {
+        const form = document.querySelector("#verify-email-form");
+        const email = form.elements.email;
+        const code = form.elements.code;
+        const resend = document.querySelector("#verify-email-resend");
+        const savedEmail = sessionStorage.getItem(VERIFY_EMAIL_KEY);
+        sessionStorage.removeItem(VERIFY_EMAIL_KEY);
+        if (savedEmail) email.value = savedEmail;
+        (savedEmail ? code : email).focus();
+
+        async function sendCode(button, busyText) {
+            clearErrors(form);
+            // Only the email field is needed to request a code.
+            if (!email.value.trim()) {
+                fieldError(email, "Enter your email address.");
+                email.focus();
+                return;
+            }
+            await withBusy(button, busyText, async () => {
+                try {
+                    const result = await postJson("/api/customer/email-verification/request", { email: email.value.trim() });
+                    showAlert(result.message + (result.cooldown ? "" : " Enter the newest code below."), result.cooldown ? "info" : "success");
+                } catch (error) {
+                    showAlert(error.message, "error");
+                    if (error.status === 429) fieldError(code, error.message);
+                }
+            });
+        }
+
+        resend.addEventListener("click", () => { void sendCode(resend, "Sending…"); });
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            clearErrors(form);
+            if (!validate(form)) return;
+            const button = form.querySelector('[type="submit"]');
+            withBusy(button, "Verifying…", async () => {
+                try {
+                    await postJson("/api/customer/email-verification/verify", {
+                        email: email.value.trim(), code: code.value.trim(),
+                    });
+                    sessionStorage.setItem(SIGN_IN_EMAIL_KEY, email.value.trim());
+                    sessionStorage.setItem(SIGN_IN_NOTICE_KEY, "Email verified. Sign in to continue.");
+                    const url = new URL("/sign-in", window.location.origin);
+                    if (nextPath() !== "/customer-portal") url.searchParams.set("next", nextPath());
+                    window.location.assign(url.pathname + url.search);
+                } catch (error) {
+                    showAlert(error.message, "error");
+                    if (error.status === 422 || error.status === 429) {
+                        fieldError(code, error.message);
+                        code.focus();
                     }
                 }
             });
@@ -485,5 +565,6 @@
 
     if (page === "sign-in") setupSignIn();
     else if (page === "create-account") setupCreateAccount();
+    else if (page === "verify-email") setupVerifyEmail();
     else if (page === "forgot-password") setupForgotPassword();
 })();

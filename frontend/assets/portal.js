@@ -14,7 +14,12 @@
     const lookupPanel = document.querySelector("#order-lookup");
     const quotationPanel = document.querySelector("#customer-quotation");
     const paymentPanel = document.querySelector("#customer-payment");
+    const actionStrip = document.querySelector("#customer-actions");
     const MAX_PROOF_BYTES = 5 * 1024 * 1024;
+    // Replaced by the server value when /api/payment-methods is loaded; never invented in the browser.
+    let proofLimitBytes = MAX_PROOF_BYTES;
+    let allowedProofTypes = ["image/jpeg", "image/png", "application/pdf"];
+    const proofLimitLabel = () => `${Math.max(1, Math.round(proofLimitBytes / 1024 / 1024))} MB`;
     let activeEmail = "";
     let currentOrder = null;
     // Every order is opened through the signed-in account (the server checks that the account owns it).
@@ -51,8 +56,22 @@
         return result;
     }
 
+    // One confirmation at a time: a double-click cannot open two dialogs or queue two mutations.
+    let confirmingAction = false;
+    async function confirmAction(message, options) {
+        if (confirmingAction) return false;
+        confirmingAction = true;
+        try {
+            return await window.PrintConfirm(message, options);
+        } finally {
+            confirmingAction = false;
+        }
+    }
+
     /** POST a customer action (approve / request-changes / cancel) for the open order and show the result. */
     async function orderAction(action, body, failure, button) {
+        // A second click while the first request is in flight must never queue a duplicate POST.
+        if (!button || button.disabled) return;
         detailError.textContent = "";
         button.disabled = true;
         try {
@@ -247,6 +266,43 @@
         return wrapper;
     }
 
+    const quotationIsOpen = (order) => order.status === "Quotation Sent" && order.quotation?.status === "sent";
+
+    // Shared by the full panel and the action strip at the top: the same guards and the same server call.
+    async function acceptQuotation(order, button) {
+        if (!quotationIsOpen(order)) return;
+        const quote = order.quotation;
+        const due = order.payment?.down_payment_required;
+        if (!(await confirmAction(`Accept the quotation of ${money(order.total_amount)}? You will then pay the 50% down payment of ${money(due)} through the shop's e-wallet.`, { title: "Accept quotation?", confirmLabel: "Accept quotation" }))) return;
+        // The revision you reviewed is sent along: a revised quotation elsewhere is refused with 409.
+        await orderAction("quotation/accept", { quotation_revision: quote.revision }, "The quotation could not be accepted.", button);
+    }
+
+    async function declineQuotation(order, button, reasonText = "") {
+        if (!quotationIsOpen(order)) return;
+        if (!(await confirmAction("Decline this quotation? Nothing will be charged; the shop may send a revised one.", { title: "Decline quotation?", confirmLabel: "Decline quotation", tone: "danger" }))) return;
+        await orderAction("quotation/decline", { reason: reasonText.trim(), quotation_revision: order.quotation.revision }, "The quotation could not be declined.", button);
+    }
+
+    async function approveDraft(button) {
+        if (!currentOrder) return;
+        if (!(await confirmAction("Approve this draft? The administrator may then move the order to printing.", { title: "Approve draft?", confirmLabel: "Approve draft" }))) return;
+        await orderAction("approve", {}, "The draft approval could not be recorded.", button);
+    }
+
+    async function requestDraftChanges(button) {
+        if (!currentOrder) return;
+        const noteInput = document.querySelector("#draft-revision-note");
+        const note = noteInput.value.trim();
+        if (!note) {
+            detailError.textContent = "Describe the changes you want in the revision instructions.";
+            noteInput.focus();
+            return;
+        }
+        if (!(await confirmAction("Ask the shop to revise this draft with your instructions?", { title: "Request revision?", confirmLabel: "Request revision" }))) return;
+        await orderAction("request-changes", { note }, "The revision request could not be recorded.", button);
+    }
+
     /** The latest quotation: review it, then accept (proceed to the 50% down payment) or decline it. */
     function renderQuotationPanel(order) {
         quotationPanel.replaceChildren();
@@ -299,15 +355,8 @@
         accept.type = "button";
         const decline = make("button", "btn btn-ghost-dark", "Decline Quotation");
         decline.type = "button";
-        accept.addEventListener("click", async () => {
-            if (!(await window.PrintConfirm(`Accept the quotation of ${money(total)}? You will then pay the 50% down payment of ${money(payment.down_payment_required)} through the shop's e-wallet.`, { title: "Accept quotation?", confirmLabel: "Accept quotation" }))) return;
-            // The revision you reviewed is sent along: if the shop revised the quotation meanwhile, acceptance is refused.
-            void orderAction("quotation/accept", { quotation_revision: quote.revision }, "The quotation could not be accepted.", accept);
-        });
-        decline.addEventListener("click", async () => {
-            if (!(await window.PrintConfirm("Decline this quotation? Nothing will be charged; the shop may send a revised one.", { title: "Decline quotation?", confirmLabel: "Decline quotation", tone: "danger" }))) return;
-            void orderAction("quotation/decline", { reason: reason.value.trim(), quotation_revision: quote.revision }, "The quotation could not be declined.", decline);
-        });
+        accept.addEventListener("click", () => { void acceptQuotation(order, accept); });
+        decline.addEventListener("click", () => { void declineQuotation(order, decline, reason.value); });
         const actions = make("div", "draft-actions");
         actions.append(accept, decline);
         quotationPanel.append(reason, actions);
@@ -354,7 +403,8 @@
         } else if (!agreed) {
             paymentPanel.append(make("p", "notice", "Payment opens after the shop approves your order and shares the payment instructions."));
         } else if (pending) {
-            paymentPanel.append(make("p", "notice", `Your ${pending.method} payment of ${money(pending.amount)} (reference ${pending.reference}) is pending verification. ${order.status === "Awaiting Down Payment" ? "Your order is confirmed only after the shop verifies it." : "The shop will update your balance once it is verified."}`));
+            const status = pending.verification_status_label || "Pending Verification";
+            paymentPanel.append(make("p", "notice", `Your ${pending.method} payment of ${money(pending.amount)} (reference ${pending.reference}) is ${status}. ${order.status === "Awaiting Down Payment" ? "Your order is confirmed only after the shop verifies it." : "The shop will update your balance once it is verified."} A receipt scan is not proof that funds were received.`));
         } else if (due && order.customer_actions && !order.customer_actions.pay) {
             paymentPanel.append(make("p", "notice", "Payment is on hold while your cancellation request is reviewed."));
         } else if (due) {
@@ -372,7 +422,18 @@
                 const amount = typeof item.verified_amount === "number" && Math.abs(item.verified_amount - item.amount) > 0.005
                     ? `${money(item.amount)} (verified ${money(item.verified_amount)})` : money(item.amount);
                 entry.append(make("strong", "", `${amount} · ${item.method} · ${item.reference}`), make("span", "field-hint", `${label} · submitted ${formatDate(item.submitted_at)}`));
+                if (item.verification_status_label && item.verification_status_label !== label) {
+                    entry.append(make("span", "status-badge", item.verification_status_label));
+                }
+                if (item.ocr?.fields?.reference || item.ocr?.fields?.amount) {
+                    const detected = [];
+                    if (item.ocr.fields.reference) detected.push(`reference ${item.ocr.fields.reference}`);
+                    if (item.ocr.fields.amount) detected.push(`amount ${money(Number(item.ocr.fields.amount))}`);
+                    entry.append(make("span", "field-hint", `Receipt scan detected: ${detected.join(" · ")}. Scanning is not proof of payment.`));
+                }
                 if (item.review_note) entry.append(make("span", "field-hint", `Shop note: ${item.review_note}`));
+                (item.receipt_requests || []).forEach((request) => entry.append(make("span", "field-hint", `Clearer receipt requested ${formatDate(request.at)}: ${request.note}`)));
+                (item.admin_notes || []).forEach((note) => entry.append(make("span", "field-hint", `Verification note (${note.at ? formatDate(note.at) : "shop"}): ${note.note}`)));
                 if (item.proof) {
                     const link = make("a", "", `Receipt: ${item.proof.name}`);
                     link.href = item.proof.url;
@@ -387,9 +448,24 @@
     }
 
     let methodsRequest = null;
-    function paymentMethods() {
-        methodsRequest ||= request("/api/payment-methods").then((result) => result.methods || []).catch(() => []);
+    /** Payment metadata plus its load error, so callers never confuse an outage with an empty shop setup. */
+    function paymentMethodsStatus(options = {}) {
+        const refresh = options === true || options.refresh === true;
+        if (refresh || !methodsRequest) {
+            methodsRequest = request("/api/payment-methods").then((result) => {
+                if (Number.isFinite(result.max_proof_bytes) && result.max_proof_bytes > 0) proofLimitBytes = result.max_proof_bytes;
+                if (Array.isArray(result.allowed_proof_types) && result.allowed_proof_types.length) allowedProofTypes = result.allowed_proof_types;
+                return { methods: result.methods || [], error: "" };
+            }).catch((error) => ({
+                methods: [],
+                error: error instanceof Error && error.message ? error.message : "the shop's payment list could not be reached",
+            }));
+        }
         return methodsRequest;
+    }
+
+    function paymentMethods(options = {}) {
+        return paymentMethodsStatus(options).then((result) => result.methods);
     }
 
     function copyButton(text, label) {
@@ -408,8 +484,8 @@
         return button;
     }
 
-    /** E-wallet payment form: choose one of the shop's active methods, pay outside the site, then report the
-     *  reference number and screenshot. The amount comes from the server and cannot be edited. */
+    /** E-wallet payment form: choose an active method, upload a receipt, see OCR feedback, then submit.
+     *  The amount comes from the server and cannot be edited; scanning never verifies money. */
     function paymentForm(order, due) {
         const formElement = make("form", "payment-submit-form");
         const cards = make("div", "wallet-cards");
@@ -417,6 +493,7 @@
         cards.setAttribute("aria-label", "Payment method");
         const details = make("div", "wallet-details");
         let chosen = null;
+        let receiptDataUrl = "";
         const showMethod = (method) => {
             chosen = method;
             cards.querySelectorAll(".wallet-card").forEach((card) => {
@@ -435,7 +512,9 @@
             };
             row("Pay to", method.account_name || "Ask the shop for the account name");
             row(`${method.provider} number`, method.account_number || "Not set yet — use the shop's payment instructions", method.account_number);
-            row("Exact amount due", money(due.amount), due.amount.toFixed(2));
+            row("Payment purpose", `${due.label} for order ${order.reference}`);
+            row("Reference to enter", "The transaction / reference number shown on your receipt (at least 4 characters)");
+            row(`Exact ${due.label} amount`, money(due.amount), due.amount.toFixed(2));
             details.append(rows);
             if (method.qr_url) {
                 const qr = make("img", "wallet-qr");
@@ -448,9 +527,15 @@
             if (!method.configured) details.append(make("p", "notice", `The shop has not added its ${method.provider} account details yet. Follow the payment instructions from the shop or contact the shop before paying.`));
             reference.placeholder = `${method.provider} reference number`;
             referenceLabel.firstChild.textContent = `${method.provider} reference number`;
-            proofLabel.firstChild.textContent = `${method.provider} screenshot or receipt (JPG, PNG, WebP, or PDF · max 5 MB)`;
+            proofLabel.firstChild.textContent = `${method.provider} screenshot or receipt (JPG, PNG, or PDF · max ${proofLimitLabel()})`;
+            if (receiptDataUrl) scanReceipt();
         };
-        paymentMethods().then((methods) => {
+        paymentMethodsStatus({ refresh: true }).then(({ methods, error }) => {
+            if (error) {
+                cards.replaceChildren(make("p", "notice notice-error", `Payment methods could not be loaded (${error}). Refresh the page or contact the shop before paying.`));
+                submit.disabled = true;
+                return;
+            }
             if (!methods.length) {
                 cards.replaceChildren(make("p", "notice", "No payment method is available right now. Contact the shop."));
                 submit.disabled = true;
@@ -461,7 +546,9 @@
                 card.type = "button";
                 card.dataset.method = method.provider;
                 card.setAttribute("role", "radio");
-                card.append(make("strong", "", method.provider), make("span", "field-hint", method.account_name || "E-wallet"));
+                const logo = make("span", `method-logo method-logo-${statusSlug(method.provider)}`, (method.provider || "?").trim().charAt(0).toUpperCase());
+                logo.setAttribute("aria-hidden", "true");
+                card.append(logo, make("strong", "", method.provider), make("span", "field-hint", method.account_name || "E-wallet"));
                 card.addEventListener("click", () => showMethod(method));
                 cards.append(card);
             });
@@ -478,12 +565,115 @@
         const reference = make("input", "input");
         Object.assign(reference, { maxLength: 120, minLength: 4, required: true, placeholder: "Reference number", autocomplete: "off" });
         const proof = make("input", "input");
-        Object.assign(proof, { type: "file", required: true, accept: ".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" });
+        Object.assign(proof, { type: "file", required: true, accept: ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" });
         const submit = make("button", "btn btn-dark", "Submit payment for verification");
         submit.type = "submit";
         const down = due.stage === "down_payment";
         const referenceLabel = field("Reference number", reference);
-        const proofLabel = field("Screenshot or receipt (JPG, PNG, WebP, or PDF · max 5 MB)", proof);
+        const proofLabel = field(`Screenshot or receipt (JPG, PNG, or PDF · max ${proofLimitLabel()})`, proof);
+        const preview = make("div", "receipt-preview");
+        preview.hidden = true;
+        const previewActions = make("div", "receipt-preview-actions");
+        const replace = make("button", "btn btn-ghost-dark btn-small", "Replace receipt");
+        replace.type = "button";
+        replace.addEventListener("click", () => proof.click());
+        const remove = make("button", "btn btn-ghost-dark btn-small", "Remove receipt");
+        remove.type = "button";
+        remove.addEventListener("click", () => {
+            proof.value = "";
+            receiptDataUrl = "";
+            preview.replaceChildren();
+            preview.hidden = true;
+            scanResult.replaceChildren();
+            scanResult.hidden = true;
+            detailError.textContent = "";
+        });
+        previewActions.append(replace, remove);
+        const scanResult = make("div", "ocr-scan-result");
+        scanResult.hidden = true;
+        const scanAgain = make("button", "btn btn-ghost-dark btn-small", "Scan receipt again");
+        scanAgain.type = "button";
+        scanAgain.addEventListener("click", scanReceipt);
+
+        const fileOk = (file) => /\.(jpe?g|png|pdf)$/i.test(file?.name || "")
+            && (!file?.type || allowedProofTypes.includes(file.type))
+            && file.size <= proofLimitBytes;
+
+        async function scanReceipt() {
+            const file = proof.files?.[0];
+            if (!receiptDataUrl || !file || !chosen) return;
+            scanResult.hidden = false;
+            scanResult.replaceChildren(make("p", "field-hint", "Reading the receipt…"));
+            try {
+                const result = await request(`/api/orders/${encodeURIComponent(order.reference)}/payments/scan`, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        ...(activeEmail ? { email: activeEmail } : {}),
+                        method: chosen.provider,
+                        reference: reference.value.trim(),
+                        proof: { name: file.name, dataUrl: receiptDataUrl },
+                    }),
+                });
+                const ocr = result.ocr || {};
+                const fields = ocr.fields || {};
+                const verification = result.verification || {};
+                scanResult.replaceChildren();
+                scanResult.append(make(
+                    "strong", "",
+                    `${verification.status_label || "Receipt scanned"}${Number.isFinite(verification.confidence) ? ` · ${Math.round(verification.confidence * 100)}% confidence` : ""}`,
+                ));
+                const detected = make("div", "ocr-detected");
+                [["Reference", fields.reference], ["Amount", fields.amount ? money(Number(fields.amount)) : ""], ["Recipient", fields.recipient], ["Status", fields.status]]
+                    .filter(([, value]) => value)
+                    .forEach(([label, value]) => detected.append(make("span", "ocr-chip", `${label}: ${value}`)));
+                scanResult.append(detected);
+                (ocr.notes || []).forEach((note) => scanResult.append(make("p", "field-hint", note)));
+                scanResult.append(make("p", "field-hint", "Scanning reads the receipt only. Payment is confirmed after the shop or provider verifies it."));
+                if (!reference.value.trim() && fields.reference) reference.value = fields.reference;
+            } catch (issue) {
+                scanResult.replaceChildren(make("p", "notice", issue instanceof Error ? issue.message : "The receipt could not be scanned. The shop will review it."));
+            }
+        }
+
+        proof.addEventListener("change", async () => {
+            const file = proof.files?.[0];
+            receiptDataUrl = "";
+            preview.replaceChildren();
+            scanResult.replaceChildren();
+            scanResult.hidden = true;
+            if (!file) {
+                preview.hidden = true;
+                return;
+            }
+            if (!fileOk(file)) {
+                preview.hidden = true;
+                detailError.textContent = `Upload the payment receipt as a JPG, PNG, or PDF file no larger than ${proofLimitLabel()}.`;
+                proof.value = "";
+                return;
+            }
+            detailError.textContent = "";
+            try {
+                receiptDataUrl = await fileAsDataUrl(file);
+            } catch (issue) {
+                detailError.textContent = issue instanceof Error ? issue.message : "The receipt could not be read.";
+                return;
+            }
+            preview.replaceChildren();
+            if (file.type.startsWith("image/")) {
+                const image = make("img", "receipt-thumbnail");
+                image.src = receiptDataUrl;
+                image.alt = `Preview of ${file.name}`;
+                preview.append(image);
+            } else {
+                preview.append(make("span", "receipt-file-badge", `${file.name} · PDF receipt`));
+            }
+            preview.append(make("span", "field-hint", `${file.name} · ${(file.size / 1024).toFixed(0)} KB`), previewActions);
+            preview.hidden = false;
+            await scanReceipt();
+        });
+
         formElement.append(
             make("h4", "", down ? "Pay your 50% down payment" : "Pay the remaining balance"),
             make("p", "field-hint", `Choose an e-wallet, send exactly ${money(due.amount)} to the shop's account, then enter the reference number and upload the screenshot or receipt. The amount is set by the shop. Your payment stays Pending Verification until the shop checks the money in its account${down ? "; your order is confirmed once it is verified" : ""}. The shop never asks for your PIN or OTP.`),
@@ -492,24 +682,27 @@
             field(`Amount to pay (${due.label})`, amount),
             referenceLabel,
             proofLabel,
+            preview,
+            scanResult,
+            scanAgain,
             submit,
         );
         formElement.addEventListener("submit", async (event) => {
             event.preventDefault();
             if (!formElement.reportValidity()) return;
             const file = proof.files?.[0];
-            if (!file || file.size > MAX_PROOF_BYTES || !/\.(jpe?g|png|webp|pdf)$/i.test(file.name)) {
-                detailError.textContent = "Upload the payment screenshot or receipt as a JPG, PNG, WebP, or PDF file no larger than 5 MB.";
+            if (!file || !fileOk(file)) {
+                detailError.textContent = `Upload the payment screenshot or receipt as a JPG, PNG, or PDF file no larger than ${proofLimitLabel()}. The file type and size must match the file you selected.`;
                 return;
             }
             if (!chosen) {
                 detailError.textContent = "Choose the e-wallet you paid with.";
                 return;
             }
-            if (!(await window.PrintConfirm(`Submit your ${chosen.provider} payment of ${money(due.amount)} (reference ${reference.value.trim()}) for verification?`, { title: "Submit payment?", confirmLabel: "Submit payment" }))) return;
+            if (!(await confirmAction(`Submit your ${chosen.provider} payment of ${money(due.amount)} (reference ${reference.value.trim()}) for verification?`, { title: "Submit payment?", confirmLabel: "Submit payment" }))) return;
             let proofPayload;
             try {
-                proofPayload = { name: file.name, dataUrl: await fileAsDataUrl(file) };
+                proofPayload = { name: file.name, dataUrl: receiptDataUrl || await fileAsDataUrl(file) };
             } catch (issue) {
                 detailError.textContent = issue instanceof Error ? issue.message : "The receipt could not be read.";
                 return;
@@ -520,7 +713,142 @@
         return formElement;
     }
 
-    function renderDetail(order) {
+    function renderPaymentSnapshot(order) {
+        const payment = order.payment || {};
+        const submissions = order.payment_submissions || [];
+        const pendingCount = submissions.filter((item) => item.status === "pending").length;
+        const verifiedCount = submissions.filter((item) => item.status === "verified").length;
+        const rejectedCount = submissions.filter((item) => item.status === "rejected").length;
+        const total = typeof order.total_amount === "number" ? money(order.total_amount) : "Quotation pending";
+        const paid = typeof payment.amount_paid === "number" ? money(payment.amount_paid) : "—";
+        const balance = typeof payment.balance === "number" ? money(payment.balance) : "—";
+        const submittedParts = [];
+        submittedParts.push(`${submissions.length} total`);
+        if (verifiedCount) submittedParts.push(`${verifiedCount} verified`);
+        if (pendingCount) submittedParts.push(`${pendingCount} pending`);
+        if (rejectedCount) submittedParts.push(`${rejectedCount} not verified`);
+        const submitted = submissions.length ? submittedParts.join(" · ") : "None yet";
+
+        let paymentStatus = "Not available";
+        if (["Rejected", "Cancelled", "Quotation Declined"].includes(order.status)) {
+            paymentStatus = order.status;
+        } else if (order.status === "Quotation Sent") {
+            paymentStatus = "Quotation pending acceptance";
+        } else if (order.status === "Awaiting Down Payment") {
+            paymentStatus = pendingCount ? "Down payment submitted" : "Awaiting down payment";
+        } else if (typeof payment.balance === "number" && payment.balance <= 0.005 && payment.amount_paid > 0) {
+            paymentStatus = "Fully paid";
+        } else if (payment.down_payment_status) {
+            paymentStatus = payment.down_payment_status;
+        } else if (order.total_amount === null) {
+            paymentStatus = "Awaiting quotation";
+        }
+
+        const setText = (id, value) => {
+            const node = document.querySelector(id);
+            if (node) node.textContent = value;
+        };
+        setText("#snapshot-total", total);
+        setText("#snapshot-payment-status", paymentStatus);
+        setText("#snapshot-paid", paid);
+        setText("#snapshot-balance", balance);
+        setText("#snapshot-submitted", submitted);
+
+        const statusNode = document.querySelector("#snapshot-payment-status");
+        if (statusNode) {
+            statusNode.classList.remove("is-good", "is-warn", "is-bad", "is-muted");
+            const good = /verified|fully paid|paid/i.test(paymentStatus);
+            const bad = /rejected|cancelled|declined|not verified/i.test(paymentStatus);
+            const warn = /pending|awaiting|submitted/i.test(paymentStatus);
+            statusNode.classList.add(bad ? "is-bad" : good ? "is-good" : warn ? "is-warn" : "is-muted");
+        }
+    }
+
+    /** Compact, always-visible summary of money and whatever the customer must do next. */
+    function renderActionStrip(order) {
+        actionStrip.replaceChildren();
+        actionStrip.hidden = false;
+        const payment = order.payment || {};
+        const due = payment.next_payment;
+        const pending = (order.payment_submissions || []).find((item) => item.status === "pending");
+        const awaitingDraft = order.status === "Awaiting Customer Approval" && Boolean(order.draft_attachment);
+        const quoteOpen = quotationIsOpen(order);
+        const canAct = detailSource === "account" || signedIn;
+        const actions = [];
+        const heading = make("div", "action-strip-heading");
+        heading.append(make("strong", "", "Needs your attention"));
+        const balance = typeof payment.balance === "number" ? money(payment.balance) : "—";
+        heading.append(make("span", "field-hint", `Remaining balance: ${balance}`));
+        actionStrip.append(heading);
+        const row = make("div", "action-strip-items");
+        if (quoteOpen) {
+            const item = make("div", "action-strip-item is-urgent");
+            item.append(make("span", "action-badge", "Quotation" ));
+            item.append(make("span", "", `Review ${money(order.total_amount)} and accept or decline it.`));
+            const accept = make("button", "btn btn-dark btn-small", "Accept quotation");
+            accept.type = "button";
+            accept.disabled = !canAct;
+            accept.addEventListener("click", () => { void acceptQuotation(order, accept); });
+            const decline = make("button", "btn btn-ghost-dark btn-small", "Decline");
+            decline.type = "button";
+            decline.disabled = !canAct;
+            decline.addEventListener("click", () => { void declineQuotation(order, decline); });
+            item.append(accept, decline);
+            row.append(item);
+            actions.push("quotation");
+        }
+        if (awaitingDraft) {
+            const item = make("div", "action-strip-item is-urgent");
+            item.append(make("span", "action-badge", "Draft"));
+            item.append(make("span", "", "Approve the draft to start printing, or request a revision."));
+            const open = make("a", "btn btn-ghost-dark btn-small", "Open draft");
+            open.href = order.draft_attachment.url;
+            open.target = "_blank";
+            open.rel = "noopener";
+            const approve = make("button", "btn btn-dark btn-small", "Approve draft");
+            approve.type = "button";
+            approve.disabled = !canAct;
+            approve.addEventListener("click", () => { void approveDraft(approve); });
+            const revise = make("button", "btn btn-ghost-dark btn-small", "Request revision");
+            revise.type = "button";
+            revise.disabled = !canAct;
+            revise.addEventListener("click", () => {
+                const draftSection = document.querySelector("#customer-draft");
+                draftSection.scrollIntoView({ block: "center", behavior: "smooth" });
+                document.querySelector("#draft-revision-note").focus({ preventScroll: true });
+            });
+            item.append(open, approve, revise);
+            row.append(item);
+            actions.push("draft");
+        }
+        if (due && canAct && !(order.customer_actions && order.customer_actions.pay === false)) {
+            const item = make("div", "action-strip-item is-urgent");
+            item.append(make("span", "action-badge", "Payment"));
+            item.append(make("span", "", `${due.label}: send ${money(due.amount)} and submit your receipt.`));
+            const pay = make("button", "btn btn-dark btn-small", "Go to payment");
+            pay.type = "button";
+            pay.addEventListener("click", () => paymentPanel.scrollIntoView({ block: "start", behavior: "smooth" }));
+            item.append(pay);
+            row.append(item);
+            actions.push("payment");
+        }
+        if (pending) {
+            const item = make("div", "action-strip-item");
+            item.append(make("span", "action-badge", "Submitted"));
+            item.append(make("span", "", `${pending.method} payment of ${money(pending.amount)} is ${pending.verification_status_label || "waiting for verification"}.`));
+            row.append(item);
+        }
+        if (!actions.length && !pending) {
+            actionStrip.hidden = true;
+            return;
+        }
+        if (!actions.length) {
+            row.append(make("p", "field-hint", "Nothing else is due from you right now."));
+        }
+        actionStrip.append(row);
+    }
+
+    function renderDetail(order, options = {}) {
         // Collapse the toggle sections when a different order is opened; keep them as they are on a refresh.
         if (!currentOrder || currentOrder.reference !== order.reference) {
             detail.querySelectorAll(".detail-toggle").forEach((section) => { section.open = false; });
@@ -657,6 +985,7 @@
         document.querySelector("#request-draft-changes").disabled = !awaitingApproval;
         renderQuotationPanel(order);
         renderPaymentPanel(order);
+        renderPaymentSnapshot(order);
         const pendingStatuses = ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"];
         // Confirmed orders have a verified payment, so they are never cancellable here.
         const hasPendingPayment = (order.payment_submissions || []).some((item) => item.status === "pending");
@@ -665,11 +994,15 @@
         cancelButton.hidden = !canCancel;
         cancelButton.disabled = false;
         // Tracking (production, pickup, courier), cancellation and refund requests, and the receipt.
+        // PortalTracking.render() computes the receipt toggle from this order's current action flags.
         window.PortalTracking?.render(order, {
-            orderAction, money, formatDate, make, definitionList, fileAsDataUrl, paymentMethods, copyButton, detailError,
+            orderAction, confirmAction, money, formatDate, make, definitionList, fileAsDataUrl,
+            paymentMethods, paymentMethodsStatus, copyButton, detailError,
             canAct: detailSource === "account" || signedIn,
         });
-        detail.scrollIntoView({ block: "start", behavior: "instant" });
+        renderActionStrip(order);
+        // Only an explicit open scrolls to the top; refreshing after an action keeps the customer in place.
+        if (options.scroll) detail.scrollIntoView({ block: "start", behavior: "instant" });
     }
 
     async function loadOrder(reference) {
@@ -681,7 +1014,7 @@
             detailSource = "account";
             accountSection.hidden = true;
             lookupPanel.hidden = true;
-            renderDetail(order);
+            renderDetail(order, { scroll: true });
         } catch (issue) {
             if (issue.status === 401) {
                 // The sign-in ended (expired, or the password was reset on another device).
@@ -716,28 +1049,12 @@
         accountPanel.scrollIntoView({ block: "start", behavior: "instant" });
     });
 
-    document.querySelector("#approve-draft").addEventListener("click", async (event) => {
-        const button = event.currentTarget;
-        if (!currentOrder || !(await window.PrintConfirm("Approve this draft? The administrator may then move the order to printing.", { title: "Approve draft?", confirmLabel: "Approve draft" }))) return;
-        void orderAction("approve", {}, "The draft approval could not be recorded.", button);
-    });
-
-    document.querySelector("#request-draft-changes").addEventListener("click", async (event) => {
-        const button = event.currentTarget;
-        const noteInput = document.querySelector("#draft-revision-note");
-        const note = noteInput.value.trim();
-        if (!note) {
-            detailError.textContent = "Describe the changes you want in the revision instructions.";
-            noteInput.focus();
-            return;
-        }
-        if (!currentOrder || !(await window.PrintConfirm("Ask the shop to revise this draft with your instructions?", { title: "Request revision?", confirmLabel: "Request revision" }))) return;
-        void orderAction("request-changes", { note }, "The revision request could not be recorded.", button);
-    });
+    document.querySelector("#approve-draft").addEventListener("click", (event) => { void approveDraft(event.currentTarget); });
+    document.querySelector("#request-draft-changes").addEventListener("click", (event) => { void requestDraftChanges(event.currentTarget); });
 
     document.querySelector("#cancel-order").addEventListener("click", async (event) => {
         const button = event.currentTarget;
-        if (!currentOrder || !(await window.PrintConfirm("Cancel this request? This cannot be undone.", { title: "Cancel request?", confirmLabel: "Cancel request", tone: "danger" }))) return;
+        if (!currentOrder || !(await confirmAction("Cancel this request? This cannot be undone.", { title: "Cancel request?", confirmLabel: "Cancel request", tone: "danger" }))) return;
         void orderAction("cancel", {}, "The request could not be cancelled.", button);
     });
 

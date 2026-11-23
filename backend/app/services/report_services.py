@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 from backend.app.models.order import FULFILLMENT_METHODS, PAYMENT_OPTIONS, OrderRecord
 from backend.app.repositories import admin_repository, catalog_repository, chatbot_repository, customer_repository, order_repository
-from backend.app.services import fulfillment_services, order_services, refund_services, shop_settings_services
+from backend.app.services import fulfillment_services, order_services, payment_verification_services, refund_services, shop_settings_services
 from backend.app.utils.order_number import SHOP_TIMEZONE
 
 
@@ -564,8 +564,33 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
         "payment_option_label": base["payment_option_label"],
     }
     entries = []
+    submissions_by_id = {str(item.get("id")): item for item in order_services.submissions(order)}
+
+    def ocr_columns(item: dict[str, Any], required: float, verification: dict[str, Any]) -> dict[str, Any]:
+        ocr = item.get("ocr") if isinstance(item.get("ocr"), dict) else {}
+        fields = ocr.get("fields", {}) if isinstance(ocr, dict) else {}
+        stored = item.get("verification") if isinstance(item.get("verification"), dict) else verification
+        try:
+            extracted = float(str(fields.get("amount") or "").replace(",", ""))
+        except ValueError:
+            extracted = None
+        return {
+            "ocr_reference": str(fields.get("reference") or ""),
+            "ocr_amount": money(extracted) if extracted is not None else None,
+            "required_amount": money(required),
+            "ocr_confidence": float(ocr.get("confidence") or 0) if isinstance(ocr, dict) else 0.0,
+            "ocr_verification_status": str(stored.get("status") or verification.get("status") or ""),
+            "verification_status_label": stored.get("status_label")
+            or payment_verification_services.STATUS_LABELS.get(stored.get("status") or verification.get("status") or "", ""),
+            "submitted_at": item.get("submitted_at"),
+            "receipt_url": (f"/api/admin/orders/{order['reference']}/files/{(item.get('proof') or {}).get('id')}"
+                            if isinstance(item.get("proof"), dict) and (item.get("proof") or {}).get("id") else ""),
+            "verification_method": item.get("verification_method") or stored.get("verification_method", ""),
+        }
+
     for index, payment in enumerate(order["payments"], start=1):
         verification = order_services.payment_verification(payment)
+        linked = submissions_by_id.get(str(payment.get("submission_id") or ""), {})
         entries.append({
             **shared,
             "id": f"{order['reference']}-P{index}",
@@ -584,6 +609,7 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
             "verified_by": verification["verified_by"],
             "verified_at": verification["verified_at"],
             "counts_as_paid": True,
+            **ocr_columns(linked, float(payment.get("amount") or 0), verification),
         })
     for item in order_services.submissions(order):
         status = item.get("status", "pending")
@@ -609,6 +635,7 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
             "verified_by": item.get("reviewed_by", "") if rejected else "",
             "verified_at": item.get("reviewed_at") if rejected else None,
             "counts_as_paid": False,
+            **ocr_columns(item, float(item.get("amount") or 0), {"status": order_services.VERIFICATION_REJECTED if rejected else order_services.VERIFICATION_PENDING}),
         })
     return entries
 

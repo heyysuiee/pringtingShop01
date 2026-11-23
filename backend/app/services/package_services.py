@@ -10,7 +10,7 @@ from typing import Any
 
 from backend.app.models.catalog import CatalogProduct, InvitationPackage
 from backend.app.repositories import catalog_repository, package_repository
-from backend.app.services import catalog_services
+from backend.app.services import catalog_services, file_services
 
 
 _bad = catalog_services._bad
@@ -151,6 +151,7 @@ def _package_values(payload: dict[str, Any], current: InvitationPackage | None) 
     return values
 
 
+@file_services.compensating_files
 def create_package(product_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     product = _product(product_id, active_only=False)
     values = _package_values(payload, None)
@@ -160,6 +161,7 @@ def create_package(product_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {**admin_packages(product["id"]), "package_id": package_id}
 
 
+@file_services.compensating_files
 def update_package(package_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = package_repository.get_package(package_id)
     if current is None:

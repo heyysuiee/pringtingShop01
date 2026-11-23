@@ -2017,3 +2017,145 @@ textarea:focus-visible {
         width: 100%;
     }
 }
+
+/* ---------- OCR-assisted payment review ---------- */
+
+.ocr-review {
+    display: grid;
+    gap: 12px;
+}
+
+.ocr-review .notice-card {
+    margin: 0;
+}
+
+.ocr-compare {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(360px, 1.2fr);
+    gap: 14px;
+    align-items: start;
+}
+
+.ocr-side {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--white);
+}
+
+.ocr-side > h5 {
+    margin: 0 0 8px;
+    color: var(--dark-brown);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.ocr-side .proof-preview {
+    display: block;
+    max-height: 350px;
+    overflow: auto;
+}
+
+.ocr-side .proof-preview img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+.ocr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+}
+
+.ocr-table th,
+.ocr-table td {
+    padding: 6px 7px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.ocr-table thead th {
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.ocr-table tbody th {
+    width: 22%;
+    color: var(--dark-brown);
+    font-weight: 700;
+}
+
+.ocr-row.ocr-match {
+    background: rgba(46, 125, 70, 0.08);
+}
+
+.ocr-row.ocr-inconsistent {
+    background: rgba(180, 45, 45, 0.09);
+}
+
+.ocr-row.ocr-missing,
+.ocr-row.ocr-pending {
+    background: rgba(180, 130, 20, 0.08);
+}
+
+.ocr-state {
+    white-space: nowrap;
+    font-weight: 700;
+}
+
+.ocr-match .ocr-state {
+    color: #2e7d46;
+}
+
+.ocr-inconsistent .ocr-state {
+    color: #b42d2d;
+}
+
+.ocr-missing .ocr-state,
+.ocr-pending .ocr-state {
+    color: #8a6410;
+}
+
+.ocr-checks {
+    display: grid;
+    gap: 6px;
+    margin: 8px 0 0;
+    padding: 0 0 0 18px;
+    font-size: 10px;
+}
+
+.ocr-check {
+    padding: 3px 0;
+}
+
+.ocr-confidence {
+    display: inline-block;
+    min-width: 40px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--text-primary);
+    font-size: 9px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.ocr-confidence.low {
+    background: rgba(180, 45, 45, 0.12);
+    color: #b42d2d;
+}
+
+@media (max-width: 900px) {
+    .ocr-compare {
+        grid-template-columns: 1fr;
+    }
+}

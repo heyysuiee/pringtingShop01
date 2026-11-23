@@ -15,12 +15,16 @@ temporary and shares them between every copy of the app.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Iterator
 from typing import Any
 
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.utils.clock import now_iso
+
+
+STORED_NAME = re.compile(r"[0-9a-f]{32}\.(?:jpg|jpeg|png|webp|pdf)", re.IGNORECASE)
 
 
 SCHEMA = (
@@ -63,7 +67,7 @@ SCHEMA = (
 
 
 def initialize() -> None:
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
 
@@ -90,13 +94,14 @@ def _session(row: sqlite3.Row | None) -> dict[str, Any] | None:
 # ------------------------------------------------------------------ upload sessions
 
 
-def purge_sessions_before(cutoff: str) -> None:
+def purge_sessions_before(cutoff: str) -> int:
     """Forget unfinished or unused uploads started before ``cutoff`` (ISO time) and their bytes."""
     with connection_scope() as connection:
         connection.execute(
             "DELETE FROM file_chunks WHERE owner IN (SELECT id FROM upload_sessions WHERE created_at < ?)", (cutoff,)
         )
-        connection.execute("DELETE FROM upload_sessions WHERE created_at < ?", (cutoff,))
+        cursor = connection.execute("DELETE FROM upload_sessions WHERE created_at < ?", (cutoff,))
+        return max(cursor.rowcount, 0)
 
 
 def open_session_count(customer_id: str) -> int:
@@ -229,3 +234,47 @@ def delete_stored_file(filename: str) -> None:
     with connection_scope() as connection:
         connection.execute("DELETE FROM file_chunks WHERE owner = ?", (filename,))
         connection.execute("DELETE FROM stored_files WHERE filename = ?", (filename,))
+
+
+# ------------------------------------------------------------------ orphan cleanup
+
+
+def delete_orphan_chunks() -> int:
+    """Remove byte chunks whose upload session or stored file no longer exists."""
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM file_chunks
+            WHERE owner NOT IN (SELECT id FROM upload_sessions)
+              AND owner NOT IN (SELECT filename FROM stored_files)
+            """
+        )
+        return max(cursor.rowcount, 0)
+
+
+def delete_empty_stored_files() -> int:
+    """Remove stored-file records with no byte chunks (a file that was never fully written)."""
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            "DELETE FROM stored_files WHERE NOT EXISTS (SELECT 1 FROM file_chunks WHERE owner = stored_files.filename)"
+        )
+        return max(cursor.rowcount, 0)
+
+
+def referenced_stored_names() -> set[str]:
+    """Every generated file name mentioned anywhere in the database (JSON columns included)."""
+    names: set[str] = set()
+    with connection_scope() as connection:
+        tables = [str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        for table in tables:
+            if table == "file_chunks":  # chunk bytes are not references, and can be very large
+                continue
+            columns = [str(row["name"]) for row in connection.execute(f'PRAGMA table_info("{table}")')]
+            if not columns:
+                continue
+            selected = ", ".join(f'"{column}"' for column in columns)
+            for row in connection.execute(f"SELECT {selected} FROM \"{table}\""):
+                for value in tuple(row):
+                    if isinstance(value, str):
+                        names.update(match.group(0).lower() for match in STORED_NAME.finditer(value))
+    return names

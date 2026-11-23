@@ -19,6 +19,13 @@
 
     const plural = (count, word) => `${number(count)} ${word}${count === 1 ? "" : "s"}`;
 
+    /** Server-provided cap: the money still refundable on this order, never negative or NaN. */
+    const refundCap = (order) => {
+        const value = Number(order.max_refundable);
+        return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const capNote = (cap) => `Up to ${money(cap)} is still refundable on this order (verified payments minus earlier refunds).`;
+
     function readFile(file) {
         return new Promise((resolve, reject) => {
             if (file.size > MAX_FILE_BYTES) {
@@ -244,11 +251,11 @@
         );
     }
 
-    function deductionRows() {
+    function deductionRows(cap) {
         const host = h("div", { className: "op-deductions" });
         const add = () => {
             const label = textInput({ placeholder: "e.g. Design work completed", maxlength: 160 });
-            const amount = h("input", { type: "number", min: "0.01", step: "0.01", placeholder: "Amount" });
+            const amount = h("input", { type: "number", min: "0.01", max: String(cap), step: "0.01", placeholder: `Amount (max ${money(cap)})` });
             const remove = h("button", { className: "button button-small", type: "button", text: "Remove", onclick: () => row.remove() });
             const row = h("div", { className: "op-deduction-row" }, label, amount, remove);
             host.append(row);
@@ -256,30 +263,57 @@
         const addButton = h("button", { className: "button button-small", type: "button", text: "+ Add documented deduction", onclick: add });
         return {
             element: h("div", {}, host, addButton),
-            values: () => [...host.querySelectorAll(".op-deduction-row")].map((row) => {
-                const [label, amount] = row.querySelectorAll("input");
-                return { label: label.value.trim(), amount: Number(amount.value) };
-            }).filter((item) => item.label || item.amount),
+            values: () => {
+                const list = [...host.querySelectorAll(".op-deduction-row")].map((row) => {
+                    const [label, amount] = row.querySelectorAll("input");
+                    const text = label.value.trim();
+                    const value = amount.value.trim();
+                    return { label: text, amount: value === "" ? null : Number(value) };
+                }).filter((item) => item.label || item.amount !== null);
+                if (list.some((item) => !item.label)) throw new Error("Enter a description for each deduction.");
+                if (list.some((item) => item.amount === null || !Number.isFinite(item.amount) || item.amount <= 0)) throw new Error("Enter an amount greater than zero for each deduction.");
+                if (list.some((item) => item.amount > cap)) throw new Error(`A deduction cannot exceed ${money(cap)}, the amount still refundable on this order.`);
+                const total = list.reduce((sum, item) => sum + item.amount, 0);
+                if (total > cap) throw new Error(`Deductions of ${money(total)} exceed the ${money(cap)} refundable on this order.`);
+                return list.map(({ label, amount }) => ({ label, amount }));
+            },
         };
     }
 
     function decideCancellation(order, request, ctx, reload) {
-        const deductions = deductionRows();
-        const justification = textArea({ placeholder: "Required when there are deductions: the documented costs and the approved policy" });
-        const refundAmount = h("input", { type: "number", min: "0", step: "0.01", placeholder: `Default: ${money(order.max_refundable)} minus deductions` });
+        const cap = refundCap(order);
+        const deductions = deductionRows(cap);
+        const justificationField = formField("Deduction justification", textArea({ placeholder: "Documented costs and the approved policy" }), true);
+        const justification = justificationField.querySelector("textarea");
+        justificationField.append(h("span", { className: "field-note", text: "Required when you enter a deduction." }));
+        const refundAmount = h("input", { type: "number", min: "0", max: String(cap), step: "0.01", placeholder: `Maximum ${money(cap)} minus deductions` });
+        const refundField = formField("Refund amount (PHP)", refundAmount);
+        refundField.append(h("span", { className: "field-note", text: `${capNote(cap)} Leave blank to use ${money(cap)} minus your deductions.` }));
         const work = textArea({ placeholder: "Work completed and documented expenses (draft, printing, materials)" });
         const remarks = textArea({ placeholder: "Remarks for the customer (optional)" });
+        const recipientInfo = request.refund_recipient || {};
+        const recipientName = textInput({ value: recipientInfo.name || "", maxlength: 120, placeholder: "Account name" });
+        const recipientNumber = textInput({ value: recipientInfo.number || "", maxlength: 40, placeholder: "E-wallet number", inputMode: "tel" });
+        const recipientProvider = textInput({ value: recipientInfo.provider || "Original payment method", maxlength: 80, placeholder: "E-wallet / bank / other" });
+        const recipientField = h("div", { className: "form-field full" },
+            h("span", { className: "form-label", text: "Refund recipient (required if a refund is due)" }),
+            h("div", { className: "form-grid" },
+                formField("E-wallet / method", recipientProvider),
+                formField("Account name", recipientName),
+                formField("Account number", recipientNumber)),
+            h("span", { className: "field-note", text: "If this cancellation is approved with a refund amount, recipient name and number are required." }));
         const approve = h("button", { className: "button button-primary", type: "submit", text: "Approve cancellation" });
         const reject = h("button", { className: "button button-danger-strong", type: "button", text: "Reject request" });
         const policy = order.cancellation_policy || {};
         const pending = (order.payment_submissions || []).some((item) => item.status === "pending");
-        const form = actionForm("Review this cancellation", `Stage: ${policy.stage}. ${policy.guidance} This is the shop's proposed policy (guidance only): enter any deduction yourself, with its justification. Verified payments ${money(order.summary.amount_paid)}; refundable now ${money(order.max_refundable)}.`,
+        const form = actionForm("Review this cancellation", `Stage: ${policy.stage}. ${policy.guidance} This is the shop's proposed policy (guidance only): enter any deduction yourself, with its justification. Verified payments ${money(order.summary.amount_paid)}; refundable now ${money(cap)}.`,
             pending ? h("p", { className: "notice-card notice-warning", text: "A payment is waiting for verification. Verify or reject it first so the refund is calculated from verified money only." }) : null,
             h("div", { className: "form-grid" },
                 formField("Completed work / documented expenses", work, true),
                 h("div", { className: "form-field full" }, h("span", { className: "form-label", text: "Deductions" }), deductions.element),
-                formField("Deduction justification", justification, true),
-                formField("Refund amount (PHP)", refundAmount),
+                justificationField,
+                refundField,
+                recipientField,
                 formField("Remarks", remarks, true)),
             h("div", { className: "dialog-actions" }, reject, approve));
         reject.addEventListener("click", async () => {
@@ -289,15 +323,34 @@
         });
         return bindSubmit(form, ctx, order, `cancellations/${encodeURIComponent(request.id)}/approve`, async () => {
             const list = deductions.values();
-            if (list.some((item) => !item.label || !(item.amount > 0))) throw new Error("Each deduction needs a description and an amount.");
+            if (list.length && !justification.value.trim()) throw new Error("Enter a justification for the deductions before approving.");
+            const deducted = list.reduce((sum, item) => sum + item.amount, 0);
+            const remaining = Math.max(0, Math.round((cap - deducted) * 100) / 100);
             const body = { deductions: list, deduction_justification: justification.value.trim(), completed_work: work.value.trim(), remarks: remarks.value.trim() };
-            if (refundAmount.value.trim() !== "") body.refund_amount = Number(refundAmount.value);
+            if (refundAmount.value.trim() !== "") {
+                const value = Number(refundAmount.value);
+                if (!Number.isFinite(value) || value < 0) throw new Error("Enter a refund amount of zero or more.");
+                if (value > remaining + 0.005) throw new Error(`The refund cannot exceed ${money(remaining)} after deductions.`);
+                body.refund_amount = Math.round(value * 100) / 100;
+            }
+            const refund = body.refund_amount ?? Math.max(0, Math.round((cap - deducted) * 100) / 100);
+            const rName = recipientName.value.trim();
+            const rNumber = recipientNumber.value.trim();
+            const rProvider = recipientProvider.value.trim();
+            if (refund > 0 && (!rName || !rNumber)) throw new Error("Enter the refund recipient's e-wallet name and number before approving a cancellation that includes a refund.");
+            if (rName || rNumber || rProvider) {
+                body.recipient_name = rName;
+                body.recipient_number = rNumber;
+                body.refund_provider = rProvider || "Original payment method";
+            }
             return body;
         }, {
             confirm: (body) => {
                 const deducted = body.deductions.reduce((sum, item) => sum + item.amount, 0);
-                const refund = body.refund_amount ?? Math.max(0, order.max_refundable - deducted);
-                return { title: "Approve the cancellation?", message: "The order is cancelled and production, payment, and dispatch stop. A refund record is created when money is due back.", confirmLabel: "Approve cancellation", tone: "danger", details: [["Verified payments", money(order.summary.amount_paid)], ["Deductions", money(deducted)], ["Refund to approve", money(refund)]] };
+                const refund = body.refund_amount ?? Math.max(0, Math.round((cap - deducted) * 100) / 100);
+                const details = [["Verified payments", money(order.summary.amount_paid)], ["Refundable now", money(cap)], ["Deductions", money(deducted)], ["Left after deductions", money(Math.max(0, Math.round((cap - deducted) * 100) / 100))], ["Refund to approve", money(refund)]];
+                if (refund > 0) details.push(["Refund recipient", `${body.recipient_name || ""} · ${body.recipient_number || ""}`]);
+                return { title: "Approve the cancellation?", message: "The order is cancelled and production, payment, and dispatch stop. A refund record is created when money is due back.", confirmLabel: "Approve cancellation", tone: "danger", details };
             },
             success: "Cancellation approved.",
             reload,
@@ -310,7 +363,7 @@
         if (!refunds.length && !canOpen) return null;
         return h("section", { className: "fact-card", dataset: { focus: "refunds" } },
             h("h3", { text: `Refunds (${refunds.length})` }),
-            h("p", { className: "field-note", text: `Verified payments ${money(order.summary.amount_paid)} · refunded ${money(order.payment?.refunded || 0)} · still refundable ${money(order.max_refundable)}` }),
+            h("p", { className: "field-note", text: `Verified payments ${money(order.summary.amount_paid)} · refunded ${money(order.payment?.refunded || 0)} · still refundable ${money(refundCap(order))}` }),
             refunds.length ? h("ol", { className: "op-list" }, ...[...refunds].reverse().map((item) => h("li", {},
                 h("div", { className: "op-list-head" }, h("strong", { text: `${item.id} · ${item.reason_label}` }), badge(item.status_label)),
                 ctx.detailList([
@@ -338,9 +391,17 @@
         const base = `refunds/${encodeURIComponent(refund.id)}`;
         const wrap = h("div", { className: "op-refund-actions" });
         if (refund.status === "pending_review") {
-            const amount = h("input", { type: "number", min: "0.01", step: "0.01", value: refund.requested_amount ?? "", required: true });
-            const deductions = deductionRows();
-            const justification = textArea({ placeholder: "Required when there are deductions" });
+            const cap = refundCap(order);
+            const requested = Number(refund.requested_amount);
+            const initialAmount = refund.requested_amount === null || refund.requested_amount === undefined
+                ? "" : (Number.isFinite(requested) ? Math.min(Math.max(requested, 0), cap) : "");
+            const amount = h("input", { type: "number", min: "0.01", max: String(cap), step: "0.01", value: initialAmount, required: true });
+            const amountField = formField("Approved amount (PHP)", amount);
+            amountField.append(h("span", { className: "field-note", text: capNote(cap) }));
+            const deductions = deductionRows(cap);
+            const justificationField = formField("Deduction justification", textArea({ placeholder: "Documented costs and the approved policy" }), true);
+            const justification = justificationField.querySelector("textarea");
+            justificationField.append(h("span", { className: "field-note", text: "Required when you enter a deduction." }));
             const remarks = textArea({ placeholder: "Remarks (optional; required for a reprint)" });
             const approve = h("button", { className: "button button-primary", type: "submit", text: "Approve refund" });
             const reprint = ["incorrect_product", "damaged_product"].includes(refund.reason)
@@ -348,11 +409,11 @@
             const reject = h("button", { className: "button button-danger-strong", type: "button", text: "Reject" });
             const notEligible = h("button", { className: "button", type: "button", text: "Not eligible" });
             const reprintFields = reprint ? reprintOptions(order, { requireReason: false }) : null;
-            const form = actionForm("Review refund request", `Maximum for this refund: ${money(order.max_refundable)} (verified payments minus completed and approved refunds). ${["incorrect_product", "damaged_product"].includes(refund.reason) ? "Wrong or damaged products: no change-of-mind deductions apply." : ""}`,
+            const form = actionForm("Review refund request", `Maximum for this refund: ${money(cap)} (verified payments minus completed and approved refunds). ${["incorrect_product", "damaged_product"].includes(refund.reason) ? "Wrong or damaged products: no change-of-mind deductions apply." : ""}`,
                 h("div", { className: "form-grid" },
-                    formField("Approved amount (PHP)", amount),
+                    amountField,
                     h("div", { className: "form-field full" }, h("span", { className: "form-label", text: "Deductions" }), deductions.element),
-                    formField("Deduction justification", justification, true),
+                    justificationField,
                     formField("Remarks", remarks, true)),
                 reprintFields ? h("details", { className: "op-details" }, h("summary", { text: "Reprint options (for “Resolve by reprint”)" }), reprintFields.element) : null,
                 h("div", { className: "dialog-actions" }, reject, notEligible, reprint, approve));
@@ -380,9 +441,17 @@
             });
             wrap.append(bindSubmit(form, ctx, order, `${base}/approve`, async () => {
                 const list = deductions.values();
-                if (list.some((item) => !item.label || !(item.amount > 0))) throw new Error("Each deduction needs a description and an amount.");
-                return { resolution: "refund", amount: Number(amount.value), deductions: list, deduction_justification: justification.value.trim(), remarks: remarks.value.trim() };
-            }, { confirm: (body) => ({ title: "Approve this refund?", message: "The amount is reserved for this refund. Mark it Refunded only after the transfer is confirmed.", confirmLabel: "Approve refund", details: [["Approved amount", money(body.amount)]] }), success: "Refund approved.", reload }));
+                if (list.length && !justification.value.trim()) throw new Error("Enter a justification for the deductions before approving.");
+                const deducted = list.reduce((sum, item) => sum + item.amount, 0);
+                const remaining = Math.max(0, Math.round((cap - deducted) * 100) / 100);
+                const value = Number(amount.value);
+                if (!Number.isFinite(value) || value <= 0) throw new Error("Enter an approved amount greater than zero.");
+                if (value > remaining + 0.005) throw new Error(`The approved amount cannot exceed ${money(remaining)} after deductions.`);
+                return { resolution: "refund", amount: Math.round(value * 100) / 100, deductions: list, deduction_justification: justification.value.trim(), remarks: remarks.value.trim() };
+            }, { confirm: (body) => {
+                const deducted = body.deductions.reduce((sum, item) => sum + item.amount, 0);
+                return { title: "Approve this refund?", message: "The amount is reserved for this refund. Mark it Refunded only after the transfer is confirmed.", confirmLabel: "Approve refund", details: [["Refundable now", money(cap)], ["Deductions", money(deducted)], ["Left after deductions", money(Math.max(0, Math.round((cap - deducted) * 100) / 100))], ["Approved amount", money(body.amount)]] };
+            }, success: "Refund approved.", reload }));
         }
         if (refund.status === "approved" || refund.status === "failed") {
             const start = h("button", { className: "button button-primary button-small", type: "button", text: refund.status === "failed" ? "Retry transfer" : "Start processing" });
@@ -446,7 +515,7 @@
     function openRefundForm(order, ctx, reload) {
         const reason = h("select", {}, ...[["shop_unable", "Shop unable to fulfill the order"], ["duplicate_payment", "Duplicate payment"], ["excess_payment", "Excess payment"], ["incorrect_product", "Incorrect product"], ["damaged_product", "Damaged product"], ["other", "Other verified reason"]].map(([value, text]) => new Option(text, value)));
         const details = textArea({ required: true, placeholder: "What happened and how it was verified" });
-        const form = actionForm("Open a refund", "Use for a duplicate or excess payment (the order is not cancelled) or when the shop cannot fulfill the order. It starts in Pending Review.",
+        const form = actionForm("Open a refund", `Use for a duplicate or excess payment (the order is not cancelled) or when the shop cannot fulfill the order. It starts in Pending Review. ${capNote(refundCap(order))}`,
             h("div", { className: "form-grid" }, formField("Reason", reason), formField("Details", details, true)),
             h("div", { className: "dialog-actions" }, h("button", { className: "button button-small", type: "submit", text: "Open refund" })));
         const wrapper = h("details", { className: "op-details" }, h("summary", { text: "Open a refund for this order" }), form);
@@ -897,13 +966,13 @@
                 return;
             }
             host.replaceChildren(
-                h("p", { className: "field-note", text: "Customers see only active methods, with these account details and QR codes. Payments stay Pending Verification until you check the money in the shop's account; no payment is confirmed automatically." }),
+                h("p", { className: "field-note", text: "Customers see only active methods, with these account details and QR codes. Receipt scanning is advisory: payments stay Pending Verification until you check the money in the shop's account or an authorized provider independently confirms it." }),
                 ...data.methods.map((method) => methodEditor(method, load)),
                 h("details", { className: "op-details" }, h("summary", { text: "Add another e-wallet" }), methodEditor(null, load)),
             );
         };
         load();
-        return ctx.panel("Payment methods", "GCash, Maya, and other e-wallets the shop accepts", host);
+        return ctx.panel("Payment methods", "The e-wallets and other payment options the shop accepts", host);
     }
 
     function methodEditor(method, reload) {
@@ -917,6 +986,15 @@
         const active = h("input", { type: "checkbox", checked: method ? method.active : true });
         const qr = fileInput(`qr-${method?.id || "new"}`, { multiple: false, accept: IMAGE_ACCEPT });
         const removeQr = method?.qr_url ? h("input", { type: "checkbox" }) : null;
+        const verification = h("select", {},
+            h("option", { value: "manual", text: "Manual confirmation (recommended)" }),
+            h("option", { value: "api", text: "Independent provider API confirmation" }));
+        verification.value = method?.verification_method || "manual";
+        const gatewayProvider = textInput({ maxlength: 60, value: method?.gateway?.provider || "", placeholder: "e.g. e-wallet merchant API" });
+        const gatewayEndpoint = textInput({ maxlength: 200, value: method?.gateway?.endpoint || "", placeholder: "https://provider.example.com/verify" });
+        const gatewayKey = h("input", { type: "password", maxlength: 300, autocomplete: "off", placeholder: method?.gateway?.configured ? "Saved — leave blank to keep" : "API key" });
+        const gatewayTimeout = h("input", { type: "number", min: "1", max: "30", step: "1", value: String(method?.gateway?.timeout_seconds || 10) });
+        const gatewayNote = h("p", { className: "field-note", text: method?.gateway?.configured ? "An API key is saved. It is never shown to customers or returned by this settings page." : "No API key is saved. With API mode selected, receipts stay pending until you confirm them manually." });
         const save = h("button", { className: "button button-primary button-small", type: "submit", text: isNew ? "Add payment method" : "Save" });
         const remove = isNew ? null : h("button", { className: "button button-small button-danger-strong", type: "button", text: "Delete" });
         const form = h("form", { className: "op-method" },
@@ -926,7 +1004,11 @@
                     method && !method.configured ? h("p", { className: "field-note", text: "Account number or QR code not set yet." }) : null)),
             h("div", { className: "form-grid" },
                 formField("Provider", provider), formField("Account / merchant name", accountName), formField("Account number", accountNumber),
-                formField("Display order", order), formField("Instructions", instructions, true), formField("QR code image (PNG, JPG, WebP)", qr, true)),
+                formField("Display order", order), formField("Instructions", instructions, true), formField("QR code image (PNG, JPG, WebP)", qr, true),
+                formField("Payment verification method", verification, true)),
+            h("details", { className: "op-details" }, h("summary", { text: "Provider API settings (optional)" }), gatewayNote,
+                h("div", { className: "form-grid" }, formField("Gateway provider", gatewayProvider), formField("Verification endpoint", gatewayEndpoint),
+                    formField("API key", gatewayKey), formField("Timeout (seconds)", gatewayTimeout))),
             h("label", { className: "check-row" }, active, " Active (shown to customers)"),
             removeQr ? h("label", { className: "check-row" }, removeQr, " Remove the current QR code") : null,
             h("div", { className: "dialog-actions" }, remove, save));
@@ -938,6 +1020,13 @@
                     const body = {
                         provider: provider.value.trim(), account_name: accountName.value.trim(), account_number: accountNumber.value.trim(),
                         instructions: instructions.value.trim(), display_order: Number.parseInt(order.value || "0", 10), active: active.checked,
+                        verification_method: verification.value,
+                        gateway_config: {
+                            provider: gatewayProvider.value.trim(),
+                            endpoint: gatewayEndpoint.value.trim(),
+                            timeout_seconds: Number.parseInt(gatewayTimeout.value || "10", 10),
+                            ...(gatewayKey.value ? { api_key: gatewayKey.value } : {}),
+                        },
                     };
                     const [file] = await readFiles(qr, 1);
                     if (file) body.qr = file;

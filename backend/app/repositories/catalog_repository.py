@@ -25,7 +25,7 @@ from backend.app.database.catalog_seed import (
     invitation_size_help,
     slug,
 )
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.models.catalog import CatalogCategory, CatalogField, CatalogProduct, FieldOption
 from backend.app.utils.clock import now_iso
 from backend.app.utils.images import optimized_image
@@ -154,7 +154,7 @@ SCHEMA = (
 
 
 def initialize() -> None:
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
         _ensure_columns(connection)

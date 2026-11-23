@@ -2,7 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+
+def _text(value: Any, label: str, limit: int) -> Any:
+    """Trim and bound text supplied to an order action, leaving omitted values to the service rules.
+
+    The services still decide which fields are required and whether a value is allowed for the current
+    order state; this check only stops malformed types and oversized strings before they reach them.
+    """
+    if value is None:
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be text.")
+    value = value.strip()
+    if len(value) > limit:
+        raise ValueError(f"{label} must be {limit} characters or fewer.")
+    return value
 
 
 class OrderSubmission(BaseModel):
@@ -37,9 +53,20 @@ class CustomerOrderAction(BaseModel):
 
     email: Any = None
 
+    @field_validator("email")
+    @classmethod
+    def _clean_email(cls, value: Any) -> Any:
+        return _text(value, "Email", 254)
+
 
 class CustomerOrderChanges(CustomerOrderAction):
     note: Any = ""
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        # Matches request_draft_changes() in order_services.py and the portal textarea.
+        return _text(value, "Note", 1000)
 
 
 class CustomerQuotationResponse(CustomerOrderAction):
@@ -48,6 +75,11 @@ class CustomerQuotationResponse(CustomerOrderAction):
     # Optional; only "down_payment" is accepted (Cash on Delivery is no longer offered).
     payment_option: Any = None
     reason: Any = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _clean_reason(cls, value: Any) -> Any:
+        return _text(value, "Reason", 500)
 
 
 class CustomerPaymentSubmission(CustomerOrderAction):
@@ -59,6 +91,44 @@ class CustomerPaymentSubmission(CustomerOrderAction):
     reference: Any = ""
     # Required GCash screenshot or receipt: {"name": "...", "dataUrl": "data:image/png;base64,..."}.
     proof: Any = None
+
+    @field_validator("method")
+    @classmethod
+    def _clean_method(cls, value: Any) -> Any:
+        return _text(value, "Payment method", 60)
+
+    @field_validator("reference")
+    @classmethod
+    def _clean_reference(cls, value: Any) -> Any:
+        return _text(value, "Payment reference", 120)
+
+
+class CustomerPaymentScan(CustomerPaymentSubmission):
+    """Pre-submission receipt scan. The result is advisory; the authoritative scan runs on submit."""
+
+
+class AdminPaymentNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    note: Any = ""
+    expected_version: Any = None
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        return _text(value, "Verification note", 500)
+
+
+class AdminReceiptRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    note: Any = ""
+    expected_version: Any = None
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        return _text(value, "Note", 500)
 
 
 class NotificationsRead(BaseModel):
@@ -79,12 +149,28 @@ class AdminQuotation(BaseModel):
     note: Any = ""
     expected_version: Any = None
 
+    @field_validator("payment_instructions")
+    @classmethod
+    def _clean_instructions(cls, value: Any) -> Any:
+        # Matches set_quotation() and confirm_package_order() in order_services.py.
+        return _text(value, "Payment instructions", 1000)
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        return _text(value, "Note", 1000)
+
 
 class AdminConfirmation(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     payment_instructions: Any = ""
     expected_version: Any = None
+
+    @field_validator("payment_instructions")
+    @classmethod
+    def _clean_instructions(cls, value: Any) -> Any:
+        return _text(value, "Payment instructions", 1000)
 
 
 class AdminSubmissionReview(BaseModel):
@@ -96,6 +182,11 @@ class AdminSubmissionReview(BaseModel):
     # Reject: the reason shown to the customer.
     note: Any = ""
     expected_version: Any = None
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        return _text(value, "Reason", 500)
 
 
 class AdminPayment(BaseModel):
@@ -111,6 +202,21 @@ class AdminPayment(BaseModel):
     verification_note: Any = ""
     expected_version: Any = None
 
+    @field_validator("method")
+    @classmethod
+    def _clean_method(cls, value: Any) -> Any:
+        return _text(value, "Payment method", 60)
+
+    @field_validator("reference")
+    @classmethod
+    def _clean_reference(cls, value: Any) -> Any:
+        return _text(value, "Payment reference", 120)
+
+    @field_validator("verification_note")
+    @classmethod
+    def _clean_verification_note(cls, value: Any) -> Any:
+        return _text(value, "Verification note", 300)
+
 
 class AdminPaymentReference(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -122,6 +228,17 @@ class AdminPaymentReference(BaseModel):
     confirmed: Any = None
     expected_version: Any = None
 
+    @field_validator("reference")
+    @classmethod
+    def _clean_reference(cls, value: Any) -> Any:
+        return _text(value, "Payment reference", 120)
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        # Matches record_payment_reference() in order_services.py.
+        return _text(value, "Note", 300)
+
 
 class AdminDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -131,6 +248,11 @@ class AdminDraft(BaseModel):
     remarks: Any = ""
     expected_version: Any = None
 
+    @field_validator("remarks")
+    @classmethod
+    def _clean_remarks(cls, value: Any) -> Any:
+        return _text(value, "Design remarks", 1000)
+
 
 class AdminOrderStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -139,3 +261,13 @@ class AdminOrderStatus(BaseModel):
     # Optional reason recorded in the order history (e.g. why a request was rejected).
     note: Any = ""
     expected_version: Any = None
+
+    @field_validator("status")
+    @classmethod
+    def _clean_status(cls, value: Any) -> Any:
+        return _text(value, "Order status", 60)
+
+    @field_validator("note")
+    @classmethod
+    def _clean_note(cls, value: Any) -> Any:
+        return _text(value, "Reason", 500)

@@ -29,7 +29,7 @@ from fastapi import HTTPException
 
 from backend.app.models.order import FULFILLMENT_METHODS, OrderRecord
 from backend.app.repositories import order_repository
-from backend.app.services import notification_services, order_services, shop_settings_services
+from backend.app.services import file_services, notification_services, order_services, shop_settings_services
 from backend.app.utils.clock import now_iso
 
 
@@ -359,6 +359,7 @@ def can_report_issue(order: Mapping[str, Any]) -> bool:
 # ================================================================== production
 
 
+@file_services.compensating_files
 def update_production(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Record production progress: schedule, personnel, printed/completed quantities, remarks, photos."""
     order = _admin_order(reference)
@@ -413,6 +414,7 @@ def update_production(reference: str, payload: Mapping[str, Any], actor: str = A
     )
 
 
+@file_services.compensating_files
 def record_quality_check(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Quality checklist. Passed: the order moves to Packaging. Failed: back to In Production for rework."""
     order = _admin_order(reference)
@@ -470,6 +472,7 @@ def record_quality_check(reference: str, payload: Mapping[str, Any], actor: str 
     )
 
 
+@file_services.compensating_files
 def complete_packaging(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Finish packing. A fully paid order is released for pickup or dispatch; otherwise it waits for the balance."""
     order = _admin_order(reference)
@@ -574,6 +577,7 @@ def dispatch_order(reference: str, payload: Mapping[str, Any], actor: str = ADMI
     message += f" (tracking number {tracking})." if tracking else f" (delivered by {personnel})."
     if estimate:
         message += f" Estimated delivery: {estimate}. This is a courier estimate, not a guaranteed arrival date."
+    cycle = str(order_services.production(order).get("cycle") or 1)
     return _save(
         order,
         {"status": "Out for Delivery", "fulfillment": stored},
@@ -586,6 +590,11 @@ def dispatch_order(reference: str, payload: Mapping[str, Any], actor: str = ADMI
         admin=True,
         audit=_audit("delivery.dispatched", ADMIN, actor, courier=courier["name"], tracking=tracking, attempt=attempt["number"]),
         notifications=[notification_services.build(order, "out_for_delivery", f"dispatch:{attempt['number']}", "Out for delivery", message)],
+        claim_ops=[{
+            "op": "acquire", "kind": "tracking", "key": tracking.replace(" ", "").casefold(),
+            "context": f"cycle:{cycle}", "allow_context": f"cycle:{cycle}",
+            "detail": f"Tracking number {tracking} is already recorded on another order or an earlier cycle.",
+        }] if tracking else [],
     )
 
 
@@ -594,6 +603,7 @@ def _current_attempt(stored: dict[str, Any]) -> dict[str, Any] | None:
     return attempts[-1] if attempts and attempts[-1].get("status") == "out_for_delivery" else None
 
 
+@file_services.compensating_files
 def confirm_delivery(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     order = _admin_order(reference)
     _require_status(order, "Out for Delivery")
@@ -1039,6 +1049,24 @@ def reprint_updates(order: Mapping[str, Any], payload: Mapping[str, Any], actor:
     return updates, event, audit, notice
 
 
+def tracking_archive_ops(order: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Mark the current cycle's tracking numbers as archived when a reprint restarts production.
+
+    Redelivery within the same cycle may reuse a tracking number; a number from a cycle that has been
+    archived by a reprint may not, because it belongs to a parcel that was already handed to the courier.
+    """
+    stored = order_services.fulfillment(order)
+    cycle = str(order_services.production(order).get("cycle") or 1)
+    numbers = [stored.get("tracking_number")]
+    numbers.extend(item.get("tracking_number") for item in stored.get("attempts", []))
+    operations: list[dict[str, Any]] = []
+    for number in numbers:
+        key = str(number or "").replace(" ", "").casefold()
+        if len(key) >= 6:
+            operations.append({"op": "archive", "kind": "tracking", "key": key, "context": f"archived:{cycle}"})
+    return operations
+
+
 def start_reprint(reference: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     order = _admin_order(reference)
     updates, event, details, notice = reprint_updates(order, payload, actor)
@@ -1046,5 +1074,6 @@ def start_reprint(reference: str, payload: Mapping[str, Any], actor: str = ADMIN
         order, updates, event, payload.get("expected_version"), admin=True,
         audit=_audit("reprint.started", ADMIN, actor, **details),
         notifications=[notice],
+        claim_ops=tracking_archive_ops(order),
     )
 

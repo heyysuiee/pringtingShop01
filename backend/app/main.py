@@ -1,15 +1,18 @@
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import ClientDisconnect
 
 from backend.app.core.config import settings
 from backend.app.core.security import session_claims
+from backend.app.database.connection import exclusive_write
 from backend.app.repositories import (
     admin_repository,
     auth_throttle_repository,
@@ -21,6 +24,7 @@ from backend.app.repositories import (
     order_repository,
     package_repository,
     payment_method_repository,
+    session_revocation_repository,
     size_repository,
 )
 from backend.app.routes.admin import router as admin_router
@@ -30,6 +34,7 @@ from backend.app.routes.chatbot import router as chatbot_router
 from backend.app.routes.operations import router as operations_router
 from backend.app.routes.order import router as order_router
 from backend.app.routes.uploads import router as uploads_router
+from backend.app.services import file_services
 
 
 logger = logging.getLogger("printshop")
@@ -49,6 +54,7 @@ CUSTOMER_PAGES = {
     "/customer-portal": "customer-portal.html",
     "/sign-in": "sign-in.html",
     "/create-account": "create-account.html",
+    "/verify-email": "verify-email.html",
     "/forgot-password": "forgot-password.html",
 }
 # Admin pages require an administrator session: URL path -> file in frontend/admin.
@@ -88,23 +94,32 @@ async def lifespan(app: FastAPI):
             "PRINTSHOP_SECRET_KEY is not set, so a temporary key is used: every restart signs all customers out "
             "and cancels password resets in progress. Set it in the project-root .env file."
         )
-    customer_repository.initialize()
-    admin_repository.initialize()
-    auth_throttle_repository.initialize()
-    order_repository.initialize()
-    # E-wallet payment methods (GCash active, Maya inactive until the shop enters its account).
-    payment_method_repository.initialize()
-    catalog_repository.initialize()
-    # The standard size price lists (Tarpaulin sizes) reference catalog categories.
-    size_repository.initialize()
-    # Chunked uploads and order files kept in the database (PRINTSHOP_FILE_STORAGE=database).
-    file_repository.initialize()
-    # Packages reference catalog products, so this runs after the catalog is seeded/migrated.
-    package_repository.initialize()
-    # Shop-made designs (seeded with TEMPORARY SAMPLE designs until the shop uploads its own).
-    design_repository.initialize()
-    # Chatbot conversations, inquiries, and FAQs (links to customer accounts, so after customers).
-    chatbot_repository.initialize()
+    # One write transaction covers every schema change and seed marker. Two workers starting together
+    # cannot both seed the catalog, sizes, or FAQs (QA-023); the loser waits and sees the committed data.
+    with exclusive_write():
+        customer_repository.initialize()
+        admin_repository.initialize()
+        auth_throttle_repository.initialize()
+        session_revocation_repository.initialize()
+        order_repository.initialize()
+        # E-wallet payment methods (GCash active, Maya inactive until the shop enters its account).
+        payment_method_repository.initialize()
+        catalog_repository.initialize()
+        # The standard size price lists (Tarpaulin sizes) reference catalog categories.
+        size_repository.initialize()
+        # Chunked uploads and order files kept in the database (PRINTSHOP_FILE_STORAGE=database).
+        file_repository.initialize()
+        # Packages reference catalog products, so this runs after the catalog is seeded/migrated.
+        package_repository.initialize()
+        # Shop-made designs (seeded with TEMPORARY SAMPLE designs until the shop uploads its own).
+        design_repository.initialize()
+        # Chatbot conversations, inquiries, and FAQs (links to customer accounts, so after customers).
+        chatbot_repository.initialize()
+    # Remove uploads abandoned by crashed or interrupted requests. A 24-hour grace period protects
+    # files another request may still be writing.
+    cleanup = file_services.cleanup_orphans()
+    if any(cleanup.values()):
+        logger.info("Removed orphaned upload data on startup: %s", cleanup)
     app.state.database_ready = True
     try:
         yield
@@ -119,7 +134,8 @@ if settings.cors_origins:
         CORSMiddleware,
         allow_origins=list(settings.cors_origins),
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        # Chunked uploads use PUT; preflight must allow it for a cross-origin storefront.
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Idempotency-Key"],
     )
 @app.middleware("http")
@@ -134,6 +150,57 @@ async def revalidate_pages_and_code(request: Request, call_next):
     if "Cache-Control" not in response.headers and content_type.startswith(("text/html", "text/javascript", "application/javascript", "text/css")):
         response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+# Inline proof/draft uploads are JSON data URLs, which are about a third larger than the file itself.
+# Reject oversized bodies before FastAPI parses them; chunked uploads use a different streaming endpoint.
+INLINE_FILE_ROUTES = (
+    re.compile(r"^/api/orders/[^/]+/payments$"),
+    re.compile(r"^/api/orders/[^/]+/payments/scan$"),
+    re.compile(r"^/api/orders/[^/]+/refund-request$"),
+    re.compile(r"^/api/orders/[^/]+/delivery-issue$"),
+    re.compile(r"^/api/admin/orders/[^/]+/draft$"),
+    re.compile(r"^/api/admin/orders/[^/]+/refunds/[^/]+/[^/]+$"),
+)
+INLINE_BODY_LIMIT = int(settings.max_upload_mb * 1024 * 1024 * 4 / 3) + 256 * 1024
+
+
+def _too_large_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={"detail": f"The uploaded file is too large for this request. Use a file no larger than {settings.max_upload_mb} MB."},
+    )
+
+
+@app.middleware("http")
+async def cap_inline_upload_bodies(request: Request, call_next):
+    """Cap the real body bytes, including chunked-transfer requests without Content-Length.
+
+    The bounded body is replayed to the route so FastAPI can parse it normally; oversized bodies
+    never reach JSON parsing or the service's file decoders.
+    """
+    if request.method != "POST" or not any(pattern.match(request.url.path) for pattern in INLINE_FILE_ROUTES):
+        return await call_next(request)
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > INLINE_BODY_LIMIT:
+        return _too_large_response()
+
+    body = bytearray()
+    stream = request.stream()
+    try:
+        async for chunk in stream:
+            body.extend(chunk)
+            if len(body) > INLINE_BODY_LIMIT:
+                return _too_large_response()
+    except ClientDisconnect:
+        return JSONResponse(status_code=400, content={"detail": "The request was interrupted."})
+    finally:
+        await stream.aclose()
+
+    # BaseHTTPMiddleware replays a cached body to the route; store the bounded bytes here so
+    # FastAPI still parses the original JSON without reading the network stream a second time.
+    request._body = bytes(body)  # noqa: SLF001 - Starlette's documented body cache
+    return await call_next(request)
 
 
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
@@ -193,7 +260,7 @@ app.add_api_route("/admin/forgot-password", _admin_forgot_password, methods=["GE
 # script has loaded keeps the email and password in the request body, never in the URL. The scripts
 # send the real request as JSON to the /api/... endpoints. A plain form post is not processed (the body
 # is never read): the browser is sent back to the same page, keeping its ?next= return address.
-AUTH_FORM_PAGES = ("/sign-in", "/create-account", "/forgot-password", "/login", "/admin", "/admin/login", "/admin/forgot-password")
+AUTH_FORM_PAGES = ("/sign-in", "/create-account", "/verify-email", "/forgot-password", "/login", "/admin", "/admin/login", "/admin/forgot-password")
 
 
 def _reload_auth_page(request: Request) -> RedirectResponse:

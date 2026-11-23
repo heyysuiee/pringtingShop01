@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException, Request, Response
 
 from backend.app.core.config import settings
-from backend.app.repositories import admin_repository, customer_repository
+from backend.app.repositories import admin_repository, customer_repository, session_revocation_repository
 
 
 SESSION_COOKIE = "impress_session"
@@ -124,13 +124,26 @@ def create_session_cookie(
     )
 
 
-def clear_session_cookie(response: Response) -> None:
+def clear_session_cookie(response: Response, request: Request | None = None) -> None:
+    """Clear the browser cookie and, when the request is known, revoke the token on the server.
+
+    A signed cookie stays valid until its expiry even after the browser forgets it, so logout must
+    also record the token as revoked. Other devices keep their own (different) tokens.
+    """
+    if request is not None:
+        token = request.cookies.get(SESSION_COOKIE)
+        claims = read_session_token(token)
+        expires_at = claims["exp"] if claims and isinstance(claims.get("exp"), int) else int(time.time()) + SESSION_TTL_SECONDS
+        session_revocation_repository.revoke(token, expires_at)
     response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="strict", path="/")
     response.delete_cookie("impress_admin", httponly=True, samesite="strict", path="/api/admin")
 
 
 def session_claims(request: Request, role: str | None = None) -> dict[str, Any] | None:
-    claims = read_session_token(request.cookies.get(SESSION_COOKIE))
+    token = request.cookies.get(SESSION_COOKIE)
+    if session_revocation_repository.is_revoked(token):
+        return None
+    claims = read_session_token(token)
     if not claims or (role is not None and claims["role"] != role):
         return None
     if claims["role"] == "customer":
@@ -157,6 +170,9 @@ def require_same_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if not origin:
         return
+    # Behind a TLS terminator the internal ASGI scheme is http while browsers send an https Origin.
+    # Use the configured public scheme instead of trusting a client-supplied forwarding header.
+    public_scheme = settings.public_scheme or request.url.scheme
     try:
         parsed_origin = urlsplit(origin)
         origin_hostname = parsed_origin.hostname
@@ -174,7 +190,7 @@ def require_same_origin(request: Request) -> None:
             and parsed_origin.password is None
         )
         same_origin = valid_origin and (
-            parsed_origin.scheme.casefold() == request.url.scheme.casefold()
+            parsed_origin.scheme.casefold() == public_scheme.casefold()
             and origin_host == request.url.netloc.casefold()
         )
         configured_cross_origin = valid_origin and origin_key in {

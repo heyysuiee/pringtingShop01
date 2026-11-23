@@ -89,6 +89,39 @@ def send_password_reset_code(recipient: str, name: str, code: str, lifetime_minu
     send_message(recipient, "Your ImPRESSion PrintShop password reset code", body, html_body)
 
 
+def send_email_verification_code(recipient: str, name: str, code: str, lifetime_minutes: int) -> None:
+    """Send the one-time code that proves a new customer owns the address they registered with."""
+    greeting = f"Hello {name}," if name else "Hello,"
+    body = (
+        f"{greeting}\n\n"
+        f"Your ImPRESSion PrintShop email verification code is: {code}\n\n"
+        f"Enter this code on the Verify Email page within {lifetime_minutes} minutes to finish creating your account. "
+        "If you did not create this account, you can ignore this email; no one can sign in until the code is entered.\n\n"
+        "For your security, never share this code with anyone."
+    )
+    safe_greeting = html.escape(greeting)
+    html_body = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:24px;background:#f4f4f4;font-family:Segoe UI,Arial,sans-serif;color:#2b2b2b;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #d4d4d4;border-radius:12px;">
+    <tr><td style="padding:12px 32px;">
+      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESSion PrintShop</p>
+      <p style="margin:4px 0 0;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#5c5c5c;">Email verification</p>
+    </td></tr>
+    <tr><td style="padding:8px 32px 24px;">
+      <p style="margin:0 0 12px;font-size:15px;">{safe_greeting}</p>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Use this code to finish setting up your account:</p>
+      <p style="margin:0 0 16px;padding:14px 0;text-align:center;font-size:32px;font-weight:700;letter-spacing:10px;background:#f4f4f4;border-radius:8px;">{html.escape(code)}</p>
+      <p style="margin:0 0 12px;font-size:14px;line-height:1.6;">The code expires in {lifetime_minutes} minutes and can be used once.</p>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#5c5c5c;">If you did not create this account, ignore this email. Never share this code with anyone.</p>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+    send_message(recipient, "Verify your ImPRESSion PrintShop email address", body, html_body)
+
+
 def send_admin_password_reset_code(recipient: str, code: str, lifetime_minutes: int) -> None:
     body = (
         "Hello Administrator,\n\n"

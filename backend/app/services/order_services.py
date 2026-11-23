@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 import secrets
 import sqlite3
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -33,11 +34,17 @@ from backend.app.services import (
     catalog_services,
     design_services,
     file_services,
+    location_services,
     notification_services,
+    ocr_services,
     package_services,
+    payment_verification_services as verification_services,
     shop_settings_services,
 )
 from backend.app.utils.clock import now_iso
+
+
+logger = logging.getLogger("printshop.payments")
 from backend.app.utils.images import optimized_image
 
 
@@ -175,6 +182,14 @@ def _decode_upload(upload: Any, max_bytes: int = MAX_FILE_BYTES) -> tuple[OrderA
     """A file sent inline as {name, dataUrl}: payment proofs, drafts, and order files from older clients."""
     metadata, contents = file_services.decode_data_url(upload, max_bytes)
     return metadata, contents  # type: ignore[return-value]
+
+
+def _decode_receipt(upload: Any) -> tuple[OrderAttachment, bytes]:
+    """A payment receipt: JPG/JPEG, PNG, or PDF, with the existing signature and size validation."""
+    metadata, contents = _decode_upload(upload, MAX_FILE_BYTES)
+    if metadata["mime_type"] not in ocr_services.RECEIPT_MIME_TYPES:
+        raise HTTPException(status_code=422, detail="Upload the payment receipt as a JPG, PNG, or PDF file.")
+    return metadata, contents
 
 
 FileSource = bytes | str
@@ -583,8 +598,10 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
         }
         for attachment in order["attachments"]
     ]
-    result["payment_submissions"] = [
-        {
+    result["payment_submissions"] = []
+    for item in submissions(order):
+        stored_verification = item.get("verification") if isinstance(item.get("verification"), dict) else {}
+        view = {
             "id": item["id"],
             "amount": item["amount"],
             "method": item.get("method", ""),
@@ -596,6 +613,28 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
             "verified_amount": item.get("verified_amount"),
             "reviewed_at": item.get("reviewed_at"),
             "review_note": item.get("review_note", ""),
+            "verification_status": item.get("verification_status") or stored_verification.get("status") or (
+                "verified" if item.get("status") == "verified" else "rejected" if item.get("status") == "rejected" else "pending"
+            ),
+            "verification_status_label": stored_verification.get("status_label")
+            or verification_services.STATUS_LABELS.get(
+                item.get("verification_status") or ("verified" if item.get("status") == "verified" else "rejected" if item.get("status") == "rejected" else "pending"),
+                "Pending Verification",
+            ),
+            "verification_method": item.get("verification_method") or stored_verification.get("verification_method", "manual"),
+            "ocr": item.get("ocr") or {},
+            "verification": stored_verification,
+            # Customers see the note text and time in their payment history, but not the shop
+            # actor's private account details that the full admin record carries.
+            "admin_notes": item.get("admin_notes", []) if admin else [
+                {"note": str(note.get("note") or ""), "at": str(note.get("at") or "")}
+                for note in item.get("admin_notes", []) if isinstance(note, Mapping)
+            ],
+            "receipt_requests": item.get("receipt_requests", []) if admin else [
+                {"at": str(receipt_request.get("at") or ""), "note": str(receipt_request.get("note") or "")}
+                for receipt_request in item.get("receipt_requests", []) if isinstance(receipt_request, Mapping)
+            ],
+            "required_amount": item.get("amount"),
             "proof": {
                 "name": item["proof"]["name"],
                 "mime_type": item["proof"]["mime_type"],
@@ -603,8 +642,9 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
                 "url": url(item["proof"]["id"]),
             } if item.get("proof") else None,
         }
-        for item in submissions(order)
-    ]
+        if admin:
+            view["comparison"] = verification_services.comparison_view(order, view, stored_verification or {"status": view["verification_status"]})
+        result["payment_submissions"].append(view)
     from backend.app.services import fulfillment_services, refund_services
 
     result["production"] = fulfillment_services.production_view(order, url, admin)
@@ -624,7 +664,12 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     return result
 
 
-SUBMISSION_LABELS = {"pending": "Pending Verification", "verified": "Verified", "rejected": "Rejected"}
+SUBMISSION_LABELS = {
+    "pending": "Pending Verification",
+    "verified": "Verified",
+    "rejected": "Rejected",
+    "receipt_requested": "New Receipt Requested",
+}
 
 
 def next_customer_payment(order: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -714,11 +759,16 @@ def clean_fulfillment(value: Any) -> dict[str, str]:
         cleaned["contact_number"] = validate_phone(cleaned["contact_number"])
     except ValueError as error:
         raise HTTPException(status_code=422, detail=f"Delivery contact number: {error}") from error
+    # A municipality must belong to the selected province; canonical names keep existing orders readable.
+    address = location_services.resolve_address(cleaned["province"], cleaned["city"])
+    cleaned["province"] = address["province"]
+    cleaned["city"] = address["city"]
     # The delivery area, fee, and courier estimate are worked out on the server from the address.
     cleaned.update(shop_settings_services.delivery_quote(cleaned["province"], value.get("area_id")))
     return cleaned
 
 
+@file_services.compensating_files
 def submit_order(payload: dict[str, Any], request: Request, idempotency_key: str) -> tuple[dict[str, Any], bool]:
     idempotency_key = idempotency_key.strip()
     if not re.fullmatch(r"[A-Za-z0-9._-]{20,128}", idempotency_key):
@@ -1056,6 +1106,7 @@ def _save(
     *,
     audit: dict[str, Any] | None = None,
     notifications: list[dict[str, Any]] | None = None,
+    claim_ops: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Save an order change only if nobody changed the order since it was read.
 
@@ -1071,13 +1122,16 @@ def _save(
     notifications = notifications or []
     try:
         updated = order_repository.update_order(
-            order["reference"], updates, event, expected_version=version, audit=audit, notifications=notifications
+            order["reference"], updates, event, expected_version=version, audit=audit,
+            notifications=notifications, claim_ops=claim_ops,
         )
     except order_repository.StaleOrderError as error:
         raise HTTPException(
             status_code=409,
             detail="This order was changed by another action. Reload the order and try again.",
         ) from error
+    except order_repository.ReferenceConflict as error:
+        raise HTTPException(status_code=409, detail=error.detail) from error
     if updated is not None:
         notification_services.deliver(order["reference"], notifications)
     return order_after_update(updated, admin=admin)
@@ -1271,8 +1325,16 @@ def _payment_reference_key(value: str) -> str:
     return re.sub(r"[\s-]+", "", value).casefold()
 
 
-def _ensure_reference_unused(reference_text: str, ignore_submission_id: str | None = None) -> None:
-    """A payment reference (receipt or transaction number) can be recorded only once across all orders."""
+def _ensure_reference_unused(
+    reference_text: str,
+    ignore_submission_id: str | None = None,
+    order_reference: str | None = None,
+) -> None:
+    """A payment reference (receipt or transaction number) can be recorded only once across all orders.
+
+    A clearer-receipt request releases the reference only on the order that requested it; another order may
+    not adopt it.
+    """
     key = _payment_reference_key(reference_text)
     if not key:
         return
@@ -1280,8 +1342,12 @@ def _ensure_reference_unused(reference_text: str, ignore_submission_id: str | No
         for payment in other["payments"]:
             if _payment_reference_key(str(payment.get("reference") or "")) == key:
                 raise HTTPException(status_code=409, detail="This payment reference has already been recorded. Check the reference number.")
+        same_order = order_reference is not None and str(other.get("reference") or "") == str(order_reference)
         for item in submissions(other):
-            if item.get("id") == ignore_submission_id or item.get("status") == "rejected":
+            superseded_here = item.get("status") == "receipt_requested" and same_order
+            if item.get("id") == ignore_submission_id or item.get("status") == "rejected" or superseded_here:
+                # A rejected or locally superseded receipt is history, not a live claim on this reference.
+                # A clearer receipt normally keeps the same transaction reference on the same order.
                 continue
             if _payment_reference_key(str(item.get("reference") or "")) == key:
                 raise HTTPException(status_code=409, detail="This payment reference has already been submitted. Check the reference number.")
@@ -1304,13 +1370,74 @@ def _payment_method(value: Any) -> str:
     return method
 
 
-def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
-    """The customer submits a GCash payment: its reference number and the screenshot or receipt.
+def _scan_receipt(
+    order: Mapping[str, Any],
+    submission: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    contents: bytes,
+    method: str,
+    due: Mapping[str, Any],
+    orders: list[Mapping[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run OCR and matching for one receipt. Never raises because of OCR; returns structured feedback."""
+    config = shop_settings_services.verification_settings(method)
+    ocr = ocr_services.extract_receipt(contents, str(metadata.get("mime_type") or ""), name=str(metadata.get("name") or ""))
+    ocr_view = ocr.view()
+    verification = verification_services.build_verification(
+        order,
+        submission,
+        ocr_view,
+        method=method,
+        required_amount=float(due["amount"]),
+        customer_name=str((order.get("customer") or {}).get("name") or ""),
+        recipient_expected=str(config.get("account_name") or ""),
+        ocr_reference=str(ocr_view["fields"].get("reference") or ""),
+        verification_method=str(config.get("verification_method") or "manual"),
+        gateway_config=config.get("gateway_config", {}),
+        orders=orders if orders is not None else order_repository.list_orders(),
+        now=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    return ocr_view, verification
 
-    The amount is calculated by the server (the remaining 50% down payment, then the remaining balance); the
-    customer cannot choose or change it. The submission is saved as Pending Verification and never counts as
-    paid, and never confirms the order, until the administrator verifies it. Only one submission can wait for
-    verification at a time, which also stops double submissions.
+
+def scan_customer_payment(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
+    """Read-only receipt preview: OCR and matching feedback before the customer submits.
+
+    Nothing is saved, no file is stored, and no notification is sent. The authoritative scan runs again on
+    submission, so a stale preview can never be used to claim a payment was verified.
+    """
+    order = customer_owned_order(reference, email, customer_id)
+    if pending_submissions(order):
+        raise HTTPException(status_code=409, detail="A payment is already waiting for the shop to verify it.")
+    due = next_customer_payment(order)
+    if due is None:
+        raise HTTPException(status_code=409, detail="This order is already fully paid.")
+    method = shop_settings_services.default_provider() if payload.get("method") in (None, "") else shop_settings_services.active_provider(payload.get("method"))
+    if payload.get("proof") in (None, ""):
+        raise HTTPException(status_code=422, detail=f"Upload the {method} payment screenshot or receipt.")
+    metadata, contents = _decode_receipt(payload.get("proof"))
+    reference_text = _text(payload.get("reference", "") or "", "Payment reference", 120)
+    submission = {"id": "preview", "reference": reference_text, "amount": due["amount"], "receipt_hash": ocr_services.receipt_hash(contents)}
+    ocr_view, verification = _scan_receipt(order, submission, metadata, contents, method, due)
+    return {
+        "reference": order["reference"],
+        "method": method,
+        "required_amount": due["amount"],
+        "stage": due["stage"],
+        "label": due["label"],
+        "ocr": ocr_view,
+        "verification": verification,
+        "notice": "Scanning reads the receipt only. Payment is confirmed after the shop or provider verifies it.",
+    }
+
+
+@file_services.compensating_files
+def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
+    """The customer submits a receipt for the server-calculated 50% down payment or remaining balance.
+
+    OCR and matching annotate the submission, but only an independent provider confirmation or an explicit
+    administrator action can turn it into a payment record. Only one submission can wait for verification at
+    a time; older submissions stay in the order's history.
     """
     order = customer_owned_order(reference, email, customer_id)
     if is_cod(order):
@@ -1345,12 +1472,8 @@ def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, An
         raise HTTPException(status_code=422, detail=f"Enter the complete {method} reference or transaction number.")
     if payload.get("proof") in (None, ""):
         raise HTTPException(status_code=422, detail=f"Upload the {method} payment screenshot or receipt.")
-    _ensure_reference_unused(reference_text)
-    proof, contents = _decode_upload(payload.get("proof"))
-    try:
-        file_services.save(proof, contents)  # type: ignore[arg-type]
-    except (OSError, sqlite3.Error) as error:
-        raise HTTPException(status_code=500, detail="The proof of payment could not be saved.") from error
+    _ensure_reference_unused(reference_text, order_reference=reference)
+    proof, contents = _decode_receipt(payload.get("proof"))
     submission = {
         "id": secrets.token_hex(8),
         "amount": due["amount"],
@@ -1358,23 +1481,75 @@ def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, An
         "method": method,
         "reference": reference_text,
         "proof": proof,
+        "receipt_hash": ocr_services.receipt_hash(contents),
         "submitted_at": now_iso(),
         "status": "pending",
+        "admin_notes": [],
+        "receipt_requests": [],
     }
+    ocr_view, verification = _scan_receipt(order, submission, proof, contents, method, due)
+    submission["ocr"] = ocr_view
+    submission["verification"] = verification
+    submission["verification_status"] = verification["status"]
+    submission["verification_method"] = verification["verification_method"]
     try:
-        return _save(
+        file_services.save(proof, contents)  # type: ignore[arg-type]
+    except (OSError, sqlite3.Error) as error:
+        raise HTTPException(status_code=500, detail="The proof of payment could not be saved.") from error
+    notifications = [notification_services.build(
+        order, "payment_receipt_uploaded", f"payment-uploaded:{submission['id']}", "Payment receipt received",
+        f"We received your {method} receipt of PHP {due['amount']:,.2f} for {due['label'].lower()} "
+        f"(reference {reference_text}). It is being processed; no payment is counted until it is verified.",
+    )]
+    status = verification["status"]
+    if status in {verification_services.ADMIN_REVIEW, verification_services.DUPLICATE}:
+        notifications.append(notification_services.build(
+            order, "payment_additional_verification", f"payment-review:{submission['id']}", "Payment needs additional verification",
+            f"Your {method} receipt (reference {reference_text}) needs additional verification. "
+            "The shop will compare it with its records; you do not need to pay again yet.",
+        ))
+    elif status == verification_services.PENDING:
+        notifications.append(notification_services.build(
+            order, "payment_processing", f"payment-processing:{submission['id']}", "Payment is being processed",
+            f"Your {method} receipt (reference {reference_text}) was read successfully and is waiting for confirmation.",
+        ))
+    try:
+        result = _save(
             order,
             {"payment_submissions": submissions(order) + [submission]},
             f"Customer submitted a payment of PHP {due['amount']:,.2f} ({due['label'].lower()}) via {method} "
-            f"(reference {reference_text}) with a screenshot/receipt. Pending verification by the administrator.",
+            f"(reference {reference_text}) with a screenshot/receipt. OCR classification: {verification['status_label']} "
+            f"(confidence {verification['confidence']:.0%}); this is not proof that funds were received.",
             audit=_audit(
                 "payment.submitted", CUSTOMER, customer_id,
                 submission_id=submission["id"], amount=due["amount"], stage=due["stage"], method=method, reference=reference_text,
+                ocr_status=status, ocr_confidence=verification["confidence"], verification_method=verification["verification_method"],
             ),
+            notifications=notifications,
+            claim_ops=[{
+                "op": "acquire", "kind": "payment", "key": _payment_reference_key(reference_text),
+                "context": submission["id"], "detail": "This payment reference has already been submitted. Check the reference number.",
+            }],
         )
     except HTTPException:
         file_services.delete(proof["filename"])
         raise
+    if verification["auto_confirm"]:
+        # Only an independent provider confirmation can reach this branch. The existing verification service
+        # re-checks the balance, reference, and one-payment-per-submission rule before recording money.
+        try:
+            verify_payment_submission(
+                reference, submission["id"],
+                {"received": True, "amount": due["amount"]},
+                actor=verification["provider"].get("provider") or "payment provider",
+            )
+        except HTTPException as error:
+            logger.warning("Provider-confirmed payment could not be recorded for %s: %s", reference, error.detail)
+        else:
+            # The verification service returns the admin view. Reload so the customer gets the same
+            # response shape (and the same file URLs) as every other customer payment submission.
+            return order_after_update(order_repository.get_order(reference), admin=False)
+    return result
 
 
 # ------------------------------------------------------------------ administrator views
@@ -1795,6 +1970,10 @@ def add_payment_reference(reference: str, payment_number: Any, payload: Mapping[
             "payment.reference_added", ADMIN, actor,
             payment_number=number, amount=float(payment.get("amount") or 0), reference=reference_text, reference_type=reference_type, note=note,
         ),
+        claim_ops=[{
+            "op": "acquire", "kind": "payment", "key": _payment_reference_key(reference_text),
+            "detail": "This payment reference has already been recorded. Check the reference number.",
+        }],
     )
 
 
@@ -1855,6 +2034,10 @@ def record_payment(reference: str, payload: dict[str, Any], actor: str = ADMIN) 
             kind=payment["kind"], confirmed=confirmed, note=note,
         ),
         notifications=[_payment_notification(order, payment, confirmed), *extra],
+        claim_ops=[{
+            "op": "acquire", "kind": "payment", "key": _payment_reference_key(reference_text),
+            "detail": "This payment reference has already been recorded. Check the reference number.",
+        }],
     )
 
 
@@ -1889,7 +2072,11 @@ def verify_payment_submission(reference: str, submission_id: str, payload: Mappi
         raise HTTPException(status_code=422, detail="Payment cannot exceed the remaining balance.")
     if any(payment.get("submission_id") == submission_id for payment in order["payments"]):
         raise HTTPException(status_code=409, detail="This payment submission was already recorded.")
-    _ensure_reference_unused(str(submission.get("reference") or ""), ignore_submission_id=submission_id)
+    _ensure_reference_unused(
+        str(submission.get("reference") or ""),
+        ignore_submission_id=submission_id,
+        order_reference=str(order.get("reference") or ""),
+    )
     now = now_iso()
     payment = {
         "id": secrets.token_hex(8),
@@ -1908,20 +2095,38 @@ def verify_payment_submission(reference: str, submission_id: str, payload: Mappi
             "verified_by": actor,
             "verified_at": now,
             "note": "",
+            "ocr_status": (submission.get("verification") or {}).get("status", "") if isinstance(submission.get("verification"), dict) else "",
+            "ocr_confidence": (submission.get("ocr") or {}).get("confidence", 0) if isinstance(submission.get("ocr"), dict) else 0,
+            "receipt_hash": submission.get("receipt_hash", ""),
         },
+        # Historical audit data: the extracted receipt information is kept with the payment record.
+        "ocr": submission.get("ocr", {}),
+        "receipt_hash": submission.get("receipt_hash", ""),
     }
+    stored = submission.get("verification") if isinstance(submission.get("verification"), dict) else {}
+    stored.update({
+        "status": verification_services.VERIFIED,
+        "status_label": verification_services.STATUS_LABELS[verification_services.VERIFIED],
+        "verification_method": "manual",
+        "reviewed_at": now,
+        "reviewed_by": actor,
+        "requires_admin": False,
+        "auto_confirm": False,
+    })
     submission.update({
         "status": "verified", "reviewed_at": now, "reviewed_by": actor, "payment_id": payment["id"], "verified_amount": amount,
+        "verification_status": verification_services.VERIFIED, "verification": stored,
     })
     updates, confirmed, extra = _payment_updates(order, payment)
     updates["payment_submissions"] = items
     reported = float(submission["amount"])
     adjusted = f" (customer reported PHP {reported:,.2f})" if abs(amount - reported) > 0.005 else ""
+    verifier = "an administrator" if actor == ADMIN else str(actor or "the payment provider")
     return _save(
         order,
         updates,
-        f"Administrator verified the customer's payment of PHP {amount:,.2f}{adjusted} via {payment['method']} "
-        f"(reference {payment['reference']}) and recorded it as {payment['kind'].lower()}."
+        f"The customer's payment of PHP {amount:,.2f}{adjusted} via {payment['method']} "
+        f"(reference {payment['reference']}) was verified by {verifier} and recorded as {payment['kind'].lower()}."
         + (CONFIRMED_SUFFIX if confirmed else "")
         + (f" The order is fully paid and now {updates['status']}." if extra else ""),
         payload.get("expected_version"),
@@ -1939,7 +2144,19 @@ def reject_payment_submission(reference: str, submission_id: str, payload: Mappi
     order = _admin_order(reference)
     items, submission = _find_submission(order, submission_id)
     note = _text(payload.get("note", "") or "", "Reason", 500, True)
-    submission.update({"status": "rejected", "reviewed_at": now_iso(), "reviewed_by": actor, "review_note": note})
+    stored = submission.get("verification") if isinstance(submission.get("verification"), dict) else {}
+    stored.update({
+        "status": verification_services.REJECTED,
+        "status_label": verification_services.STATUS_LABELS[verification_services.REJECTED],
+        "reviewed_at": now_iso(),
+        "reviewed_by": actor,
+        "rejection_reason": note,
+        "requires_admin": False,
+    })
+    submission.update({
+        "status": "rejected", "reviewed_at": stored["reviewed_at"], "reviewed_by": actor, "review_note": note,
+        "verification_status": verification_services.REJECTED, "verification": stored,
+    })
     amount = float(submission["amount"])
     return _save(
         order,
@@ -1954,12 +2171,89 @@ def reject_payment_submission(reference: str, submission_id: str, payload: Mappi
             f"We could not verify your payment of PHP {amount:,.2f} (reference {submission.get('reference', '')}). Reason: {note} "
             "You can submit the payment again in your customer portal.",
         )],
+        claim_ops=[{
+            "op": "release", "kind": "payment",
+            "key": _payment_reference_key(str(submission.get("reference") or "")),
+        }],
+    )
+
+
+def _submission_for_admin(reference: str, submission_id: str) -> tuple[OrderRecord, list[dict[str, Any]], dict[str, Any]]:
+    order = _admin_order(reference)
+    items = [dict(item) for item in submissions(order)]
+    found = next((item for item in items if item.get("id") == submission_id), None)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Payment submission not found.")
+    return order, items, found
+
+
+def add_payment_verification_note(reference: str, submission_id: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Append a verification note to a submission's history without changing whether it counts as paid."""
+    order, items, found = _submission_for_admin(reference, submission_id)
+    note = _text(payload.get("note", "") or "", "Verification note", 500, True)
+    now = now_iso()
+    found.setdefault("admin_notes", []).append({"note": note, "at": now, "by": actor})
+    stored = found.get("verification") if isinstance(found.get("verification"), dict) else {}
+    # Keep this text customer-safe: the admin record already stores who wrote it in admin_notes.
+    stored["notes"] = [*stored.get("notes", []), note]
+    found["verification"] = stored
+    amount = float(found.get("amount") or 0)
+    return _save(
+        order,
+        {"payment_submissions": items},
+        f"Administrator added a verification note to the {found.get('method', '')} payment submission "
+        f"(reference {found.get('reference', '')}, PHP {amount:,.2f}): {note}",
+        payload.get("expected_version"),
+        admin=True,
+        audit=_audit("payment.verification_note", ADMIN, actor, submission_id=submission_id, note=note, reference=found.get("reference", "")),
+        notifications=[notification_services.build(
+            order, "payment_verification_note", f"payment-note:{submission_id}:{len(found['admin_notes'])}",
+            "Update on your payment review",
+            f"The shop added a note to your payment review for reference {found.get('reference', '')}: {note}",
+        )],
+    )
+
+
+def request_clearer_receipt(reference: str, submission_id: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
+    """Ask the customer to submit a clearer receipt. The old submission stays in history and is not paid."""
+    order, items, found = _submission_for_admin(reference, submission_id)
+    if found.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Only a pending receipt can be replaced.")
+    note = _text(payload.get("note", "") or "Please upload a clearer receipt showing the reference, amount, and recipient.", "Note", 500)
+    now = now_iso()
+    found.setdefault("receipt_requests", []).append({"at": now, "by": actor, "note": note})
+    # This frees the single pending slot so the customer can upload again; every earlier receipt is kept.
+    found["status"] = "receipt_requested"
+    stored = found.get("verification") if isinstance(found.get("verification"), dict) else {}
+    stored.update({"status": verification_services.ADMIN_REVIEW, "status_label": verification_services.STATUS_LABELS[verification_services.ADMIN_REVIEW],
+                   "requested_receipt_at": now, "requested_receipt_by": actor})
+    found["verification"] = stored
+    amount = float(found.get("amount") or 0)
+    return _save(
+        order,
+        {"payment_submissions": items},
+        f"Administrator requested a clearer receipt for the {found.get('method', '')} payment submission "
+        f"(reference {found.get('reference', '')}, PHP {amount:,.2f}). The earlier receipt stays in the audit history.",
+        payload.get("expected_version"),
+        admin=True,
+        audit=_audit("payment.receipt_requested", ADMIN, actor, submission_id=submission_id, note=note, reference=found.get("reference", "")),
+        notifications=[notification_services.build(
+            order, "payment_receipt_requested", f"payment-receipt-requested:{submission_id}",
+            "Please upload a clearer payment receipt",
+            f"We could not fully read your receipt for reference {found.get('reference', '')}. {note} "
+            "Open your customer portal to upload a new receipt. No payment has been recorded yet.",
+        )],
+        claim_ops=[{
+            "op": "release", "kind": "payment",
+            "key": _payment_reference_key(str(found.get("reference") or "")),
+        }],
     )
 
 
 # ------------------------------------------------------------------ drafts, payment option, status
 
 
+@file_services.compensating_files
 def upload_draft(reference: str, payload: dict[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Send a draft (or a revised draft) for the customer's approval. Earlier drafts are kept in the history."""
     from backend.app.services import fulfillment_services
@@ -2123,6 +2417,8 @@ def update_order_status(
             detail="Record the remaining balance before marking this order as completed. Only fully paid orders can be completed.",
         )
     note = _text(payload.get("note", "") or "", "Reason", 500)
+    if next_status in CANCELLED_STATUSES and not note:
+        raise HTTPException(status_code=422, detail="Enter a reason before rejecting or cancelling this order.")
     updates: OrderUpdates = {"status": next_status}
     event = f"Administrator updated the order status to {next_status}."
     if next_status in {"In Production", "Quality Checking"}:

@@ -87,12 +87,56 @@
     function recipientFields(required) {
         const provider = el("select", "input");
         provider.name = "refund_provider";
+        provider.required = required;
         provider.append(new Option("Same e-wallet I paid with", "original"));
-        context.paymentMethods().then((methods) => methods.forEach((method) => provider.append(new Option(method.provider, method.provider))));
+        const notice = el("p", "field-hint");
+        notice.hidden = true;
+        const retry = el("button", "btn btn-ghost-dark btn-small", "Retry payment methods");
+        retry.type = "button";
+        retry.hidden = true;
+        let methodOptions = [];
+
+        const showProblem = (problem) => {
+            notice.textContent = problem;
+            notice.hidden = false;
+            retry.hidden = false;
+            provider.dataset.methodsError = "1";
+            provider.setAttribute("aria-invalid", "true");
+        };
+        const load = async (options = {}) => {
+            retry.disabled = true;
+            provider.setAttribute("aria-busy", "true");
+            try {
+                const result = context.paymentMethodsStatus
+                    ? await context.paymentMethodsStatus(options)
+                    : { methods: await context.paymentMethods(options), error: "" };
+                methodOptions.forEach((option) => option.remove());
+                methodOptions = (result.methods || []).map((method) => new Option(method.provider, method.provider));
+                provider.append(...methodOptions);
+                if (result.error) showProblem(`Payment methods could not be loaded (${result.error}). Retry before sending this request.`);
+                else if (!methodOptions.length) showProblem("No e-wallets are configured in the shop right now. Contact the shop before sending this request.");
+                else {
+                    notice.hidden = true;
+                    retry.hidden = true;
+                    delete provider.dataset.methodsError;
+                    provider.removeAttribute("aria-invalid");
+                }
+            } catch (error) {
+                showProblem(`Payment methods could not be loaded (${error instanceof Error ? error.message : "unknown error"}). Retry before sending this request.`);
+            } finally {
+                retry.disabled = false;
+                provider.removeAttribute("aria-busy");
+            }
+        };
+        retry.addEventListener("click", () => { void load({ refresh: true }); });
+        void load();
+
         const name = input("recipient_name", { maxLength: 120, required, placeholder: "Account name" });
         const number = input("recipient_number", { maxLength: 40, required, placeholder: "e.g. 0917 123 4567", inputMode: "tel" });
         const wrap = el("div", "request-grid");
-        wrap.append(labelled("Refund to", provider), labelled("E-wallet account name", name), labelled("E-wallet number", number));
+        const refundLabel = labelled("Refund to", provider);
+        refundLabel.append(notice, retry);
+        wrap.append(refundLabel, labelled("E-wallet account name", name), labelled("E-wallet number", number));
         return { element: wrap, values: () => ({ refund_provider: provider.value, recipient_name: name.value.trim(), recipient_number: number.value.trim() }) };
     }
 
@@ -100,6 +144,12 @@
         const button = form.querySelector("button[type=submit]");
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
+            const pendingMethods = form.querySelector('select[data-methods-error="1"]');
+            if (pendingMethods && !pendingMethods.closest("[hidden]")) {
+                context.detailError.textContent = "Payment methods could not be loaded. Use Retry payment methods before sending.";
+                pendingMethods.focus();
+                return;
+            }
             if (!form.reportValidity()) return;
             let body;
             try {
@@ -108,7 +158,8 @@
                 context.detailError.textContent = issue instanceof Error ? issue.message : "Check the form.";
                 return;
             }
-            if (!(await window.PrintConfirm(confirmText, { title: "Send request?", confirmLabel: "Send request" }))) return;
+            const ask = context.confirmAction || window.PrintConfirm;
+            if (!(await ask(confirmText, { title: "Send request?", confirmLabel: "Send request" }))) return;
             await context.orderAction(action, body, "The request could not be sent.", button);
         });
         return form;
@@ -229,7 +280,9 @@
         const reason = select(CANCEL_REASONS, "reason");
         const remarks = textarea("remarks", "Anything the shop should know (required for Other)");
         const paid = (order.payment?.amount_paid || 0) > 0;
-        const recipient = recipientFields(paid);
+        const hasPendingPayment = (order.payment_submissions || []).some((item) => item.status === "pending");
+        const recipientRequired = paid || hasPendingPayment || (order.payments || []).length > 0;
+        const recipient = recipientFields(recipientRequired);
         const acknowledged = input("acknowledged", { type: "checkbox", required: true });
         const ack = el("label", "check-row");
         ack.append(acknowledged, " I understand that the shop reviews this request against the work already done. A refund, if any, is decided in that review; deductions for documented costs may apply, and packed or dispatched orders are normally not cancelled for a change of mind.");
@@ -239,14 +292,14 @@
             el("p", "field-hint", `Order ${order.reference} · ${order.status} · total ${context.money(order.total_amount)} · verified payments ${context.money(order.payment?.amount_paid || 0)}${order.payments?.length ? ` via ${[...new Set(order.payments.map((item) => item.method))].join(", ")}` : ""}.`),
             labelled("Reason", reason),
             labelled("Additional remarks", remarks),
-            paid ? el("p", "field-hint", "Where should a refund be sent if one is approved?") : null,
-            paid ? recipient.element : null,
+            recipientRequired ? el("p", "field-hint", "Where should a refund be sent if one is approved? Provide your e-wallet details now so the shop can process any approved refund without delay.") : null,
+            recipientRequired ? recipient.element : null,
             ack,
             submit,
         );
         reason.addEventListener("change", () => { remarks.required = reason.value === "other"; });
         return submitForm(form, "cancellation-request", async () => ({
-            reason: reason.value, remarks: remarks.value.trim(), acknowledged: acknowledged.checked, ...(paid ? recipient.values() : {}),
+            reason: reason.value, remarks: remarks.value.trim(), acknowledged: acknowledged.checked, ...(recipientRequired ? recipient.values() : {}),
         }), "Send this cancellation request? Your order is put on hold while the shop reviews it.");
     }
 
@@ -319,10 +372,17 @@
             if (actions.request_refund) forms.push(toggle("Request a refund", refundForm(order)));
             if (actions.report_delivery_issue) forms.push(toggle("Report a delivery issue", issueForm()));
         }
-        requests.hidden = !history && !forms.length;
-        if (requests.hidden) return;
-        requests.append(el("h3", "", "Cancellations, refunds & issues"));
+        const pendingCancellation = (order.cancellation_requests || []).some((item) => item.status === "pending_review");
+        const refundBlockedByCancellation = pendingCancellation && !actions.request_refund;
+        const hasContent = Boolean(history) || forms.length > 0 || refundBlockedByCancellation;
+        requests.hidden = !hasContent;
+        const empty = document.querySelector("#requests-empty");
+        if (empty) empty.hidden = hasContent;
+        const requestsToggle = document.querySelector("#requests-toggle");
+        if (requestsToggle) requestsToggle.classList.toggle("is-empty", !hasContent);
+        if (!hasContent) return;
         if (history) requests.append(history);
+        if (refundBlockedByCancellation) requests.append(el("p", "field-hint", "A cancellation request is pending review. Refund requests are unavailable until the cancellation request is decided."));
         requests.append(...forms);
     }
 
@@ -366,7 +426,19 @@
         context = ctx;
         renderTracking(order);
         renderRequests(order);
-        if (receiptButton) receiptButton.hidden = !order.customer_actions?.download_receipt;
+        const canReceipt = Boolean(order.customer_actions?.download_receipt);
+        if (receiptButton) receiptButton.hidden = !canReceipt;
+        const receiptHint = document.querySelector("#receipt-hint");
+        if (receiptHint) {
+            receiptHint.textContent = canReceipt
+                ? "Download a record of verified payments for this order."
+                : "A receipt is available once verified payments have been recorded for this order.";
+        }
+        const receiptToggle = document.querySelector("#receipt-toggle");
+        if (receiptToggle) {
+            const cancelVisible = !document.querySelector("#cancel-order")?.hidden;
+            receiptToggle.classList.toggle("has-action", canReceipt || cancelVisible);
+        }
     }
 
     window.PortalTracking = { render };

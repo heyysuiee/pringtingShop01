@@ -7,15 +7,21 @@
  *   if (!(await PrintConfirm("Cancel this request?", { title: "Cancel request", confirmLabel: "Cancel request", tone: "danger" }))) return;
  */
 (() => {
+    // One dialog at a time: rapid clicks reuse the pending promise instead of stacking modals.
+    let pending = null;
+    let dialogNumber = 0;
+
     function printConfirm(message, { title = "Please confirm", confirmLabel = "Confirm", cancelLabel = "Go back", tone = "primary" } = {}) {
+        if (pending) return pending;
         if (typeof HTMLDialogElement !== "function") return Promise.resolve(window.confirm(message));
-        return new Promise((resolve) => {
+        const headingId = `theme-confirm-title-${++dialogNumber}`;
+        const answer = new Promise((resolve) => {
             const dialog = document.createElement("dialog");
             dialog.className = "theme-confirm";
-            dialog.setAttribute("aria-labelledby", "theme-confirm-title");
+            dialog.setAttribute("aria-labelledby", headingId);
 
             const heading = document.createElement("h2");
-            heading.id = "theme-confirm-title";
+            heading.id = headingId;
             heading.textContent = title;
             const text = document.createElement("p");
             text.textContent = message;
@@ -51,6 +57,9 @@
             dialog.showModal();
             confirm.focus();
         });
+        pending = answer;
+        answer.then(() => { pending = null; }, () => { pending = null; });
+        return answer;
     }
 
     window.PrintConfirm = printConfirm;

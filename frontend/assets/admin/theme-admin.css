@@ -1188,3 +1188,293 @@ button.notification-item:hover {
         grid-template-columns: 1fr;
     }
 }
+
+/* ==========================================================================
+   Audit-focused refinements. Scoped to views rendered by dashboard.js so the
+   other admin scripts keep their existing layout.
+   ========================================================================== */
+
+/* ---------- Compact priority KPI cards ---------- */
+
+.dashboard-kpis .stat-card,
+.report-kpis .stat-card,
+.payment-report .stat-card {
+    min-height: 104px;
+    padding: 14px 16px;
+}
+
+.dashboard-kpis .stat-card .stat-value,
+.report-kpis .stat-card .stat-value,
+.payment-report .stat-card .stat-value {
+    font-size: clamp(22px, 2vw, 28px);
+}
+
+.dashboard-kpis .stat-card .stat-foot,
+.report-kpis .stat-card .stat-foot,
+.payment-report .stat-card .stat-foot {
+    font-size: 11.5px;
+}
+
+.dashboard-kpis .stat-card .stat-icon,
+.report-kpis .stat-card .stat-icon,
+.payment-report .stat-card .stat-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    font-size: 14px;
+}
+
+/* ---------- Collapsed secondary metrics and report detail sections ---------- */
+
+.dashboard-secondary,
+.report-details {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.dashboard-secondary > summary,
+.report-details > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 44px;
+    padding: 10px 16px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    list-style: none;
+}
+
+.dashboard-secondary > summary::-webkit-details-marker,
+.report-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.dashboard-secondary > summary::before,
+.report-details > summary::before {
+    content: "▸";
+    color: var(--accent-pink-light);
+    font-size: 12px;
+}
+
+.dashboard-secondary[open] > summary::before,
+.report-details[open] > summary::before {
+    content: "▾";
+}
+
+.dashboard-secondary[open] > summary,
+.report-details[open] > summary {
+    border-bottom: 1px solid var(--line);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.dashboard-secondary > :not(summary),
+.report-details-body {
+    padding: 0 16px 16px;
+}
+
+.dashboard-secondary .stats-grid,
+.report-details-body .stats-grid {
+    margin-top: 16px;
+}
+
+/* ---------- Order detail section navigation ---------- */
+
+.order-section-nav {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: -8px 0 16px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--glass-solid);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+}
+
+.order-section-chip {
+    padding: 6px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--glass-1);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.order-section-chip:hover {
+    border-color: rgba(255, 62, 157, 0.4);
+    color: var(--text-primary);
+}
+
+.order-section-chip.active {
+    border-color: rgba(255, 62, 157, 0.5);
+    background: var(--accent-soft);
+    color: #fff;
+}
+
+.order-modal [data-order-section] {
+    scroll-margin-top: 68px;
+}
+
+/* ---------- Filter bars and direct actions ---------- */
+
+.filter-bar-label {
+    align-self: flex-end;
+    padding-bottom: 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.orders-filter-bar .filter-search {
+    min-width: 220px;
+}
+
+.table-open {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: 12px;
+}
+
+.required-action {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--glass-2);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.required-action.action-verify {
+    background: rgba(245, 158, 11, 0.16);
+    color: #FCD34D;
+}
+
+.required-action.action-action {
+    background: var(--accent-soft);
+    color: var(--accent-pink-light);
+}
+
+.payment-awaiting {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.payment-awaiting .table-link {
+    margin-left: 4px;
+}
+
+/* ---------- Modal and wide-table overflow guards ---------- */
+
+.order-modal,
+.customer-modal {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.order-modal .table-wrap,
+.customer-modal .table-wrap,
+.order-modal .data-table-wrap,
+.customer-modal .data-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.order-modal .data-table,
+.customer-modal .data-table {
+    min-width: 560px;
+}
+
+/* The compact ledger fits its column; wide audit/quotation tables keep their scroll wrapper. */
+.order-modal .data-table.od-pay-table {
+    min-width: 0;
+}
+
+.order-modal .order-facts,
+.order-modal .order-detail-sections,
+.order-modal .order-operations,
+.order-modal .od-grid,
+.order-modal .od-column,
+.order-modal .od-panel,
+.order-modal .od-disclosure-body,
+.order-modal .od-quote-body,
+.order-modal .od-history-body,
+.order-modal .od-price-note,
+.order-modal .od-price-copy,
+.order-modal .od-product-info,
+.order-modal .panel-actions,
+.order-modal .header-actions,
+.customer-modal .mini-stats {
+    min-width: 0;
+}
+
+.order-modal .panel-actions,
+.order-modal .header-actions {
+    flex-wrap: wrap;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 900px) {
+    .dashboard-kpis,
+    .report-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .order-modal .data-table {
+        min-width: 480px;
+    }
+}
+
+@media (max-width: 680px) {
+    .dashboard-kpis .stat-card,
+    .report-kpis .stat-card,
+    .payment-report .stat-card {
+        padding: 12px;
+    }
+
+    .payment-report .stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .filter-bar-label {
+        flex-basis: 100%;
+        padding-bottom: 0;
+    }
+
+    .order-section-chip {
+        padding: 5px 9px;
+        font-size: 11.5px;
+    }
+
+    .order-modal .data-table {
+        min-width: 420px;
+    }
+}
+
+@media (max-width: 480px) {
+    .dashboard-kpis,
+    .report-kpis,
+    .payment-report .stats-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

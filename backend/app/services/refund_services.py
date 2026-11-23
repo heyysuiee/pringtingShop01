@@ -32,7 +32,7 @@ from fastapi import HTTPException
 
 from backend.app.models.order import OrderRecord
 from backend.app.repositories import order_repository
-from backend.app.services import notification_services, order_services, shop_settings_services
+from backend.app.services import file_services, notification_services, order_services, shop_settings_services
 from backend.app.utils.clock import now_iso
 
 
@@ -217,6 +217,8 @@ def can_request_cancellation(order: Mapping[str, Any]) -> bool:
 
 
 def can_request_refund(order: Mapping[str, Any]) -> bool:
+    if order_services.pending_cancellation(order):
+        return False
     if order_services.paid_amount(order) <= 0 or max_refundable(order) <= 0:
         return False
     return not any(item.get("status") == "pending_review" for item in refunds(order))
@@ -227,6 +229,14 @@ def can_request_refund(order: Mapping[str, Any]) -> bool:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{now_iso()[2:10].replace('-', '')}-{secrets.token_hex(3).upper()}"
+
+
+def _refund_claim(refund_id: str) -> dict[str, Any]:
+    """Reserve the refund's own reference number in the order transaction."""
+    return {
+        "op": "acquire", "kind": "refund_id", "key": str(refund_id).casefold(),
+        "detail": "This refund reference is already recorded.",
+    }
 
 
 def request_cancellation(reference: str, payload: Mapping[str, Any], customer_id: str | None) -> dict[str, Any]:
@@ -244,7 +254,9 @@ def request_cancellation(reference: str, payload: Mapping[str, Any], customer_id
     if payload.get("acknowledged") is not True:
         raise HTTPException(status_code=422, detail="Read and acknowledge the cancellation policy before sending the request.")
     paid = order_services.paid_amount(order)
-    recipient = _recipient(payload, required=paid > 0)
+    # Collect recipient details when a refund may become due now or after pending payments are verified.
+    recipient_required = paid > 0 or bool(order["payments"]) or bool(order_services.pending_submissions(order))
+    recipient = _recipient(payload, required=recipient_required)
     now = now_iso()
     request = {
         "id": _new_id("CR"),
@@ -299,12 +311,20 @@ def approve_cancellation(reference: str, request_id: str, payload: Mapping[str, 
         raise HTTPException(status_code=422, detail=f"The refund cannot be more than PHP {limit - total_deductions:,.2f} (verified payments minus completed refunds and deductions).")
     remarks = _text(payload.get("remarks", "") or "", "Administrator remarks", 1000)
     work = _text(payload.get("completed_work", "") or "", "Completed work and documented expenses", 1000)
+    recipient = dict(request.get("refund_recipient") or {})
+    if any(payload.get(key) not in (None, "") for key in ("refund_provider", "recipient_name", "recipient_number")):
+        recipient = _recipient(payload, required=refund_amount > 0)
+    if refund_amount > 0 and not (recipient.get("name") and recipient.get("number")):
+        raise HTTPException(
+            status_code=422,
+            detail="Enter the refund recipient's e-wallet name and number before approving a cancellation that includes a refund.",
+        )
     now = now_iso()
     request.update({
         "status": "approved", "decided_at": now, "decided_by": actor, "remarks_admin": remarks, "completed_work": work,
         "verified_paid_at_decision": order_services.paid_amount(order), "deductions": deductions,
         "total_deductions": total_deductions, "deduction_justification": justification, "approved_refund": refund_amount,
-        "stage_at_decision": order["status"],
+        "stage_at_decision": order["status"], "refund_recipient": recipient,
     })
     all_refunds = refunds(order)
     notifications = [notification_services.build(
@@ -319,7 +339,7 @@ def approve_cancellation(reference: str, request_id: str, payload: Mapping[str, 
             "status": "approved", "requested_at": request["requested_at"], "requested_by": "customer", "cancellation_id": request_id,
             "amount": refund_amount, "deductions": deductions, "total_deductions": total_deductions,
             "deduction_justification": justification, "approved_at": now, "approved_by": actor,
-            "recipient": request.get("refund_recipient") or {}, "original_payments": _payment_sources(order), "attempts": [],
+            "recipient": recipient, "original_payments": _payment_sources(order), "attempts": [],
         }
         all_refunds.append(refund)
         request["refund_id"] = refund["id"]
@@ -334,6 +354,7 @@ def approve_cancellation(reference: str, request_id: str, payload: Mapping[str, 
         admin=True,
         audit=_audit("cancellation.approved", ADMIN, actor, request=request_id, refund=refund_amount, deductions=total_deductions),
         notifications=notifications,
+        claim_ops=[_refund_claim(refund["id"])] if refund_amount > 0 else [],
     )
 
 
@@ -362,8 +383,11 @@ def reject_cancellation(reference: str, request_id: str, payload: Mapping[str, A
 # ================================================================== refunds
 
 
+@file_services.compensating_files
 def request_refund(reference: str, payload: Mapping[str, Any], customer_id: str | None) -> dict[str, Any]:
     order = order_services.customer_owned_order(reference, payload.get("email"), customer_id)
+    if order_services.pending_cancellation(order):
+        raise HTTPException(status_code=409, detail="A cancellation request for this order is pending review. Wait for the cancellation decision before requesting a refund.")
     reason = payload.get("reason")
     if reason not in CUSTOMER_REFUND_REASONS:
         raise HTTPException(status_code=422, detail="Choose the reason for the refund request.")
@@ -409,6 +433,7 @@ def request_refund(reference: str, payload: Mapping[str, Any], customer_id: str 
                 order, "refund_requested", f"refund:{refund['id']}", "Refund request received",
                 f"We received your refund request {refund['id']} for order {order['reference']}. The shop will review it.",
             )],
+            claim_ops=[_refund_claim(refund["id"])],
         )
     except HTTPException:
         for item in evidence:
@@ -423,6 +448,12 @@ def create_refund(reference: str, payload: Mapping[str, Any], actor: str = ADMIN
     if reason not in REFUND_REASONS or reason == "cancellation":
         raise HTTPException(status_code=422, detail="Choose the refund reason. Cancellation refunds are created when a cancellation is approved.")
     details = _text(payload.get("details"), "Details", 1000, True)
+    pending_review = next((item for item in refunds(order) if item.get("status") == "pending_review"), None)
+    if pending_review is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Refund {pending_review.get('id', '')} is already pending review for this order. Review or resolve it before opening another refund.",
+        )
     if max_refundable(order) <= 0:
         raise HTTPException(status_code=409, detail="This order has no verified payment left to refund.")
     refund = {
@@ -437,6 +468,7 @@ def create_refund(reference: str, payload: Mapping[str, Any], actor: str = ADMIN
         payload.get("expected_version"),
         admin=True,
         audit=_audit("refund.opened", ADMIN, actor, refund=refund["id"], reason=reason),
+        claim_ops=[_refund_claim(refund["id"])],
     )
 
 
@@ -478,6 +510,7 @@ def approve_refund(reference: str, refund_id: str, payload: Mapping[str, Any], a
             payload.get("expected_version"), admin=True,
             audit=_audit("refund.reprint", ADMIN, actor, refund=refund_id, remarks=remarks, **{key: value for key, value in details.items() if key != "refund"}),
             notifications=[notice],
+            claim_ops=fulfillment_services.tracking_archive_ops(order),
         )
     if resolution != "refund":
         raise HTTPException(status_code=422, detail="Choose refund or reprint.")
@@ -555,6 +588,7 @@ def _transfer_unused(transaction: str) -> None:
                     raise HTTPException(status_code=409, detail="This refund transaction reference is already recorded.")
 
 
+@file_services.compensating_files
 def complete_refund(reference: str, refund_id: str, payload: Mapping[str, Any], actor: str = ADMIN) -> dict[str, Any]:
     """Mark a refund Refunded, only after the actual transfer is confirmed (reference + proof + verified recipient)."""
     order, items, refund = _refund_action(reference, refund_id)
@@ -598,6 +632,10 @@ def complete_refund(reference: str, refund_id: str, payload: Mapping[str, Any], 
                 order, "refund_completed", f"refund-completed:{refund_id}", "Refund completed",
                 f"Your refund {refund_id} of PHP {float(refund['amount']):,.2f} was sent via {method} (transaction {transaction}).",
             )],
+            claim_ops=[{
+                "op": "acquire", "kind": "refund", "key": order_services._payment_reference_key(transaction),
+                "context": refund_id, "detail": "This refund transaction reference is already recorded.",
+            }],
         )
     except HTTPException:
         for item in proof:
@@ -622,6 +660,10 @@ def fail_refund(reference: str, refund_id: str, payload: Mapping[str, Any], acto
             order, "refund_failed", f"refund-failed:{refund_id}:{len(refund['attempts'])}", "Refund transfer failed",
             f"The transfer for refund {refund_id} did not go through ({reason}). The shop will retry or contact you.",
         )],
+        claim_ops=[{
+            "op": "acquire", "kind": "refund", "key": order_services._payment_reference_key(transaction),
+            "context": f"{refund_id}:failed:{now}", "detail": "This refund transaction reference is already recorded.",
+        }] if order_services._payment_reference_key(transaction) else [],
     )
 
 

@@ -42,6 +42,7 @@ from backend.app.models.catalog import (
     StandardSize,
 )
 from backend.app.repositories import catalog_repository, package_repository, size_repository
+from backend.app.services import file_services
 from backend.app.models.order import DOWN_PAYMENT_RATE
 
 
@@ -1137,6 +1138,7 @@ def _product_values(payload: dict[str, Any], current: CatalogProduct | None) -> 
     return values
 
 
+@file_services.compensating_files
 def create_product(payload: dict[str, Any]) -> CatalogProduct:
     values = _product_values(payload, None)
     values["id"] = catalog_repository.unique_id("catalog_products", slug(values["name"]))
@@ -1145,6 +1147,7 @@ def create_product(payload: dict[str, Any]) -> CatalogProduct:
     return admin_product(values["id"])
 
 
+@file_services.compensating_files
 def update_product(product_id: str, payload: dict[str, Any]) -> CatalogProduct:
     current = admin_product(product_id)
     catalog_repository.update_product(product_id, _product_values(payload, current))

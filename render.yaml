@@ -6,24 +6,31 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r backend/app/requirements.txt
-    # Render's proxy terminates HTTPS, so uvicorn must trust its X-Forwarded-Proto/For headers
-    # (FORWARDED_ALLOW_IPS below); the same-origin check, secure cookies and rate limits rely on them.
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    # Do not let uvicorn trust client-supplied X-Forwarded-* headers: a FORWARDED_ALLOW_IPS of "*"
+    # lets a visitor forge its apparent IP and bypass per-IP limits. The public scheme is configured
+    # explicitly below, so the proxy-headers flag is not needed for same-origin checks or cookies.
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: FORWARDED_ALLOW_IPS
-        value: "*"
+      - key: PRINTSHOP_PUBLIC_SCHEME
+        value: https
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: PRINTSHOP_ENVIRONMENT
         value: production
       - key: PRINTSHOP_SECRET_KEY
         generateValue: true
+      # Dedicated, stable backup signing key. Record retired keys in the previous-keys list when rotating.
+      - key: PRINTSHOP_BACKUP_SIGNING_KEY
+        sync: false
+      - key: PRINTSHOP_BACKUP_PREVIOUS_SIGNING_KEYS
+        sync: false
       # The service's own *.onrender.com host is added automatically (RENDER_EXTERNAL_HOSTNAME).
       # Add custom domains here, comma-separated.
       - key: PRINTSHOP_ALLOWED_HOSTS
         value: localhost
       # Free instances have no persistent disk: this SQLite file and uploads are wiped on every
-      # redeploy, restart and spin-down. Set TURSO_DATABASE_URL/TURSO_AUTH_TOKEN to keep data.
+      # redeploy, restart and spin-down. TURSO_DATABASE_URL/TURSO_AUTH_TOKEN are required: the app
+      # refuses to start on Render without them.
       - key: PRINTSHOP_DATABASE_PATH
         value: /opt/render/project/src/backend/data/orders.sqlite3
       - key: PRINTSHOP_UPLOAD_DIR

@@ -40,14 +40,43 @@ def public_customer(customer: dict[str, Any]) -> dict[str, Any]:
         "messenger": customer["messenger"],
         "created_at": customer["created_at"],
         "updated_at": customer["updated_at"],
+        "email_verified": bool(customer.get("email_verified", 1)),
     }
 
 
-def register_customer(payload: CustomerRegistration) -> dict[str, Any]:
+def _issue_email_verification(customer: dict[str, Any]) -> dict[str, Any]:
+    """Send a code to the address just registered and store only its keyed hash."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = (now_utc() + OTP_LIFETIME).isoformat(timespec="seconds")
+    customer_repository.replace_email_verification(
+        customer["id"],
+        _keyed_digest("email-verify", customer["id"], code),
+        expires_at,
+        now_iso(),
+    )
+    try:
+        email_service.send_email_verification_code(customer["email"], customer["name"], code, int(OTP_LIFETIME.total_seconds() // 60))
+    except email_service.EmailDeliveryError as error:
+        customer_repository.delete_email_verification(customer["id"])
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {"required": True, "expires_in": OTP_LIFETIME_SECONDS}
+
+
+def register_customer(payload: CustomerRegistration, verify_email: bool | None = None) -> dict[str, Any]:
     customer = payload.model_dump()
     customer["password_hash"] = hash_password(customer.pop("password"))
     # Raises ValueError when the email address is already registered.
-    return public_customer(customer_repository.create(customer, now_iso()))
+    created = customer_repository.create(customer, now_iso())
+    public = public_customer(created)
+    needs_verification = settings.require_email_verification if verify_email is None else verify_email
+    if needs_verification:
+        try:
+            public["email_verification"] = _issue_email_verification(created)
+        except HTTPException:
+            # A code the customer can never receive must not reserve their email address.
+            customer_repository.delete(created["id"])
+            raise
+    return public
 
 
 def authenticate_customer(email: str, password: str) -> dict[str, Any] | None:
@@ -86,6 +115,42 @@ def log_missing_smtp_settings() -> None:
     )
 
 
+EMAIL_VERIFICATION_MESSAGE = (
+    "If an account exists for that email address and still needs verification, a code has been sent. "
+    "Check your inbox and spam folder."
+)
+
+
+def request_email_verification(email: str) -> dict[str, Any]:
+    """Resend the registration code. The response is the same for every address (no enumeration)."""
+    response = {"message": EMAIL_VERIFICATION_MESSAGE, "expires_in": OTP_LIFETIME_SECONDS}
+    customer = customer_repository.get_by_email(email)
+    if customer is None or customer.get("email_verified"):
+        return response
+    _issue_email_verification(customer)
+    return response
+
+
+def verify_email_address(email: str, code: str) -> dict[str, Any]:
+    """Check the registration code and, on success, allow the account to sign in."""
+    invalid = HTTPException(status_code=422, detail="The verification code is invalid or has expired.")
+    customer = customer_repository.get_by_email(email)
+    if customer is None or customer.get("email_verified"):
+        raise invalid
+    result = customer_repository.verify_email_code(
+        customer["id"],
+        _keyed_digest("email-verify", customer["id"], code.strip()),
+        OTP_MAX_ATTEMPTS,
+        now_iso(),
+        now_utc(),
+    )
+    if result["result"] in {"locked", "invalid_locked"}:
+        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
+    if result["result"] != "ok":
+        raise invalid
+    return {"message": "Email address verified. You can sign in now.", "customer": public_customer(customer_repository.get_by_id(customer["id"]) or customer)}
+
+
 def request_password_reset(email: str) -> dict[str, Any]:
     """Send a one-time code if the account can receive one. The response never reveals whether it exists."""
     # The same response is returned for unknown addresses, so it cannot reveal whether an account exists.
@@ -116,35 +181,29 @@ def request_password_reset(email: str) -> dict[str, Any]:
 
 
 def verify_password_reset_code(email: str, code: str) -> str:
-    """Check the OTP and return a short-lived reset token for the password step."""
+    """Check the OTP and return a short-lived reset token for the password step.
+
+    The comparison, attempt counting and token issue are one atomic transaction in the repository, so
+    parallel guesses cannot slip past the five-attempt limit or cancel a code issued at the same time.
+    """
     invalid = HTTPException(status_code=422, detail="The verification code is invalid or has expired.")
     customer = customer_repository.get_by_email(email)
     if customer is None:
         raise invalid
-    record = customer_repository.get_reset(customer["id"])
-    if record is None or not record["code_hash"]:
-        # No code, or it was already used. Leave any verified reset session alone so a repeated
-        # submit (double click, or someone else posting this email) cannot cancel it.
-        raise invalid
-    if _parse_time(record["code_expires_at"]) <= now_utc():
-        customer_repository.delete_reset(customer["id"])
-        raise invalid
-    if record["attempts"] >= OTP_MAX_ATTEMPTS:
-        customer_repository.delete_reset(customer["id"])
-        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
-
-    expected = record["code_hash"]
-    supplied = _keyed_digest("otp", customer["id"], code.strip())
-    if not hmac.compare_digest(expected, supplied):
-        attempts = customer_repository.increment_reset_attempts(customer["id"])
-        if attempts >= OTP_MAX_ATTEMPTS:
-            customer_repository.delete_reset(customer["id"])
-            raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
-        raise invalid
-
     token = secrets.token_urlsafe(32)
-    token_expires_at = (now_utc() + RESET_TOKEN_LIFETIME).isoformat(timespec="seconds")
-    customer_repository.set_reset_token(customer["id"], _keyed_digest("reset", customer["id"], token), token_expires_at)
+    now = now_utc()
+    result = customer_repository.verify_reset_code(
+        customer["id"],
+        _keyed_digest("otp", customer["id"], code.strip()),
+        OTP_MAX_ATTEMPTS,
+        _keyed_digest("reset", customer["id"], token),
+        (now + RESET_TOKEN_LIFETIME).isoformat(timespec="seconds"),
+        now,
+    )
+    if result["result"] in {"locked", "invalid_locked"}:
+        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
+    if result["result"] != "ok":
+        raise invalid
     return token
 
 
@@ -156,20 +215,15 @@ def complete_password_reset(email: str, reset_token: str, new_password: str) -> 
     customer = customer_repository.get_by_email(email)
     if customer is None:
         raise invalid
-    record = customer_repository.get_reset(customer["id"])
-    if (
-        record is None
-        or not record["reset_token_hash"]
-        or not record["reset_token_expires_at"]
-        or _parse_time(record["reset_token_expires_at"]) <= now_utc()
-    ):
-        customer_repository.delete_reset(customer["id"])
+    # The token check, password check, and consumption are one transaction: a token can be used once.
+    result = customer_repository.consume_password_reset(
+        customer["id"],
+        _keyed_digest("reset", customer["id"], reset_token),
+        hash_password(new_password),
+        now_iso(),
+        lambda current_hash: verify_password(new_password, current_hash),
+    )
+    if result == "invalid":
         raise invalid
-    supplied = _keyed_digest("reset", customer["id"], reset_token)
-    if not hmac.compare_digest(record["reset_token_hash"], supplied):
-        raise invalid
-    if verify_password(new_password, customer["password_hash"]):
+    if result == "same":
         raise HTTPException(status_code=422, detail="Choose a new password that is different from your current one.")
-
-    # Single use: the password is saved and the code and reset token are removed together.
-    customer_repository.apply_password_reset(customer["id"], hash_password(new_password), now_iso())

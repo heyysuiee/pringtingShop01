@@ -16,7 +16,7 @@ import sqlite3
 from typing import Any
 
 from backend.app.database.catalog_seed import STANDARD_SIZE_SEED
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.models.catalog import StandardSize
 from backend.app.utils.clock import now_iso
 
@@ -48,7 +48,7 @@ COLUMNS = ("category_id", "label", "width", "height", "unit", "price", "sort_ord
 
 def initialize() -> None:
     """Create the table and seed the published Tarpaulin price list once (only into existing categories)."""
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
         if connection.execute("SELECT 1 FROM app_meta WHERE key = ?", (SEED_MARKER,)).fetchone() is None:

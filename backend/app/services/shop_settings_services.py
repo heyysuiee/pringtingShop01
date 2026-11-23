@@ -18,13 +18,15 @@ import math
 import re
 import secrets
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 from fastapi.responses import Response
 
+from backend.app.core.config import settings as app_settings
 from backend.app.database.connection import connection_scope
 from backend.app.repositories import payment_method_repository
-from backend.app.services import file_services
+from backend.app.services import file_services, location_services, payment_verification_services
 
 
 SETTINGS_KEY = "shop.fulfillment_settings"
@@ -126,12 +128,25 @@ def _method_view(method: dict[str, Any], admin: bool = False) -> dict[str, Any]:
         "configured": bool(method["account_number"] or method.get("qr_file")),
     }
     if admin:
-        view.update({"created_at": method["created_at"], "updated_at": method["updated_at"]})
+        view.update({
+            "created_at": method["created_at"],
+            "updated_at": method["updated_at"],
+            "verification_method": method.get("verification_method", "manual"),
+            # Never return an API key: only whether a gateway is configured.
+            "gateway": payment_verification_services.gateway_view(method.get("gateway_config")),
+        })
     return view
 
 
 def public_payment_methods() -> dict[str, Any]:
-    return {"methods": [_method_view(item) for item in payment_method_repository.list_methods(active_only=True)]}
+    # The proof limit and allowed types come from the same server setting the upload endpoint enforces,
+    # so the customer's form cannot drift from the backend (Vercel's 4.5 MB request cap included).
+    return {
+        "methods": [_method_view(item) for item in payment_method_repository.list_methods(active_only=True)],
+        "max_proof_bytes": app_settings.max_upload_mb * 1024 * 1024,
+        "allowed_proof_types": ["image/jpeg", "image/png", "application/pdf"],
+        "ocr_enabled": app_settings.ocr_configured,
+    }
 
 
 def admin_payment_methods() -> dict[str, Any]:
@@ -162,6 +177,18 @@ def configured_providers() -> list[str]:
     return [item["provider"] for item in payment_method_repository.list_methods()]
 
 
+def verification_settings(provider: str) -> dict[str, Any]:
+    """Verification configuration of one provider, for receipt matching (gateway keys stay server-side)."""
+    for method in payment_method_repository.list_methods():
+        if method["provider"].casefold() == str(provider).casefold():
+            return {
+                "account_name": method.get("account_name", ""),
+                "verification_method": method.get("verification_method", "manual"),
+                "gateway_config": method.get("gateway_config", {}),
+            }
+    return {"account_name": "", "verification_method": "manual", "gateway_config": {}}
+
+
 def _qr_upload(upload: Any) -> dict[str, Any]:
     metadata, contents = file_services.decode_data_url(upload, MAX_QR_BYTES)
     if metadata["mime_type"] not in QR_TYPES:
@@ -170,7 +197,38 @@ def _qr_upload(upload: Any) -> dict[str, Any]:
     return metadata
 
 
-def _method_values(payload: dict[str, Any], partial: bool) -> dict[str, Any]:
+def _gateway_values(value: Any, current: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Validate optional gateway settings. Keys are stored but are never returned by any view."""
+    data = value if isinstance(value, dict) else {}
+    existing = dict(current or {})
+    config = dict(existing)
+    if "provider" in data:
+        config["provider"] = _text(data.get("provider"), "Gateway provider", 60)
+    if "endpoint" in data:
+        endpoint = _text(data.get("endpoint"), "Gateway endpoint", 200)
+        if endpoint:
+            parsed = urlparse(endpoint)
+            if parsed.scheme not in {"https", "http"} or not parsed.netloc or parsed.username or parsed.password:
+                raise _bad("Enter a valid gateway endpoint URL without embedded credentials.")
+            if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                raise _bad("Use an HTTPS gateway endpoint so the API key is not sent in cleartext.")
+            # Reuse the runtime SSRF validation so an endpoint can never be saved in a form that the
+            # confirmation request itself would refuse (private hosts, credentials, fragments, etc.).
+            problem = payment_verification_services.endpoint_problem(endpoint)
+            if problem:
+                raise _bad(f"Enter a safe gateway endpoint: {problem}.")
+        config["endpoint"] = endpoint
+    if "api_key" in data:
+        config["api_key"] = _text(data.get("api_key"), "Gateway API key", 300)
+    if "timeout_seconds" in data:
+        timeout = data.get("timeout_seconds", 10)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 30:
+            raise _bad("Gateway timeout must be a whole number from 1 to 30 seconds.")
+        config["timeout_seconds"] = timeout
+    return {key: value for key, value in config.items() if value not in (None, "")}
+
+
+def _method_values(payload: dict[str, Any], partial: bool, current: dict[str, Any] | None = None) -> dict[str, Any]:
     values: dict[str, Any] = {}
     if not partial or "provider" in payload:
         values["provider"] = _text(payload.get("provider"), "Provider name", 60, True)
@@ -190,6 +248,13 @@ def _method_values(payload: dict[str, Any], partial: bool) -> dict[str, Any]:
         if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= 999:
             raise _bad("Display order must be a whole number from 0 to 999.")
         values["display_order"] = order
+    if not partial or "verification_method" in payload:
+        verification = payload.get("verification_method", "manual")
+        if verification not in {"manual", "api"}:
+            raise _bad("Verification method must be manual or api.")
+        values["verification_method"] = verification
+    if not partial or "gateway_config" in payload:
+        values["gateway_config"] = _gateway_values(payload.get("gateway_config"), (current or {}).get("gateway_config"))
     return values
 
 
@@ -199,18 +264,29 @@ def _ensure_unique_provider(provider: str, ignore_id: str | None = None) -> None
             raise _bad(f"A payment method named {provider} already exists.", 409)
 
 
+def _validate_verification(values: dict[str, Any], current: dict[str, Any] | None = None) -> None:
+    verification = values.get("verification_method", (current or {}).get("verification_method", "manual"))
+    config = values.get("gateway_config", (current or {}).get("gateway_config", {}))
+    if verification == "api" and not (str(config.get("endpoint") or "").strip() and str(config.get("api_key") or "").strip()):
+        raise _bad("Configure a gateway endpoint and API key before enabling provider confirmation.")
+
+
+@file_services.compensating_files
 def create_payment_method(payload: dict[str, Any]) -> dict[str, Any]:
     values = _method_values(payload, partial=False)
+    _validate_verification(values)
     _ensure_unique_provider(values["provider"])
     values["qr_file"] = _qr_upload(payload["qr"]) if payload.get("qr") else None
     return _method_view(payment_method_repository.insert(values), admin=True)
 
 
+@file_services.compensating_files
 def update_payment_method(method_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = payment_method_repository.get_method(method_id)
     if current is None:
         raise _bad("Payment method not found.", 404)
-    values = _method_values(payload, partial=True)
+    values = _method_values(payload, partial=True, current=current)
+    _validate_verification(values, current)
     if "provider" in values:
         _ensure_unique_provider(values["provider"], method_id)
     old_qr = current.get("qr_file")
@@ -281,11 +357,18 @@ def _clean_area(item: Any, number: int) -> dict[str, Any]:
     active = item.get("active", True)
     if not isinstance(active, bool):
         raise _bad(f"{label}: active must be true or false.")
+    # Store the PSGC spelling when one exists so an alias typed by an administrator cannot make a
+    # valid customer address silently fall out of its configured area (QA-016). Unknown legacy names
+    # are still kept, because old installations may use province lists from before the PSGC snapshot.
+    canonical = []
+    for value in provinces:
+        text = _text(value, "Province", 80, True)
+        canonical.append(location_services.canonical_province(text) or text)
     return {
         "id": _text(item.get("id"), "Area id", 40) or _slug(label),
         "label": label,
         "region": region,
-        "provinces": sorted({_text(value, "Province", 80, True) for value in provinces}),
+        "provinces": sorted(set(canonical)),
         "fee": _money(item.get("fee", 0), f"{label}: delivery fee"),
         "estimate_min_days": low,
         "estimate_max_days": high,
@@ -377,7 +460,9 @@ def public_fulfillment_options() -> dict[str, Any]:
     return {
         "delivery_enabled": settings["delivery_enabled"],
         "areas": [
-            {key: area[key] for key in ("id", "label", "region", "fee", "estimate_min_days", "estimate_max_days")}
+            # `provinces` lets the order page pick the exact configured area for the selected address
+            # instead of guessing from the region; the server still recalculates the fee on submit.
+            {key: area[key] for key in ("id", "label", "region", "provinces", "fee", "estimate_min_days", "estimate_max_days")}
             for area in settings["areas"] if area["active"]
         ],
         "pickup_locations": [
@@ -392,7 +477,14 @@ def public_fulfillment_options() -> dict[str, Any]:
 
 
 def region_of(province: str) -> str:
-    key = re.sub(r"\s+", " ", province.casefold().replace("province of", "").replace("province", "")).strip()
+    # The PSGC snapshot is authoritative for known provinces. The legacy sets below still cover old
+    # free-text orders and province names that are not in the current dataset.
+    known = location_services.region_for_province(province)
+    if known in REGIONS:
+        return known
+    # Use the same canonical key as address validation so legacy aliases keep working in the fee
+    # fallback instead of being treated as an unknown Luzon province.
+    key = location_services.province_key(province)
     if key in VISAYAS_PROVINCES:
         return "visayas"
     if key in MINDANAO_PROVINCES:
@@ -415,18 +507,19 @@ def delivery_quote(province: str, area_id: Any = None) -> dict[str, Any]:
     if not settings["delivery_enabled"]:
         raise _bad("Delivery is not available right now. Choose Store Pickup.")
     active = [area for area in settings["areas"] if area["active"]]
+    # Both sides use the PSGC key, so “Cavite Province”, “Province of Cavite” and “Cavite” all match.
+    province_key = location_services.province_key(province)
     area = None
     if area_id not in (None, ""):
         area = next((item for item in active if item["id"] == area_id), None)
         if area is None:
             raise _bad("Choose an available delivery area.")
         # The chosen area must fit the address, so a cheaper area cannot be picked for a farther province.
-        listed = {value.casefold() for value in area["provinces"]}
-        if (listed and province.casefold().strip() not in listed) or (not listed and region_of(province) != area["region"]):
+        listed = {location_services.province_key(value) for value in area["provinces"]}
+        if (listed and province_key not in listed) or (not listed and region_of(province) != area["region"]):
             raise _bad(f"{province} is not in the {area['label']} delivery area. Choose the area that matches the address.")
     else:
-        province_key = province.casefold().strip()
-        area = next((item for item in active if province_key in {value.casefold() for value in item["provinces"]}), None)
+        area = next((item for item in active if province_key in {location_services.province_key(value) for value in item["provinces"]}), None)
         if area is None:
             region = region_of(province)
             area = next((item for item in active if item["region"] == region and not item["provinces"]), None)

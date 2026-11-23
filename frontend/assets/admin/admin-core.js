@@ -161,13 +161,16 @@
      * In-page confirmation. Resolves to false when cancelled, or { value } when confirmed.
      * With `input`, a text box is shown (for example a rejection reason).
      */
+    let confirmInputNumber = 0;
+
     function confirm({ title, message, confirmLabel = "Confirm", tone = "primary", input = null, details = [] }) {
         return new Promise((resolve) => {
             const dialog = stackedDialog("admin-dialog confirm-dialog");
+            const inputId = `confirm-input-${++confirmInputNumber}`;
             let field = null;
             if (input) {
                 field = h(input.multiline === false ? "input" : "textarea", {
-                    id: "confirm-input",
+                    id: inputId,
                     maxlength: input.maxlength || 500,
                     placeholder: input.placeholder || "",
                     required: input.required || false,
@@ -178,7 +181,7 @@
                 h("h2", { className: "dialog-heading", text: title }),
                 message ? h("p", { className: "confirm-message", text: message }) : null,
                 details.length ? h("dl", { className: "confirm-details" }, ...details.flatMap(([label, value]) => [h("dt", { text: label }), h("dd", { text: value })])) : null,
-                field ? h("div", { className: "form-field" }, h("label", { for: "confirm-input", text: input.label }), field) : null,
+                field ? h("div", { className: "form-field" }, h("label", { for: inputId, text: input.label }), field) : null,
                 h("div", { className: "dialog-actions" },
                     h("button", { className: "button", type: "button", value: "cancel", text: "Cancel", onclick: () => dialog.close("cancel") }),
                     confirmButton,
@@ -256,7 +259,7 @@
             this.container.replaceChildren(this.wrap, this.footer);
             this.renderHead();
             this.tbody.addEventListener("click", (event) => {
-                if (event.target.closest("a, button, input, select, label")) return;
+                if (event.target.closest("a, button, input, select, textarea, label, summary, details")) return;
                 const row = event.target.closest("tr[data-row-index]");
                 if (row) this.activate(row);
             });

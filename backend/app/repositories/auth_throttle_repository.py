@@ -15,7 +15,7 @@ import hmac
 import time
 
 from backend.app.core.config import settings
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 
 
 # Rows older than this are deleted whatever their bucket (longer than any window used).
@@ -23,7 +23,7 @@ RETENTION_SECONDS = 24 * 60 * 60
 
 
 def initialize() -> None:
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS auth_throttle_events (

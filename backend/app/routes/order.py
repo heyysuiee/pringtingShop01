@@ -11,12 +11,15 @@ from backend.app.schemas.order import (
     AdminDraft,
     AdminOrderStatus,
     AdminPayment,
+    AdminPaymentNote,
     AdminPaymentOption,
     AdminPaymentReference,
     AdminQuotation,
+    AdminReceiptRequest,
     AdminSubmissionReview,
     CustomerOrderAction,
     CustomerOrderChanges,
+    CustomerPaymentScan,
     CustomerPaymentSubmission,
     CustomerQuotationResponse,
     NotificationsRead,
@@ -142,6 +145,18 @@ def submit_customer_payment(
     return order_services.submit_customer_payment(reference, payload.email, payload.model_dump(), claims["sub"])
 
 
+@router.post("/api/orders/{reference}/payments/scan")
+def scan_customer_payment(
+    reference: str,
+    payload: CustomerPaymentScan,
+    request: Request,
+) -> dict[str, Any]:
+    """Read-only OCR preview of a receipt. It cannot verify or record a payment."""
+    require_same_origin(request)
+    claims = require_session(request, "customer")
+    return order_services.scan_customer_payment(reference, payload.email, payload.model_dump(), claims["sub"])
+
+
 @router.get("/api/admin/orders")
 def admin_orders(request: Request) -> dict[str, Any]:
     """Orders with server-side search, filters (status, service, payment status, dates), sorting, and pages."""
@@ -232,6 +247,28 @@ def admin_reject_submission(
 ) -> dict[str, Any]:
     admin = require_admin(request)
     return order_services.reject_payment_submission(reference, submission_id, payload.model_dump(), actor=admin["sub"])
+
+
+@router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/notes")
+def admin_payment_note(
+    reference: str,
+    submission_id: str,
+    payload: AdminPaymentNote,
+    request: Request,
+) -> dict[str, Any]:
+    admin = require_admin(request)
+    return order_services.add_payment_verification_note(reference, submission_id, payload.model_dump(), actor=admin["sub"])
+
+
+@router.post("/api/admin/orders/{reference}/payment-submissions/{submission_id}/request-receipt")
+def admin_request_receipt(
+    reference: str,
+    submission_id: str,
+    payload: AdminReceiptRequest,
+    request: Request,
+) -> dict[str, Any]:
+    admin = require_admin(request)
+    return order_services.request_clearer_receipt(reference, submission_id, payload.model_dump(), actor=admin["sub"])
 
 
 @router.post("/api/admin/orders/{reference}/payments")

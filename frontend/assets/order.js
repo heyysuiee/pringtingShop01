@@ -47,6 +47,8 @@
     const generalPackageContainer = $("#general-package-fields");
     const generalDesignContainer = $("#general-design-fields");
     const designSection = $("#design-section");
+    const designGallery = $("#design-gallery");
+    const designGalleryTitle = $("#design-gallery-title");
     const designList = $("#design-list");
     const designFilter = $("#design-filter");
     const designError = $("#design-error");
@@ -75,6 +77,19 @@
     const MAX_ORDER_FILES = 15;
     const money = DynamicForm.money;
     const parameters = new URLSearchParams(window.location.search);
+
+    // Payment instructions on this page follow the shop's active methods; the portal shows the account details
+    // and proof form. No provider is hard-coded here, including on the final confirmation screen.
+    let paymentMethodLabel = "the shop's available e-wallets";
+    fetch("/api/payment-methods", { credentials: "same-origin" })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+            const names = (data?.methods || []).map((method) => method.provider);
+            if (!names.length) return;
+            paymentMethodLabel = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+            document.querySelectorAll(".payment-methods-label").forEach((node) => { node.textContent = paymentMethodLabel; });
+        })
+        .catch(() => { /* the generic wording stays if the method list is unavailable */ });
 
     const SEQUENCES = {
         general: [
@@ -969,6 +984,7 @@
 
     function renderDesigns() {
         designList.replaceChildren();
+        if (designGalleryTitle) designGalleryTitle.textContent = state.design ? `Selected: ${state.design.name} — change design` : "Choose your design";
         renderDesignFilter();
         if (!state.designs.length) {
             designList.append(el("p", "package-empty", "The shop has not published designs for this item yet. Choose another ordering option."));
@@ -1000,8 +1016,8 @@
             card.append(view, body);
             designList.append(card);
         });
-        // Last in the gallery: the customer can still send their own design.
-        designList.append(ownDesignCard());
+        // First in the gallery: customers with their own artwork should not scroll past every template to find it.
+        designList.prepend(ownDesignCard());
     }
 
     /** The gallery's "Use my own design" choice: opens the product's customize form with its uploads. */
@@ -1074,12 +1090,14 @@
         }
         renderDesigns();
         renderSelectedDesign();
+        // The chosen design stays visible in the summary line; the gallery collapses so personalization is above the fold.
+        if (designGallery && changed) designGallery.open = false;
         state.quote = null;
         scheduleQuote();
         syncNextButton();
         syncSelectionUrl();
         if (state.activeStep === REVIEW_STEP) renderSummary();
-        // The details form opens right below the gallery.
+        // The details form opens right below the now-collapsed gallery.
         if (scroll && changed && state.activeStep === 9) $("#design-details-title").scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
@@ -1172,7 +1190,7 @@
             input.disabled = !show;
         }
         for (const id of ["event-time", "event-location"]) $(`#${id}`).disabled = !show;
-        $("#event-date").min = new Date().toISOString().slice(0, 10);
+        $("#event-date").min = DynamicForm.manilaToday();
     }
 
     function eventData() {
@@ -1361,9 +1379,76 @@
     const pickupFields = $("#pickup-fields");
     const areaSelect = $("#delivery-area");
     const pickupSelect = $("#pickup-location");
+    const provinceSelect = $("#delivery-province");
+    const citySelect = $("#delivery-city");
+    const regionHint = $("#delivery-region");
     // Delivery areas (fee and estimated courier period) and pickup locations configured by the shop. The
     // server calculates the delivery fee again when the order is submitted.
     let fulfillmentOptions = { delivery_enabled: true, areas: [], pickup_locations: [], delivery_disclaimer: "" };
+    // PSGC reference data: province → city/municipality → island group. Never sent as an order total; the
+    // server repeats the province/municipality check and computes the area and fee.
+    let locationData = { provinces: [] };
+    const locationKey = (value) => String(value || "").toLowerCase().replace(/\s*\([^)]*\)/g, "")
+        .replace(/^province of\s+/, "").replace(/\s+province$/, "").trim();
+    /** Shared client-side mirror of the backend's PH mobile/landline rule. */
+    function validPhone(value) {
+        if (window.PrintShopPhone?.valid) return window.PrintShopPhone.valid(value);
+        const text = String(value || "").trim();
+        if (!/^[0-9+\s()-]{7,40}$/.test(text)) return false;
+        const digits = text.replace(/\D/g, "");
+        return /^(?:0|63)9\d{9}$/.test(digits) || /^0\d{7,9}$/.test(digits);
+    }
+    function selectedProvince() {
+        return locationData.provinces.find((item) => locationKey(item.name) === locationKey(provinceSelect.value)) || null;
+    }
+    /** Select the shop's configured area for the address: exact province list first, then island group.
+     *  Always clear the previous selection first; otherwise changing province keeps the old area/fee. */
+    function syncDeliveryArea() {
+        const province = selectedProvince();
+        areaSelect.value = "";
+        // With no configured areas the server derives the fee from the address, so no selection is needed.
+        if (!province || !fulfillmentOptions.areas.length) return false;
+        const exact = fulfillmentOptions.areas.find((area) =>
+            (area.provinces || []).some((name) => locationKey(name) === locationKey(province.name)));
+        const regional = fulfillmentOptions.areas.find((area) => area.region === province.island_group && !(area.provinces || []).length);
+        const area = exact || regional;
+        if (area) areaSelect.value = area.id;
+        return Boolean(area);
+    }
+
+    /** Repopulate the dependent city list and its hint after the province (or reference data) changes. */
+    function syncProvinceSelection() {
+        const province = selectedProvince();
+        citySelect.replaceChildren(
+            new Option(province ? "Select city / municipality" : "Select province first", ""),
+            ...(province?.cities || []).map((name) => new Option(name, name)),
+        );
+        const matched = syncDeliveryArea();
+        const noArea = Boolean(province && fulfillmentOptions.areas.length && !matched);
+        regionHint.textContent = province
+            ? `${province.region} · ${province.island_group.charAt(0).toUpperCase()}${province.island_group.slice(1)}. Choose the city or municipality where the order will be delivered.${noArea ? " No configured delivery area matches this province; choose an area below or contact the shop." : ""}`
+            : "Select a province to see its region and available delivery area.";
+    }
+    fetch("/api/locations", { credentials: "same-origin" })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+            if (!data?.provinces?.length) return;
+            locationData = data;
+            provinceSelect.replaceChildren(new Option("Select province", ""), ...data.provinces.map((item) => new Option(item.name, item.name)));
+            // Locations may resolve after fulfillment options; select the matching area in either order.
+            syncProvinceSelection();
+            syncFulfillment();
+        })
+        .catch(() => {
+            // The server still validates the address; a failed lookup leaves the selects empty with a hint.
+            regionHint.textContent = "Location list is unavailable. Refresh the page to choose an address.";
+        });
+    provinceSelect.addEventListener("change", () => {
+        syncProvinceSelection();
+        renderDeliveryQuote();
+        renderPaymentBreakdown();
+        if (state.activeStep === REVIEW_STEP) renderSummary();
+    });
     fetch("/api/fulfillment-options", { credentials: "same-origin" })
         .then((response) => (response.ok ? response.json() : null))
         .then((options) => {
@@ -1377,17 +1462,20 @@
             }
             $("#pickup-location-field").hidden = options.pickup_locations.length < 2;
             pickupSelect.replaceChildren(...options.pickup_locations.map((item) => new Option(`${item.name} — ${item.address}`, item.id)));
-            $("#pickup-date").min = new Date().toISOString().slice(0, 10);
+            $("#pickup-date").min = DynamicForm.manilaToday();
             // Without configured areas the server works the area out from the province.
             if (!options.areas.length) {
                 areaSelect.dataset.optional = "true";
                 areaSelect.closest(".field").hidden = true;
             }
+            // Fulfillment options may resolve after the location list; retry the derived area now.
+            syncDeliveryArea();
             syncFulfillment();
         })
         .catch(() => {
             areaSelect.dataset.optional = "true";
             areaSelect.closest(".field").hidden = true;
+            syncDeliveryArea();
             syncFulfillment();
         });
 
@@ -1737,6 +1825,34 @@
             invalid[0].reportValidity();
             return false;
         }
+        if (stepNumber === 5) {
+            const phoneInput = $("#phone");
+            if (!validPhone(phoneInput.value)) {
+                setError("Enter a valid Philippine mobile (09XX XXX XXXX or +63 9XX XXX XXXX) or landline number.");
+                phoneInput.focus();
+                return false;
+            }
+            if (fulfillmentMethod() === "delivery") {
+                const deliveryPhone = $("#delivery-phone");
+                if (!validPhone(deliveryPhone.value)) {
+                    setError("Enter a valid Philippine mobile or landline number for the delivery contact.");
+                    deliveryPhone.focus();
+                    return false;
+                }
+                const province = selectedProvince();
+                if (!province) {
+                    setError("Choose a province from the list before continuing.");
+                    provinceSelect.focus();
+                    return false;
+                }
+                const validCity = province.cities.some((name) => locationKey(name) === locationKey(citySelect.value));
+                if (!validCity) {
+                    setError(`Choose a city or municipality in ${province.name} before continuing.`);
+                    citySelect.focus();
+                    return false;
+                }
+            }
+        }
         if (stepNumber === REVIEW_STEP && !$("#acknowledge").checked) {
             $("#acknowledgement-error").textContent = "Please acknowledge the order instructions before submitting.";
             $("#acknowledge").focus();
@@ -1981,7 +2097,7 @@
             lines.push(
                 el("p", "", `${order.fixed_price_label || "Package total"}: ${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece${sizeText})` : ""}.`),
                 el("p", "", `50% down payment: ${money(payment.down_payment_required)} · remaining balance ${money(payment.remaining_after_down_payment)}. `
-                    + "Pay the down payment through the shop's e-wallet (GCash, Maya, or another listed option) after the shop approves your order; your order is confirmed once the shop verifies it."),
+                    + `Pay the down payment through ${paymentMethodLabel} after the shop approves your order; your order is confirmed once the shop verifies it.`),
             );
         } else {
             lines.push(

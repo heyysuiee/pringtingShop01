@@ -16,7 +16,7 @@ import secrets
 import sqlite3
 from typing import Any
 
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.database.design_seed import SAMPLE_DESIGNS
 from backend.app.utils.clock import now_iso
 
@@ -62,7 +62,7 @@ def new_id() -> str:
 
 
 def initialize() -> None:
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
         if connection.execute("SELECT value FROM app_meta WHERE key = ?", (SEED_MARKER,)).fetchone() is None:

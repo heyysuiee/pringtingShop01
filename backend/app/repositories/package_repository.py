@@ -14,7 +14,7 @@ import sqlite3
 from typing import Any, cast
 
 from backend.app.database.catalog_seed import INVITATION_PACKAGES
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.models.catalog import InvitationPackage
 from backend.app.utils.clock import now_iso
 from backend.app.utils.images import optimized_image
@@ -51,7 +51,7 @@ def new_id() -> str:
 
 
 def initialize() -> None:
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         for statement in SCHEMA:
             connection.execute(statement)
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(invitation_packages)")}

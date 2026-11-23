@@ -24,47 +24,35 @@
     const EVENT_LABELS = { none: "Not collected", optional: "Optional", required: "Required" };
     const SECTION_LABELS = { "": "Basic specifications", design: "Design customization", event: "Event details", upload: "Uploads" };
 
+    // Shared helpers keep 401 redirects, busy/re-entrancy handling and consistent toasts everywhere.
+    // catalog-admin.js and design-admin.js use the (method, url, body) API shape, so only a thin adapter is kept.
+    const { h, api: sharedApi, toast: sharedToast, busy, openModal, closeModal } = window.AdminUI;
+    const api = (method, url, body) => sharedApi(url, { method, body });
+
     const state = { catalog: null, loading: null, error: "" };
 
     const money = (value) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value);
     const dialog = () => document.querySelector("#admin-dialog");
-    const dialogContent = () => document.querySelector("#dialog-content");
 
-    function h(tag, attributes = {}, ...children) {
-        const element = document.createElement(tag);
-        for (const [name, value] of Object.entries(attributes)) {
-            if (value === undefined || value === null || value === false) continue;
-            if (name === "className") element.className = value;
-            else if (name === "text") element.textContent = value;
-            else if (name === "dataset") Object.assign(element.dataset, value);
-            else if (name === "value") element.value = value;
-            else if (name === "checked") element.checked = Boolean(value);
-            else if (value === true) element.setAttribute(name, "");
-            else element.setAttribute(name, String(value));
-        }
-        element.append(...children.filter((child) => child !== null && child !== undefined && child !== false));
-        return element;
+    function toast(message, tone) {
+        const failed = /could not|must|invalid|choose|add at least|every option|add a category|cannot|exceed|required/i.test(message);
+        sharedToast(message, tone || (failed ? "error" : "success"));
     }
 
-    function toast(message) {
-        const failed = /could not|must|invalid|choose|add at least|every option|add a category/i.test(message);
-        window.AdminUI?.toast(message, failed ? "error" : "success");
+    /** Show a field-specific validation message beside the control (and in the toast region). */
+    function flagField(input, message) {
+        input.setCustomValidity(message);
+        input.reportValidity();
+        input.addEventListener("input", () => input.setCustomValidity(""), { once: true });
+        toast(message, "error");
     }
 
-    async function api(method, url, body) {
-        const response = await fetch(url, {
-            method,
-            credentials: "same-origin",
-            headers: body === undefined ? {} : { "Content-Type": "application/json" },
-            body: body === undefined ? undefined : JSON.stringify(body),
-        });
-        if (response.status === 204) return null;
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            const detail = Array.isArray(result.detail) ? result.detail.map((item) => item.msg).join(" ") : result.detail;
-            throw new Error(detail || `The catalog change could not be saved (HTTP ${response.status}).`);
+    async function guarded(button, task, label = "Saving…") {
+        try {
+            await busy(button, task, label);
+        } catch (error) {
+            toast(error instanceof Error ? error.message : "The change could not be saved.", "error");
         }
-        return result;
     }
 
     async function load(force = false) {
@@ -361,40 +349,51 @@
         if (views.products && views.products.container === host && host.isConnected) return views.products;
         views.products = new (UI().DataTable)(host, {
             columns: [
-                { label: "Product", sortKey: "name", render: (product) => h("div", { className: "product-cell" }, thumb(product), h("span", {},
-                    h("span", { className: "table-primary", text: product.name }),
-                    h("span", { className: "table-secondary", text: product.description || "No description" }),
-                )) },
+                // Two scannable lines: name with its photo, then the facts and actions needed most often.
+                { label: "Product", sortKey: "name", render: (product) => {
+                    const count = packageCount(product.id);
+                    let packages;
+                    if (count === null) {
+                        packages = h("span", { className: "table-secondary", text: packageState.error ? "Packages —" : "Packages loading…" });
+                    } else if (!count) {
+                        packages = h("span", { className: "status-badge pending", text: "Customize only", title: "No packages yet: customers order with the customize form." });
+                    } else {
+                        const view = h("button", { className: "table-link", type: "button", text: `${count} package${count === 1 ? "" : "s"} →`, title: `Show the packages of ${product.name}` });
+                        view.addEventListener("click", () => showPackagesFor(product));
+                        packages = view;
+                    }
+                    const edit = h("button", { className: "table-link", type: "button", text: "Edit", title: `Edit ${product.name}` });
+                    edit.addEventListener("click", () => openProductEditor(product.id));
+                    return h("div", {},
+                        h("div", { className: "product-cell" }, thumb(product), h("span", { className: "table-primary", text: product.name })),
+                        h("div", { className: "catalog-row-actions" },
+                            h("span", { className: `status-badge ${hasPublishedPrice(product) ? "available" : "pending"}`, title: "Published customer price", text: priceText(product) }),
+                            statusBadge(product.active),
+                            packages,
+                            h("a", { className: "table-link", href: orderPreviewUrl(product), target: "_blank", rel: "noopener", text: "Preview ↗" }),
+                            edit,
+                        ),
+                    );
+                } },
                 { label: "Category", sortKey: "category_label", render: (product) => product.category_label },
-                { label: "Pricing", sortKey: "base_price", value: (product) => (product.pricing_mode === "quote" ? null : product.base_price), render: (product) => {
+                { label: "Order form", sortKey: "fields", value: (product) => product.fields.length, render: (product) => {
                     const options = product.fields.flatMap((field) => field.options);
+                    const optionCount = options.length;
                     const priced = options.filter((option) => option.price_adjustment).length;
                     const quoteOnly = options.filter((option) => option.requires_quote).length;
-                    return h("span", {},
-                        h("span", { className: `status-badge ${hasPublishedPrice(product) ? "available" : "pending"}`, text: priceText(product) }),
-                        options.length ? h("span", { className: "table-secondary", text: `${priced} priced option${priced === 1 ? "" : "s"}${quoteOnly ? ` · ${quoteOnly} quote-only` : ""}` }) : null);
+                    const customize = customizeAllowed(product);
+                    const activePackages = activePackageCount(product.id);
+                    return h("details", { className: "op-details" },
+                        h("summary", { text: `${product.fields.length} fields · ${optionCount} options${customize ? " · customized orders on" : " · packages only"}` }),
+                        h("div", { className: "catalog-field-meta" },
+                            h("span", { className: "catalog-chip", text: `${priced} priced option${priced === 1 ? "" : "s"}` }),
+                            quoteOnly ? h("span", { className: "catalog-chip", text: `${quoteOnly} quote-only` }) : null,
+                            h("span", { className: "catalog-chip", text: PRICING_LABELS[product.pricing_mode] || product.pricing_mode }),
+                            h("span", { className: `catalog-chip${customize ? "" : " catalog-chip-muted"}`, text: customize ? "Customized orders enabled" : "Packages only" }),
+                            !customize && activePackages === 0 ? h("span", { className: "table-secondary", text: "⚠ No active packages: customers cannot order it yet" }) : null,
+                        ),
+                    );
                 } },
-                { label: "Packages", sortKey: "packages", value: (product) => packageCount(product.id) ?? -1, render: (product) => {
-                    const count = packageCount(product.id);
-                    if (count === null) return h("span", { className: "table-secondary", text: packageState.error ? "—" : "Loading…" });
-                    if (!count) return h("span", { className: "status-badge pending", text: "Customize only", title: "No packages yet: customers order with the customize form." });
-                    const view = h("button", { className: "table-link", type: "button", text: `${count} package${count === 1 ? "" : "s"} →`, title: `Show the packages of ${product.name}` });
-                    view.addEventListener("click", () => showPackagesFor(product));
-                    return view;
-                } },
-                { label: "Order form", sortKey: "fields", value: (product) => product.fields.length, render: (product) => {
-                    const optionCount = product.fields.reduce((total, field) => total + field.options.length, 0);
-                    return h("span", {}, h("span", { className: "table-primary", text: `${product.fields.length} fields` }), h("span", { className: "table-secondary", text: `${optionCount} options` }));
-                } },
-                { label: "Customized orders", sortKey: "allow_customize", value: (product) => (customizeAllowed(product) ? 0 : 1), render: (product) => {
-                    if (customizeAllowed(product)) return h("span", { className: "status-badge available", text: "Enabled", title: "Customers can submit customized orders (quotation requests)." });
-                    const active = activePackageCount(product.id);
-                    return h("span", {},
-                        h("span", { className: "status-badge unavailable", text: "Disabled", title: "Customers can order this product only through its packages." }),
-                        active === 0 ? h("span", { className: "table-secondary", text: "⚠ No active packages: customers cannot order it" }) : h("span", { className: "table-secondary", text: "Packages only" }));
-                } },
-                { label: "Availability", sortKey: "active", value: (product) => (product.active ? 0 : 1), render: (product) => statusBadge(product.active) },
-                { label: "Order form preview", render: (product) => h("a", { className: "table-link", href: orderPreviewUrl(product), target: "_blank", rel: "noopener", text: "Preview ↗" }) },
             ],
             rows: () => allProducts(),
             filter: (product, filter) => {
@@ -481,16 +480,15 @@
     // ================================================================ dialog helpers
 
     function openDialog(node, wide = true) {
-        const element = dialog();
-        dialogContent().replaceChildren(node);
-        element.classList.toggle("admin-dialog-wide", wide);
-        if (!element.open) element.showModal();
-        element.querySelector(".dialog-frame")?.scrollTo({ top: 0 });
+        // The order modal can leave admin-dialog-xl behind; clear both size classes first.
+        // openModal() (shared) keeps the .dialog-frame max-height/scrolling from the existing CSS.
+        dialog().classList.remove("admin-dialog-xl", "admin-dialog-wide");
+        openModal(node, { wide });
         node.querySelector("input:not([type=hidden]), select, textarea")?.focus({ preventScroll: true });
     }
 
     function closeDialog() {
-        dialog().close();
+        closeModal();
     }
 
     function formField(label, control, { full = false, note = "" } = {}) {
@@ -508,25 +506,9 @@
 
     function numberOrNull(value) {
         const text = String(value ?? "").trim();
-        return text === "" ? null : Number(text);
-    }
-
-    async function guarded(button, task) {
-        const label = button?.textContent;
-        if (button) {
-            button.disabled = true;
-            button.textContent = "Saving…";
-        }
-        try {
-            await task();
-        } catch (error) {
-            toast(error instanceof Error ? error.message : "The change could not be saved.");
-        } finally {
-            if (button?.isConnected) {
-                button.disabled = false;
-                button.textContent = label;
-            }
-        }
+        if (text === "") return null;
+        const parsed = Number(text);
+        return Number.isFinite(parsed) ? parsed : null;
     }
 
     function readImage(file) {
@@ -685,7 +667,28 @@
 
         form.addEventListener("submit", (event) => {
             event.preventDefault();
+            [minQuantity, maxQuantity, basePrice].forEach((input) => input.setCustomValidity(""));
             if (!form.reportValidity()) return;
+            const minValue = numberOrNull(minQuantity.value);
+            const maxValue = numberOrNull(maxQuantity.value);
+            if (minValue === null || !Number.isInteger(minValue) || minValue < 1 || minValue > 50000) {
+                flagField(minQuantity, "Enter a minimum quantity of 1 to 50,000.");
+                return;
+            }
+            if (maxValue === null || !Number.isInteger(maxValue) || maxValue < 1 || maxValue > 50000) {
+                flagField(maxQuantity, "Enter a maximum quantity of 1 to 50,000.");
+                return;
+            }
+            if (maxValue < minValue) {
+                flagField(maxQuantity, `The maximum quantity must be at least the minimum (${minValue}).`);
+                return;
+            }
+            const pricedByShop = !["quote", "size"].includes(pricingMode.value);
+            const baseValue = numberOrNull(basePrice.value);
+            if (pricedByShop && baseValue !== null && !(baseValue >= 0)) {
+                flagField(basePrice, "Enter a base price of zero or more, or leave it blank to request a quote.");
+                return;
+            }
             const payload = {
                 name: name.value.trim(),
                 category_id: category.value,
@@ -693,10 +696,10 @@
                 active: active.value === "true",
                 event_mode: eventMode.value,
                 allow_customize: allowCustomize.value === "true",
-                min_quantity: Number(minQuantity.value),
-                max_quantity: Number(maxQuantity.value),
+                min_quantity: minValue,
+                max_quantity: maxValue,
                 pricing_mode: pricingMode.value,
-                base_price: pricingMode.value === "quote" || pricingMode.value === "size" ? null : numberOrNull(basePrice.value),
+                base_price: pricedByShop ? baseValue : null,
                 ...photos.value(),
             };
             void guarded(save, async () => {
@@ -950,21 +953,21 @@
         const included = h("input", { name: "included_quantity", type: "number", min: 1, max: 50000, step: 1, required: true, value: pkg?.included_quantity ?? Math.max(1, product.min_quantity || 1) });
         const example = h("p", { className: "field-note package-price-example", "aria-live": "polite" });
         const addOnLabel = h("input", { name: "add_on_label", maxlength: 120, value: pkg?.add_on_label || "", placeholder: "e.g. Additional piece" });
-        const addOnPrice = h("input", { name: "add_on_price", type: "number", min: 0, step: "0.01", value: pkg?.add_on_price ?? "", placeholder: "Leave blank for a fixed quantity" });
+        const addOnPrice = h("input", { name: "add_on_price", type: "number", min: "0", step: "0.01", value: pkg?.add_on_price ?? "", placeholder: "Leave blank for a fixed quantity" });
         const inclusions = inclusionEditor(inclusionDetails(pkg));
         const active = selectOf("active", [["true", "Active — customers can select it"], ["false", "Inactive — hidden from customers"]], pkg ? String(pkg.active) : "true");
         const sortOrder = h("input", { name: "sort_order", type: "number", min: 0, max: 10000, step: 1, value: pkg?.sort_order ?? "", placeholder: "Automatic" });
         const photos = imageManager(pkg ? imagesOf(pkg) : [], { name: pkg?.name || "New package" });
         const perPiece = h("span", { className: "field-note" });
         const refreshPerPiece = () => {
-            const value = Number(price.value);
-            const quantity = Number(included.value);
+            const value = numberOrNull(price.value);
+            const quantity = numberOrNull(included.value);
             perPiece.textContent = value > 0 && quantity > 0 ? `≈ ${money(value / quantity)} per piece for the minimum ${quantity.toLocaleString()} pcs.` : "";
             // Preview of what customers will see: base price, then each extra piece adds the additional price.
-            const extraPrice = addOnPrice.value.trim() === "" ? null : Number(addOnPrice.value);
+            const extraPrice = numberOrNull(addOnPrice.value);
             if (!(value > 0) || !(quantity > 0)) {
                 example.textContent = "";
-            } else if (extraPrice === null || !Number.isFinite(extraPrice)) {
+            } else if (extraPrice === null) {
                 example.textContent = `Customers order exactly ${quantity.toLocaleString()} pcs for ${money(value)}.`;
             } else {
                 example.textContent = `Customer preview: ${quantity} pcs = ${money(value)} · ${quantity + 1} pcs = ${money(value + extraPrice)} · ${quantity + 5} pcs = ${money(value + 5 * extraPrice)}.`;
@@ -1024,19 +1027,35 @@
 
         form.addEventListener("submit", (event) => {
             event.preventDefault();
+            [price, included, addOnPrice, sortOrder].forEach((input) => input.setCustomValidity(""));
             if (!form.reportValidity()) return;
             const lines = inclusions.value();
             if (!lines.length) {
-                toast("Add at least one inclusion for this package.");
+                toast("Add at least one inclusion for this package.", "error");
                 return;
             }
             if (lines.some((item) => !item.name)) {
-                toast("Every inclusion must have a name.");
+                toast("Every inclusion must have a name.", "error");
                 return;
             }
-            const priceValue = Number(price.value);
-            if (!(priceValue > 0)) {
-                toast("Package price must be greater than zero.");
+            const priceValue = numberOrNull(price.value);
+            if (priceValue === null || !(priceValue > 0)) {
+                flagField(price, "Enter a base package price greater than zero.");
+                return;
+            }
+            const includedValue = numberOrNull(included.value);
+            if (includedValue === null || !Number.isInteger(includedValue) || includedValue < 1 || includedValue > 50000) {
+                flagField(included, "Enter a minimum order quantity of 1 to 50,000 pieces.");
+                return;
+            }
+            const addOnValue = numberOrNull(addOnPrice.value);
+            if (addOnPrice.value.trim() !== "" && (addOnValue === null || !(addOnValue > 0))) {
+                flagField(addOnPrice, "Enter an additional-piece price greater than zero, or leave it blank for a fixed quantity.");
+                return;
+            }
+            const orderValue = numberOrNull(sortOrder.value);
+            if (sortOrder.value.trim() !== "" && (orderValue === null || !Number.isInteger(orderValue) || orderValue < 0 || orderValue > 10000)) {
+                flagField(sortOrder, "Enter a sort order from 0 to 10,000, or leave it blank.");
                 return;
             }
             const payload = {
@@ -1045,14 +1064,14 @@
                 price: priceValue,
                 size: size.value.trim(),
                 material: material.value.trim(),
-                included_quantity: Number(included.value),
+                included_quantity: includedValue,
                 add_on_label: addOnLabel.value.trim(),
-                add_on_price: addOnPrice.value.trim() === "" ? null : Number(addOnPrice.value),
+                add_on_price: addOnValue,
                 inclusions: lines,
                 active: active.value === "true",
                 ...photos.value(),
             };
-            if (sortOrder.value.trim() !== "") payload.sort_order = Number(sortOrder.value);
+            if (sortOrder.value.trim() !== "") payload.sort_order = orderValue;
             void guarded(save, async () => {
                 if (pkg) {
                     await api("PATCH", `/api/admin/catalog/packages/${encodeURIComponent(pkg.id)}`, payload);
@@ -1268,7 +1287,7 @@
             id: row.dataset.optionId || undefined,
             value: row.dataset.value || undefined,
             label: label.value.trim(),
-            price_adjustment: Number(price.value || 0),
+            price_adjustment: numberOrNull(price.value) ?? 0,
             price_type: priceType.value,
             requires_quote: quote.checked,
             active: active.checked,
@@ -1411,7 +1430,7 @@
                 min_value: kind === "number" ? numberOrNull(minValue.value) : null,
                 max_value: kind === "number" ? numberOrNull(maxValue.value) : null,
                 max_length: ["text", "textarea"].includes(kind) ? numberOrNull(maxLength.value) : null,
-                max_files: kind === "file" ? Number(maxFiles.value || 1) : 1,
+                max_files: kind === "file" ? (numberOrNull(maxFiles.value) ?? 1) : 1,
                 depends_on: dependsOn.value,
                 depends_values: [...dependsValues.querySelectorAll("input:checked")].map((input) => input.value),
                 default_value: OPTION_TYPES.has(kind) ? defaultValue.value : kind === "file" ? "" : textDefault.value.trim(),
@@ -1470,7 +1489,7 @@
                 const charge = selectOf("price_type", Object.entries(PRICE_TYPE_LABELS), option.price_type);
                 charge.setAttribute("aria-label", `${option.label} charged`);
                 const quote = h("input", { type: "checkbox", "aria-label": `${option.label} requires quotation`, checked: option.requires_quote });
-                rows.push(() => ({ id: option.id, price_adjustment: Number(price.value || 0), price_type: charge.value, requires_quote: quote.checked }));
+                rows.push({ input: price, read: () => ({ id: option.id, price_adjustment: numberOrNull(price.value) ?? 0, price_type: charge.value, requires_quote: quote.checked }) });
                 body.append(h("tr", {}, h("td", { text: option.label + (option.active ? "" : " (hidden)") }), h("td", {}, price), h("td", {}, charge), h("td", { className: "center" }, quote)));
             });
             form.append(h("fieldset", { className: "catalog-price-group" },
@@ -1490,9 +1509,14 @@
         form.addEventListener("submit", (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
+            const invalid = rows.find((row) => row.input.value.trim() !== "" && numberOrNull(row.input.value) === null);
+            if (invalid) {
+                flagField(invalid.input, "Enter a valid price adjustment, or leave it blank for zero.");
+                return;
+            }
             void guarded(save, async () => {
                 const result = await api("POST", `/api/admin/catalog/products/${encodeURIComponent(product.id)}/pricing`, {
-                    options: rows.map((read) => read()),
+                    options: rows.map((row) => row.read()),
                 });
                 storeProduct(result.product);
                 rerenderActiveView();
@@ -1560,7 +1584,7 @@
 
     // The script loads at the end of <body>, so the shared dialog already exists.
     dialog()?.addEventListener("close", () => {
-        if (!dialog().open) dialog().classList.remove("admin-dialog-wide");
+        if (!dialog().open) dialog().classList.remove("admin-dialog-wide", "admin-dialog-xl");
     });
 
     /** Open a tab from outside (the Catalog Management entries in the sidebar). */

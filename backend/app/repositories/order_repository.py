@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import Any, cast
 
 from backend.app.core.config import settings
-from backend.app.repositories import audit_repository, customer_repository, notification_repository
-from backend.app.database.connection import connection_scope
+from backend.app.repositories import audit_repository, customer_repository, notification_repository, reference_claim_repository
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.models.order import OrderRecord, OrderUpdates
 from backend.app.utils.clock import now_iso
 from backend.app.utils.order_number import base_reference, candidate_reference
@@ -22,7 +22,7 @@ def initialize() -> None:
     customer_repository.initialize()
     audit_repository.initialize()
     notification_repository.initialize()
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS orders (
@@ -88,6 +88,7 @@ def initialize() -> None:
         )
         connection.execute("CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id)")
+        reference_claim_repository.initialize_with(connection)
         _backfill_completed_at(connection)
 
 
@@ -235,6 +236,14 @@ class StaleOrderError(Exception):
     """Raised when an order changed after the caller read it (another action was saved first)."""
 
 
+class ReferenceConflict(Exception):
+    """A payment, refund or tracking reference was already claimed by another order."""
+
+    def __init__(self, detail: str = "") -> None:
+        self.detail = detail
+        super().__init__(detail or "That reference is already recorded.")
+
+
 def order_version(order: OrderRecord) -> int:
     """A counter that increases with every saved change: each update appends exactly one history entry."""
     return len(order["history"])
@@ -287,6 +296,7 @@ def update_order(
     expected_version: int | None = None,
     audit: dict[str, Any] | None = None,
     notifications: list[dict[str, Any]] | None = None,
+    claim_ops: list[dict[str, Any]] | None = None,
 ) -> OrderRecord | None:
     """Apply ``updates`` and append ``event`` to the history in one write transaction.
 
@@ -296,6 +306,9 @@ def update_order(
     ``audit`` ({"action", "actor_type", "actor_id", "details"}) is written to the audit log and each of
     ``notifications`` to the customer's notifications, in the same transaction. A notification whose
     ``dedupe_key`` was already used is skipped; each dict gets ``"created": True | False``.
+
+    ``claim_ops`` reserves/releases payment, refund and tracking references in the same transaction,
+    so a concurrent request can never save the same reference on two orders.
     """
     with connection_scope() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -304,6 +317,11 @@ def update_order(
             return None
         if expected_version is not None and order_version(current) != expected_version:
             raise StaleOrderError(reference)
+        if claim_ops:
+            try:
+                reference_claim_repository.apply(connection, claim_ops, reference, current["updated_at"])
+            except reference_claim_repository.DuplicateReference as error:
+                raise ReferenceConflict(error.detail) from error
         previous_status = current["status"]
         previous_total = current["total_amount"]
         _apply_updates(current, updates)

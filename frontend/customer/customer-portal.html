@@ -23,7 +23,7 @@
     <div class="top-bar">
         <div class="top-bar-content">
             <p>(555) 123-4567 • (0949) 157-4778</p>
-            <p>Official email: shop email to be provided • Mon–Sat 8AM–6PM</p>
+            <p>Official email: printImpress@gmail.com • Mon–Sat 8AM–6PM</p>
         </div>
     </div>
 
@@ -120,23 +120,179 @@
                 <div class="card portal-empty" id="portal-empty"><span class="confirm-badge confirm-badge-muted" aria-hidden="true">i</span><h2>Sign in to see your orders</h2><p>Your orders, quotations, payments, drafts, and files are available after you sign in to the account you ordered with.</p></div>
             </section>
             <article class="card order-detail" id="order-detail" hidden aria-live="polite">
-                <button class="text-button" type="button" id="back-to-orders">← Back to my orders</button>
+                <div class="order-detail-toolbar">
+                    <button class="text-button order-back-link" type="button" id="back-to-orders">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 18l-6-6 6-6"/></svg>
+                        <span>Back to my orders</span>
+                    </button>
+                </div>
                 <p class="field-error" id="detail-error" role="alert"></p>
+
+                <!-- PRIMARY: identity + payment snapshot -->
                 <header class="order-detail-head">
-                    <div><span class="service-tag" id="detail-service"></span><h2 class="order-detail-title" id="detail-item"></h2><p class="field-hint" id="detail-meta"></p></div>
-                    <div class="order-ref" id="detail-ref"></div>
+                    <div class="order-detail-identity">
+                        <span class="service-tag" id="detail-service"></span>
+                        <h2 class="order-detail-title" id="detail-item"></h2>
+                        <p class="field-hint order-detail-meta" id="detail-meta"></p>
+                    </div>
+                    <div class="order-detail-ref-block">
+                        <span class="order-ref-label">Order reference</span>
+                        <div class="order-ref" id="detail-ref"></div>
+                    </div>
                 </header>
-                <div class="status-banner" id="detail-status"></div>
-                <h3 class="section-label">Order progress</h3><ol class="timeline tracking-timeline" id="detail-timeline" aria-label="Order progress"></ol>
+
+                <section class="order-overview" aria-label="Order summary">
+                    <div class="order-overview-status">
+                        <span class="overview-label">Order status</span>
+                        <div class="status-banner" id="detail-status"></div>
+                    </div>
+                    <div class="payment-snapshot" id="payment-snapshot" aria-label="Payment summary">
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Total order amount</span>
+                            <strong class="snapshot-value" id="snapshot-total">—</strong>
+                        </div>
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Payment status</span>
+                            <strong class="snapshot-value snapshot-status" id="snapshot-payment-status">—</strong>
+                        </div>
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Verified paid</span>
+                            <strong class="snapshot-value" id="snapshot-paid">—</strong>
+                        </div>
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Remaining balance</span>
+                            <strong class="snapshot-value" id="snapshot-balance">—</strong>
+                        </div>
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Payments submitted</span>
+                            <strong class="snapshot-value" id="snapshot-submitted">—</strong>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PRIMARY: actions that need attention -->
+                <section class="customer-action-strip" id="customer-actions" hidden aria-live="polite"></section>
+
+                <!-- PRIMARY: draft review (when awaiting approval) -->
+                <section class="customer-draft" id="customer-draft" hidden>
+                    <div class="customer-draft-head">
+                        <div>
+                            <span class="overview-label">Action required</span>
+                            <h3>Your draft is ready to review</h3>
+                            <p class="field-hint">Printing will not begin until you approve the draft.</p>
+                        </div>
+                    </div>
+                    <p class="field-hint draft-remarks" id="draft-remarks" hidden></p>
+                    <a id="draft-download" class="btn btn-ghost-dark btn-compact" href="#">Open draft layout</a>
+                    <label class="draft-revision" for="draft-revision-note">
+                        <span>Revision instructions <span class="field-hint">(required to request changes)</span></span>
+                        <textarea id="draft-revision-note" class="input" rows="3" maxlength="1000" placeholder="e.g. Make the name bigger and change the date to December 12"></textarea>
+                    </label>
+                    <div class="draft-actions">
+                        <button type="button" class="btn btn-dark btn-compact" id="approve-draft">Approve draft</button>
+                        <button type="button" class="btn btn-ghost-dark btn-compact" id="request-draft-changes">Request revision</button>
+                    </div>
+                </section>
+
+                <!-- PRIMARY: progress tracker -->
+                <section class="order-progress-section" aria-labelledby="progress-title">
+                    <div class="section-head">
+                        <div>
+                            <span class="overview-label">Tracking</span>
+                            <h3 class="section-title" id="progress-title">Order progress</h3>
+                        </div>
+                    </div>
+                    <ol class="timeline tracking-timeline" id="detail-timeline" aria-label="Order progress"></ol>
+                </section>
+
+                <!-- Functional panels kept for existing JS/rendering; styled as compact sections -->
                 <section class="customer-panel" id="customer-tracking" hidden aria-live="polite"></section>
                 <section class="customer-panel" id="customer-quotation" hidden aria-live="polite"></section>
                 <section class="customer-panel" id="customer-payment" hidden aria-live="polite"></section>
-                <section class="customer-panel" id="customer-requests" hidden aria-live="polite"></section>
-                <div class="customer-order-actions"><button type="button" class="btn btn-ghost-dark" id="cancel-order" hidden>Cancel request</button><button type="button" class="btn btn-ghost-dark" id="download-receipt" hidden>Download receipt</button></div>
-                <details class="detail-toggle"><summary class="detail-toggle-summary"><span class="section-label">Request details</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary><div class="detail-toggle-body"><dl class="summary" id="detail-summary"></dl></div></details>
-                <section class="customer-draft" id="customer-draft" hidden><h3>Your draft is ready to review</h3><p>Printing will not begin until you approve the draft.</p><p class="field-hint" id="draft-remarks" hidden></p><a id="draft-download" class="btn btn-ghost-dark" href="#">Open draft layout</a><label class="draft-revision" for="draft-revision-note">Revision instructions (needed to request changes)<textarea id="draft-revision-note" class="input" rows="3" maxlength="1000" placeholder="e.g. Make the name bigger and change the date to December 12"></textarea></label><div class="draft-actions"><button type="button" class="btn btn-dark" id="approve-draft">Approve draft</button><button type="button" class="btn btn-ghost-dark" id="request-draft-changes">Request revision</button></div></section>
-                <details class="detail-toggle" id="draft-history-toggle" hidden><summary class="detail-toggle-summary"><span class="section-label">Draft history</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary><div class="detail-toggle-body"><ol class="payment-submissions" id="draft-history"></ol></div></details>
-                <details class="detail-toggle"><summary class="detail-toggle-summary"><span class="section-label">Activity</span><span class="detail-toggle-hint" aria-hidden="true"></span></summary><div class="detail-toggle-body"><ul class="activity" id="detail-history"></ul></div></details>
+
+                <!-- SECONDARY: collapsible, low-emphasis -->
+                <section class="secondary-sections" aria-label="Additional order details and actions">
+                    <h3 class="secondary-sections-title">More details &amp; actions</h3>
+
+                    <details class="detail-toggle detail-toggle-secondary" id="requests-toggle">
+                        <summary class="detail-toggle-summary">
+                            <span class="detail-toggle-leading">
+                                <span class="detail-toggle-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-4 4 4 4"/><path d="M5 18h11a4 4 0 0 0 0-8h-1"/><path d="M15 10l4-4-4-4"/><path d="M19 6H8a4 4 0 0 0 0 8h1"/></svg></span>
+                                <span class="detail-toggle-text">
+                                    <span class="section-label">Cancellations, refunds &amp; issues</span>
+                                    <span class="detail-toggle-sub">Request cancellation, request a refund, or report a delivery issue</span>
+                                </span>
+                            </span>
+                            <span class="detail-toggle-hint" aria-hidden="true"></span>
+                        </summary>
+                        <div class="detail-toggle-body">
+                            <section class="customer-panel customer-panel-embedded" id="customer-requests" hidden aria-live="polite"></section>
+                            <p class="field-hint secondary-empty" id="requests-empty">No cancellation, refund, or delivery issue actions are available for this order right now.</p>
+                        </div>
+                    </details>
+
+                    <details class="detail-toggle detail-toggle-secondary" id="receipt-toggle">
+                        <summary class="detail-toggle-summary">
+                            <span class="detail-toggle-leading">
+                                <span class="detail-toggle-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
+                                <span class="detail-toggle-text">
+                                    <span class="section-label">Download receipt</span>
+                                    <span class="detail-toggle-sub">Download a record of verified payments for this order</span>
+                                </span>
+                            </span>
+                            <span class="detail-toggle-hint" aria-hidden="true"></span>
+                        </summary>
+                        <div class="detail-toggle-body">
+                            <p class="field-hint" id="receipt-hint">A receipt is available once payments have been verified for this order.</p>
+                            <div class="secondary-actions">
+                                <button type="button" class="btn btn-ghost-dark btn-compact" id="download-receipt" hidden>Download receipt</button>
+                                <button type="button" class="btn btn-ghost-dark btn-compact" id="cancel-order" hidden>Cancel request</button>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="detail-toggle detail-toggle-secondary">
+                        <summary class="detail-toggle-summary">
+                            <span class="detail-toggle-leading">
+                                <span class="detail-toggle-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
+                                <span class="detail-toggle-text">
+                                    <span class="section-label">Request details</span>
+                                    <span class="detail-toggle-sub">Product, customization, contact, and order information</span>
+                                </span>
+                            </span>
+                            <span class="detail-toggle-hint" aria-hidden="true"></span>
+                        </summary>
+                        <div class="detail-toggle-body"><dl class="summary" id="detail-summary"></dl></div>
+                    </details>
+
+                    <details class="detail-toggle detail-toggle-secondary" id="draft-history-toggle" hidden>
+                        <summary class="detail-toggle-summary">
+                            <span class="detail-toggle-leading">
+                                <span class="detail-toggle-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></span>
+                                <span class="detail-toggle-text">
+                                    <span class="section-label">Draft history</span>
+                                    <span class="detail-toggle-sub">Previous drafts, feedback, and revision requests</span>
+                                </span>
+                            </span>
+                            <span class="detail-toggle-hint" aria-hidden="true"></span>
+                        </summary>
+                        <div class="detail-toggle-body"><ol class="payment-submissions" id="draft-history"></ol></div>
+                    </details>
+
+                    <details class="detail-toggle detail-toggle-secondary">
+                        <summary class="detail-toggle-summary">
+                            <span class="detail-toggle-leading">
+                                <span class="detail-toggle-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+                                <span class="detail-toggle-text">
+                                    <span class="section-label">Activity history</span>
+                                    <span class="detail-toggle-sub">Timeline of updates recorded for this order</span>
+                                </span>
+                            </span>
+                            <span class="detail-toggle-hint" aria-hidden="true"></span>
+                        </summary>
+                        <div class="detail-toggle-body"><ul class="activity" id="detail-history"></ul></div>
+                    </details>
+                </section>
             </article>
         </div>
     </main>
@@ -151,6 +307,7 @@
     </footer>
 
     <script src="/assets/shop.js"></script>
+    <script src="/assets/phone.js"></script>
     <script src="/assets/account.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
     <script src="/assets/portal.js"></script>

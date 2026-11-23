@@ -45,9 +45,17 @@ def validate_password(value: str) -> str:
 
 
 def validate_phone(value: str) -> str:
-    """Raise ValueError unless the contact number has at least seven digits."""
-    if len(re.sub(r"\D", "", value)) < 7:
-        raise ValueError("Enter a valid contact number.")
+    """Raise ValueError unless the number is a plausible Philippine mobile or landline.
+
+    Accepts the formats customers actually type: ``09XX XXX XXXX``, ``+63 9XX XXX XXXX``,
+    ``639XXXXXXXXX``, and landlines such as ``02 1234 5678``. Spaces, dashes, and parentheses
+    are ignored; the original formatting is kept for display.
+    """
+    digits = re.sub(r"\D", "", value)
+    mobile = re.fullmatch(r"(?:0|63)9\d{9}", digits)
+    landline = re.fullmatch(r"0\d{7,9}", digits)
+    if mobile is None and landline is None:
+        raise ValueError("Enter a valid Philippine mobile or landline number.")
     return value
 
 
@@ -98,6 +106,14 @@ class CustomerLogin(_EmailModel):
 
 class CustomerProfileUpdate(_ContactDetails):
     pass
+
+
+class EmailVerificationRequest(_EmailModel):
+    pass
+
+
+class EmailVerificationVerify(EmailVerificationRequest):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
 class PasswordResetRequest(_EmailModel):

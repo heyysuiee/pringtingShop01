@@ -189,6 +189,14 @@ class WorkflowTestCase(unittest.TestCase):
     def kinds(self, reference: str) -> list[str]:
         return sorted(item["kind"] for item in self.notifications(reference=reference))
 
+    def legacy_kinds(self, reference: str) -> list[str]:
+        """Legacy notification kinds only; OCR receipt notices are asserted in the OCR tests."""
+        ocr_notices = {
+            "payment_receipt_uploaded", "payment_processing", "payment_additional_verification",
+            "payment_receipt_requested", "payment_verification_note",
+        }
+        return [kind for kind in self.kinds(reference) if kind not in ocr_notices]
+
     def audit(self, reference: str) -> list[dict]:
         response = self.admin.get(f"/api/admin/orders/{reference}/audit")
         self.assertEqual(response.status_code, 200, response.text)
@@ -307,7 +315,7 @@ class PackagePricingTests(WorkflowTestCase):
         self.assertEqual(verified["status"], "Confirmed")
         self.assertEqual(verified["payment"]["down_payment_status"], "Paid")
         self.assertEqual(verified["payment"]["balance"], 187.5)
-        self.assertEqual(self.kinds(reference), ["down_payment_requested", "order_confirmed"])
+        self.assertEqual(self.legacy_kinds(reference), ["down_payment_requested", "order_confirmed"])
 
 
 # ====================================================================== 3-4. quotations
@@ -462,7 +470,7 @@ class PaymentVerificationTests(WorkflowTestCase):
         self.assertEqual(partial["status"], "Awaiting Down Payment")
         self.assertIn("customer reported PHP 500.00", partial["history"][-1]["text"])
         self.assertEqual(partial["payment"]["next_payment"], {"stage": "down_payment", "label": "50% down payment", "amount": 100.0})
-        self.assertEqual(self.kinds(reference), ["payment_verified", "quotation_sent"])
+        self.assertEqual(self.legacy_kinds(reference), ["payment_verified", "quotation_sent"])
         self.submit_payment(reference)
         self.assertEqual(self.verify(reference)["status"], "Confirmed")
         self.assertIn("order_confirmed", self.kinds(reference))
@@ -615,7 +623,11 @@ class OrderSecurityTests(WorkflowTestCase):
         self.admin_post(reference, "quotation", {"total_amount": 900}, expect=409)
         self.assertEqual(len(self.audit(reference)), len(entries))
         sent = self.admin.get(f"/api/admin/orders/{reference}/audit").json()["notifications"]
-        self.assertEqual(sorted(item["kind"] for item in sent), ["order_confirmed", "quotation_revised", "quotation_sent"])
+        legacy = [item["kind"] for item in sent if item["kind"] not in {
+            "payment_receipt_uploaded", "payment_processing", "payment_additional_verification",
+            "payment_receipt_requested", "payment_verification_note",
+        }]
+        self.assertEqual(sorted(legacy), ["order_confirmed", "quotation_revised", "quotation_sent"])
 
     def test_notifications_can_be_marked_read(self) -> None:
         reference = self.customized_order(1000)["reference"]

@@ -23,7 +23,7 @@ import secrets
 import sqlite3
 from typing import Any
 
-from backend.app.database.connection import connection_scope
+from backend.app.database.connection import connection_scope, exclusive_write
 from backend.app.utils.clock import now_iso
 
 
@@ -180,7 +180,7 @@ def new_conversation_id() -> str:
 
 
 def initialize() -> None:
-    with connection_scope() as connection:
+    with exclusive_write() as connection:
         connection.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         for statement in SCHEMA:
             connection.execute(statement)

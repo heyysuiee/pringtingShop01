@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#08090D">
+    <meta name="description" content="Verify the email address for your ImPRESSion PrintShop account.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/auth.css">
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/theme-site.css">
+    <link rel="stylesheet" href="/assets/chatbot.css">
+    <title>Verify Email — ImPRESSion PrintShop</title>
+</head>
+
+<body class="inner-page auth-page" data-auth-page="verify-email">
+    <div class="top-bar">
+        <div class="top-bar-content">
+            <p>(555) 123-4567 • (0949) 157-4778</p>
+            <p>Official email: printImpress@gmail.com • Mon–Sat 8AM–6PM</p>
+        </div>
+    </div>
+
+    <nav class="nav" aria-label="Main navigation">
+        <div class="nav-brand">
+            <a class="brand-link" href="/home" aria-label="ImPRESSion PrintShop home"><span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word">ImPRESSion <span>PrintShop</span></span></a>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="nav-menu">
+            <a href="/home">Home</a>
+            <a href="/services">Services</a>
+            <a href="/order">Order</a>
+            <a href="/sample-work">Sample Work</a>
+            <a href="/customer-portal">Customer Portal</a>
+        </div>
+    </nav>
+
+    <main class="auth-main" id="main">
+        <section class="auth-card auth-card-wide" aria-labelledby="auth-title">
+            <a class="auth-brand" href="/home" aria-label="ImPRESSion PrintShop home">
+                <span class="auth-brand-mark" aria-hidden="true">iP</span>
+                <span class="auth-brand-name">ImPRESSion PrintShop<small>Customer account</small></span>
+            </a>
+            <h1 id="auth-title">Verify your email address</h1>
+            <p class="auth-lead">Enter the 6-digit code we sent to the address you registered with. Your account cannot sign in until this step is complete.</p>
+            <div class="auth-alert" id="auth-alert" role="status" aria-live="polite" hidden></div>
+            <form class="auth-form" id="verify-email-form" method="post" novalidate>
+                <div class="auth-field">
+                    <label for="verify-email-address">Email address</label>
+                    <input id="verify-email-address" name="email" type="email" class="auth-input" autocomplete="email" maxlength="254" inputmode="email" required aria-describedby="verify-email-address-error">
+                    <p class="auth-field-error" id="verify-email-address-error"></p>
+                </div>
+                <div class="auth-field">
+                    <label for="verify-email-code">Verification code</label>
+                    <input id="verify-email-code" name="code" type="text" class="auth-input auth-code-input" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required aria-describedby="verify-email-code-error verify-email-code-meta">
+                    <p class="auth-field-error" id="verify-email-code-error"></p>
+                </div>
+                <div class="auth-code-meta" id="verify-email-code-meta">
+                    <span>Codes expire in <strong>5 minutes</strong>.</span>
+                    <button class="auth-link" type="button" id="verify-email-resend">Send a new code</button>
+                </div>
+                <button class="auth-button" type="submit">Verify Email</button>
+            </form>
+            <p class="auth-back"><a class="auth-link" href="/sign-in" data-keep-next>← Back to Sign In</a></p>
+        </section>
+    </main>
+
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/shop.js"></script>
+    <script src="/assets/auth.js"></script>
+    <script src="/assets/chatbot.js" defer></script>
+</body>
+
+</html>

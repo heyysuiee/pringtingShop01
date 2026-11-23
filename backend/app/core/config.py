@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,17 @@ class Settings:
     smtp_password: str
     smtp_from: str
     smtp_starttls: bool
+    # Public URL scheme as seen by visitors. Set to "https" when a TLS-terminating proxy sits in front
+    # of the app so same-origin checks compare against the public scheme, not the internal http scheme.
+    public_scheme: str = ""
+    # Direct peers allowed to supply X-Forwarded-For / X-Real-IP. Empty means no forwarded header is
+    # trusted: requests then fall back to the immediate peer (or no IP key at all when a proxy is present).
+    trusted_proxy_ips: tuple[str, ...] = ()
+    # Optional allow-list for payment-provider host names. Empty accepts any public HTTPS host.
+    gateway_allowed_hosts: tuple[str, ...] = ()
+    # New accounts must prove they own their email address before they can sign in. On by default in
+    # production; development/tests keep the original immediate-sign-in behaviour unless opted in.
+    require_email_verification: bool = False
     # Turso (hosted SQLite) used instead of the local database file when the URL is set (Vercel).
     turso_database_url: str = ""
     turso_auth_token: str = ""
@@ -32,6 +44,12 @@ class Settings:
     behind_vercel_proxy: bool = False
     # False when PRINTSHOP_SECRET_KEY is missing and a temporary random key was generated for this run.
     secret_key_persistent: bool = True
+    # Backup files are signed with a dedicated key so rotating session secrets does not invalidate old
+    # backups. It falls back to PRINTSHOP_SECRET_KEY when no dedicated key is configured.
+    backup_signing_key: str = ""
+    backup_signing_key_persistent: bool = False
+    # Accepted when restoring backups made before the current signing key was installed (key rotation).
+    previous_backup_signing_keys: tuple[str, ...] = ()
     # Google Gemini, used by the customer support chatbot. The key stays on the server; without it the
     # chatbot still answers from the database, but without the AI model.
     gemini_api_key: str = ""
@@ -44,6 +62,12 @@ class Settings:
     # needs a persistent volume) or "database" (stored in the database, shared by every copy of the app;
     # the default when Turso is configured, because Vercel has no persistent disk).
     file_storage: str = "disk"
+    # OCR-assisted payment receipts. "none" disables scanning; "auto" tries the optional Tesseract provider
+    # and falls back to manual review when no engine is installed. Absence is never an error.
+    ocr_engine: str = "auto"
+    ocr_language: str = "eng"
+    ocr_max_bytes: int = 5 * 1024 * 1024
+    ocr_timeout_seconds: int = 20
 
     @property
     def gemini_configured(self) -> bool:
@@ -54,14 +78,45 @@ class Settings:
         return bool(self.smtp_host and self.smtp_from)
 
     @property
+    def ocr_configured(self) -> bool:
+        return self.ocr_engine.casefold() not in {"", "none", "off", "false"}
+
+    @property
     def production(self) -> bool:
         return self.environment == "production"
+
+    def _ephemeral_storage_problem(self) -> str:
+        """Why ``PRINTSHOP_FILE_STORAGE=disk`` would lose uploads on this deployment, if it would."""
+        if self.file_storage != "disk":
+            return ""
+        if self.turso_database_url or self.behind_vercel_proxy:
+            return (
+                "This deployment uses a temporary filesystem (Vercel/Turso), so order files must be kept "
+                "in the database. Set PRINTSHOP_FILE_STORAGE=database."
+            )
+        try:
+            upload = self.upload_dir.resolve()
+            ephemeral_roots = [Path(tempfile.gettempdir()).resolve()]
+            for candidate in ("/tmp", "/var/tmp", "/dev/shm"):
+                root = Path(candidate)
+                if root.exists():
+                    ephemeral_roots.append(root.resolve())
+            if any(upload == root or root in upload.parents for root in ephemeral_roots):
+                return (
+                    "PRINTSHOP_UPLOAD_DIR points at a temporary directory. Production uploads need a "
+                    "persistent volume, or PRINTSHOP_FILE_STORAGE=database."
+                )
+        except OSError:  # pragma: no cover - an unresolvable path is caught by the explicit env check below
+            pass
+        return ""
 
     def validate(self) -> None:
         if self.environment not in {"development", "test", "production"}:
             raise RuntimeError("PRINTSHOP_ENVIRONMENT must be development, test, or production.")
         if self.file_storage not in {"disk", "database"}:
             raise RuntimeError("PRINTSHOP_FILE_STORAGE must be disk or database.")
+        if self.public_scheme and self.public_scheme not in {"http", "https"}:
+            raise RuntimeError("PRINTSHOP_PUBLIC_SCHEME must be http or https when set.")
         if not self.production:
             return
         required = {
@@ -81,6 +136,27 @@ class Settings:
             raise RuntimeError("PRINTSHOP_ALLOWED_HOSTS must contain explicit host names.")
         if not self.admin_password_hash.startswith("pbkdf2_sha256$"):
             raise RuntimeError("PRINTSHOP_ADMIN_PASSWORD_HASH must be a PBKDF2-SHA256 password hash.")
+        # Render's filesystem is ephemeral on free instances; a local SQLite file would silently lose
+        # real orders on every restart, so require Turso rather than letting the blueprint boot unsafely.
+        if os.environ.get("RENDER", "").strip() and not self.turso_database_url:
+            raise RuntimeError("Render deployments require TURSO_DATABASE_URL (and TURSO_AUTH_TOKEN); the local filesystem is temporary.")
+        if self.require_email_verification and not self.smtp_configured:
+            raise RuntimeError("Email verification requires PRINTSHOP_SMTP_HOST and PRINTSHOP_SMTP_FROM, or PRINTSHOP_REQUIRE_EMAIL_VERIFICATION=false.")
+        ephemeral = self._ephemeral_storage_problem()
+        if ephemeral:
+            raise RuntimeError(ephemeral)
+        if len(self.backup_signing_key) < 32:
+            raise RuntimeError("PRINTSHOP_BACKUP_SIGNING_KEY (or PRINTSHOP_SECRET_KEY) must contain at least 32 characters.")
+        for key in self.previous_backup_signing_keys:
+            if len(key) < 32:
+                raise RuntimeError("Every key in PRINTSHOP_BACKUP_PREVIOUS_SIGNING_KEYS must contain at least 32 characters.")
+
+
+def _bool_setting(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
 
 
 def _int_setting(name: str, default: int, low: int, high: int) -> int:
@@ -147,10 +223,24 @@ settings = Settings(
     # do not sign everyone out or cancel password resets; without it a temporary key is generated.
     secret_key=os.environ.get("PRINTSHOP_SECRET_KEY", "") or secrets.token_urlsafe(48),
     secret_key_persistent=bool(os.environ.get("PRINTSHOP_SECRET_KEY", "")),
+    backup_signing_key=os.environ.get("PRINTSHOP_BACKUP_SIGNING_KEY", "").strip()
+    or os.environ.get("PRINTSHOP_SECRET_KEY", "").strip()
+    or secrets.token_urlsafe(48),
+    backup_signing_key_persistent=bool(
+        os.environ.get("PRINTSHOP_BACKUP_SIGNING_KEY", "").strip()
+        or os.environ.get("PRINTSHOP_SECRET_KEY", "").strip()
+    ),
+    previous_backup_signing_keys=tuple(
+        key for key in _csv_setting("PRINTSHOP_BACKUP_PREVIOUS_SIGNING_KEYS") if key
+    ),
     admin_email=os.environ.get("PRINTSHOP_ADMIN_EMAIL", "").strip().lower(),
     admin_password_hash=os.environ.get("PRINTSHOP_ADMIN_PASSWORD_HASH", ""),
     allowed_hosts=_allowed_hosts(),
     cors_origins=_csv_setting("PRINTSHOP_CORS_ORIGINS"),
+    public_scheme=os.environ.get("PRINTSHOP_PUBLIC_SCHEME", "").strip().lower(),
+    trusted_proxy_ips=_csv_setting("PRINTSHOP_TRUSTED_PROXY_IPS"),
+    gateway_allowed_hosts=_csv_setting("PRINTSHOP_GATEWAY_ALLOWED_HOSTS"),
+    require_email_verification=_bool_setting("PRINTSHOP_REQUIRE_EMAIL_VERIFICATION", _environment == "production"),
     smtp_host=os.environ.get("PRINTSHOP_SMTP_HOST", "").strip(),
     smtp_port=int(os.environ.get("PRINTSHOP_SMTP_PORT", "587") or "587"),
     smtp_username=os.environ.get("PRINTSHOP_SMTP_USERNAME", "").strip(),
@@ -169,4 +259,8 @@ settings = Settings(
         os.environ.get("PRINTSHOP_FILE_STORAGE", "").strip().lower()
         or ("database" if os.environ.get("TURSO_DATABASE_URL", "").strip() else "disk")
     ),
+    ocr_engine=os.environ.get("PRINTSHOP_OCR_ENGINE", "auto").strip().lower() or "auto",
+    ocr_language=os.environ.get("PRINTSHOP_OCR_LANGUAGE", "eng").strip() or "eng",
+    ocr_max_bytes=_int_setting("PRINTSHOP_OCR_MAX_MB", 5, 1, 50) * 1024 * 1024,
+    ocr_timeout_seconds=_int_setting("PRINTSHOP_OCR_TIMEOUT_SECONDS", 20, 1, 120),
 )

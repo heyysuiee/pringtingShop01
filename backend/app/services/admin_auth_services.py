@@ -84,31 +84,23 @@ def request_password_reset(email: str) -> dict[str, Any]:
 
 
 def verify_password_reset_code(email: str, code: str) -> str:
-    """Check the OTP and return a short-lived reset token for the password step."""
+    """Check the administrator OTP atomically and return a short-lived reset token."""
     invalid = HTTPException(status_code=422, detail="The verification code is invalid or has expired.")
     if not is_admin_email(email):
         raise invalid
-    record = admin_repository.get_reset()
-    if record is None or not record["code_hash"]:
-        raise invalid
-    if _parse_time(record["code_expires_at"]) <= now_utc():
-        admin_repository.delete_reset()
-        raise invalid
-    if record["attempts"] >= OTP_MAX_ATTEMPTS:
-        admin_repository.delete_reset()
-        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
-
-    supplied = _keyed_digest("otp", code.strip())
-    if not hmac.compare_digest(record["code_hash"], supplied):
-        attempts = admin_repository.increment_reset_attempts()
-        if attempts >= OTP_MAX_ATTEMPTS:
-            admin_repository.delete_reset()
-            raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
-        raise invalid
-
     token = secrets.token_urlsafe(32)
-    token_expires_at = (now_utc() + RESET_TOKEN_LIFETIME).isoformat(timespec="seconds")
-    admin_repository.set_reset_token(_keyed_digest("reset", token), token_expires_at)
+    now = now_utc()
+    result = admin_repository.verify_reset_code(
+        _keyed_digest("otp", code.strip()),
+        OTP_MAX_ATTEMPTS,
+        _keyed_digest("reset", token),
+        (now + RESET_TOKEN_LIFETIME).isoformat(timespec="seconds"),
+        now,
+    )
+    if result["result"] in {"locked", "invalid_locked"}:
+        raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new verification code.")
+    if result["result"] != "ok":
+        raise invalid
     return token
 
 
@@ -118,21 +110,16 @@ def complete_password_reset(email: str, reset_token: str, new_password: str) -> 
         raise invalid
     if len(new_password) < PASSWORD_MIN_LENGTH:
         raise HTTPException(status_code=422, detail=f"Use at least {PASSWORD_MIN_LENGTH} characters for the new password.")
-    record = admin_repository.get_reset()
-    if (
-        record is None
-        or not record["reset_token_hash"]
-        or not record["reset_token_expires_at"]
-        or _parse_time(record["reset_token_expires_at"]) <= now_utc()
-    ):
-        admin_repository.delete_reset()
+    # Token validation, the current-password check, and consumption are one transaction, so the
+    # same token cannot be used by two parallel confirmations.
+    result = admin_repository.consume_password_reset(
+        _keyed_digest("reset", reset_token),
+        hash_password(new_password),
+        now_iso(),
+        settings.admin_password_hash,
+        lambda current_hash: bool(current_hash) and verify_password(new_password, current_hash),
+    )
+    if result == "invalid":
         raise invalid
-    if not hmac.compare_digest(record["reset_token_hash"], _keyed_digest("reset", reset_token)):
-        raise invalid
-
-    current = admin_repository.get_password_hash() or settings.admin_password_hash
-    if current and verify_password(new_password, current):
+    if result == "same":
         raise HTTPException(status_code=422, detail="Choose a new password that is different from your current one.")
-
-    # Single use: the password is saved and the code and reset token are removed together.
-    admin_repository.apply_password_reset(hash_password(new_password), now_iso())

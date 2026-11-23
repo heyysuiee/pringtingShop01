@@ -27,11 +27,17 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
+import functools
+import logging
+import os
+import re
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Generator, TypeVar
 from urllib.parse import quote
 
 from fastapi import HTTPException
@@ -40,6 +46,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from backend.app.core.config import settings
 from backend.app.repositories import file_repository
 
+
+logger = logging.getLogger("printshop.files")
 
 UPLOAD_DIR = settings.upload_dir
 CHUNK_BYTES = 2 * 1024 * 1024
@@ -57,6 +65,15 @@ ALLOWED_UPLOADS = {
 }
 ALLOWED_TEXT = "JPG, JPEG, PNG, WebP, or PDF"
 SESSION_ID_PREFIX = "upl_"
+# Random stored names (order files and catalog images) follow this shape. Restricting orphan cleanup to
+# them means an administrator's manually placed file can never be removed automatically.
+STORED_NAME = re.compile(r"^[0-9a-f]{32}\.(jpg|jpeg|png|webp|pdf)$", re.IGNORECASE)
+ORPHAN_GRACE_HOURS = 24
+F = TypeVar("F", bound=Callable[..., Any])
+
+# Files saved during one service call. If the database write that follows fails, the whole call fails and
+# the files saved so far are removed, so a refused order never leaves upload or database orphans.
+_saved_files: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("printshop_saved_files", default=None)
 
 
 def _bad(detail: str, status: int = 422) -> HTTPException:
@@ -70,6 +87,57 @@ def megabytes(size: int) -> str:
 
 def order_upload_limit_bytes(per_file: int) -> int:
     return max(MIN_ORDER_UPLOAD_BYTES, per_file * 3)
+
+
+def _safe_stored_key(filename: Any) -> str:
+    """Only a generated file name, or ``catalog/<generated name>``, may be stored/deleted here."""
+    if not isinstance(filename, str) or not filename or "\\" in filename or "\x00" in filename:
+        return ""
+    path = PurePosixPath(filename)
+    if path.is_absolute() or len(path.parts) > 2 or any(part in {"", ".", ".."} for part in path.parts):
+        return ""
+    name = path.name
+    if STORED_NAME.fullmatch(name) is None:
+        return ""
+    if len(path.parts) == 2 and path.parts[0] != CATALOG_PREFIX.rstrip("/"):
+        return ""
+    return filename
+
+
+def _track(filename: str) -> None:
+    bucket = _saved_files.get()
+    if bucket is not None:
+        bucket.append(filename)
+
+
+@contextmanager
+def saved_files() -> Generator[list[str], None, None]:
+    """Remove every file saved inside this block if the block raises, on *any* exception type."""
+    parent = _saved_files.get()
+    bucket: list[str] = []
+    token = _saved_files.set(bucket)
+    try:
+        yield bucket
+    except BaseException:
+        for filename in reversed(bucket):
+            delete(filename)
+        raise
+    else:
+        if parent is not None:
+            parent.extend(bucket)
+    finally:
+        _saved_files.reset(token)
+
+
+def compensating_files(function: F) -> F:
+    """Decorate a service that saves files before writing the database."""
+
+    @functools.wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        with saved_files():
+            return function(*args, **kwargs)
+
+    return wrapped  # type: ignore[return-value]
 
 
 # ================================================================== validation
@@ -131,6 +199,14 @@ def _cutoff() -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=SESSION_HOURS)).isoformat(timespec="seconds")
 
 
+def _expired(session: dict[str, Any]) -> bool:
+    """Upload sessions older than 24 hours are unusable even if startup cleanup has not run yet."""
+    try:
+        return datetime.fromisoformat(session["created_at"]) < datetime.fromisoformat(_cutoff())
+    except (KeyError, TypeError, ValueError):  # pragma: no cover - malformed legacy rows are treated as expired
+        return True
+
+
 def start_upload(customer_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Start uploading one file for a product's upload field ("" = the order's general reference files)."""
     from backend.app.services import catalog_services
@@ -174,6 +250,9 @@ def _owned_session(customer_id: str, upload_id: Any) -> dict[str, Any]:
     session = file_repository.get_session(upload_id) if isinstance(upload_id, str) and upload_id.startswith(SESSION_ID_PREFIX) else None
     # Another customer's upload looks exactly like a missing one.
     if session is None or not secrets.compare_digest(session["customer_id"], str(customer_id)):
+        raise _bad("This upload was not found or has expired. Choose the file again.", 404)
+    if _expired(session):
+        file_repository.delete_session(upload_id)
         raise _bad("This upload was not found or has expired. Choose the file again.", 404)
     return session
 
@@ -241,56 +320,73 @@ def _split(contents: bytes) -> list[bytes]:
     return [contents[start:start + CHUNK_BYTES] for start in range(0, len(contents), CHUNK_BYTES)] or [b""]
 
 
+def _atomic_write(target: Path, chunks: Any) -> None:
+    """Publish a complete file in one rename so a concurrent backup never reads a partial upload.
+
+    Temporary files start with a dot, and backup scanning skips dotfiles, so an in-flight write is
+    never included in a backup snapshot.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(6)}.tmp")
+    try:
+        with temporary.open("wb") as handle:
+            for chunk in chunks:
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def save(metadata: dict[str, Any], source: bytes | str) -> None:
     """Store one file under ``metadata["filename"]``. ``source`` is the file's bytes or a completed upload id."""
-    filename = metadata["filename"]
+    filename = _safe_stored_key(metadata.get("filename"))
+    if not filename:
+        raise _bad("Invalid stored file name.")
     if isinstance(source, str):
         session = file_repository.get_session(source)
+        if session is not None and _expired(session):
+            file_repository.delete_session(source)
+            session = None
         if session is None or not session["completed"]:
             raise _bad(f"{metadata['name']} is no longer available. Choose the file again.", 409)
         if _database_storage():
             file_repository.adopt_session(source, filename, metadata["mime_type"], session["size"], session["chunk_count"])
-            return
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        with (UPLOAD_DIR / filename).open("wb") as handle:
-            for chunk in file_repository.iter_chunks(source):
-                handle.write(chunk)
-        file_repository.delete_session(source)
+        else:
+            target = UPLOAD_DIR / filename
+            _atomic_write(target, file_repository.iter_chunks(source))
+            file_repository.delete_session(source)
+        _track(filename)
         return
     if _database_storage():
         file_repository.store_chunks(filename, metadata["mime_type"], _split(source))
-        return
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    (UPLOAD_DIR / filename).write_bytes(source)
+    else:
+        _atomic_write(UPLOAD_DIR / filename, (source,))
+    _track(filename)
 
 
 def save_all(items: list[tuple[dict[str, Any], bytes | str]]) -> list[dict[str, Any]]:
-    """Store every file of an order, or none of them."""
-    saved: list[dict[str, Any]] = []
-    try:
+    """Store every file of an order, or none of them (including unexpected errors)."""
+    with saved_files():
+        saved: list[dict[str, Any]] = []
         for metadata, source in items:
             save(metadata, source)
             saved.append(metadata)
-    except HTTPException:
-        for metadata in saved:
-            delete(metadata["filename"])
-        raise
-    except (OSError, sqlite3.Error) as error:
-        for metadata in saved:
-            delete(metadata["filename"])
-        raise _bad("The uploaded files could not be saved.", 500) from error
-    return saved
+        return saved
 
 
 def delete(filename: str) -> None:
-    if not filename:
+    key = _safe_stored_key(filename)
+    if not key:
         return
     try:
-        (UPLOAD_DIR / filename).unlink(missing_ok=True)
+        (UPLOAD_DIR / key).unlink(missing_ok=True)
     except OSError:
         pass
     try:
-        file_repository.delete_stored_file(filename)
+        file_repository.delete_stored_file(key)
     except sqlite3.Error:
         pass
 
@@ -336,12 +432,14 @@ CATALOG_PREFIX = "catalog/"
 
 def save_catalog_image(filename: str, mime_type: str, contents: bytes) -> None:
     """Product and package photos follow the same storage setting as order files."""
+    key = _safe_stored_key(CATALOG_PREFIX + filename)
+    if not key:
+        raise _bad("Invalid catalog image name.")
     if _database_storage():
-        file_repository.store_chunks(CATALOG_PREFIX + filename, mime_type, _split(contents))
-        return
-    directory = UPLOAD_DIR / "catalog"
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / filename).write_bytes(contents)
+        file_repository.store_chunks(key, mime_type, _split(contents))
+    else:
+        _atomic_write(UPLOAD_DIR / "catalog" / filename, (contents,))
+    _track(key)
 
 
 def catalog_image_response(filename: str, mime_type: str) -> Response:
@@ -356,3 +454,43 @@ def catalog_image_response(filename: str, mime_type: str) -> Response:
         media_type=mime_type,
         headers={"Content-Length": str(stored["size"]), "Cache-Control": "public, max-age=86400"},
     )
+
+
+# ================================================================== startup cleanup
+
+
+def cleanup_orphans() -> dict[str, int]:
+    """Remove abandoned uploads/files left by an interrupted request or a crash.
+
+    A grace period protects files that another request may still be writing. Only generated names that
+    appear nowhere in the database are removed, so a file that was saved just before its order row was
+    written is kept until the next startup after it is no longer referenced.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=ORPHAN_GRACE_HOURS)).timestamp()
+    result = {
+        "sessions": file_repository.purge_sessions_before(_cutoff()),
+        "chunks": file_repository.delete_orphan_chunks(),
+        "stored_files": file_repository.delete_empty_stored_files(),
+        "disk_files": 0,
+    }
+    referenced = file_repository.referenced_stored_names()
+    directory = UPLOAD_DIR
+    if directory.is_dir():
+        for path in sorted(directory.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            try:
+                if not path.is_file() or path.is_symlink() or path.name.startswith("."):
+                    continue
+                if STORED_NAME.fullmatch(path.name) is None:
+                    continue
+                if path.name.lower() in referenced or path.stat().st_mtime > cutoff:
+                    continue
+                path.unlink()
+                result["disk_files"] += 1
+            except OSError:  # pragma: no cover - cleanup is best-effort, never blocks startup
+                logger.warning("Could not remove orphaned upload %s", path, exc_info=True)
+        for folder in sorted((item for item in directory.rglob("*") if item.is_dir()), key=lambda item: len(item.parts), reverse=True):
+            try:
+                folder.rmdir()
+            except OSError:  # only empty folders are removed
+                pass
+    return result

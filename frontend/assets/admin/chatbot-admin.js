@@ -413,6 +413,7 @@
 
     function editFaq(faq, onSaved) {
         const creating = !faq || !faq.id;
+        let submitting = false;
         const question = h("input", { maxlength: 300, required: true, value: faq?.question || "" });
         const answer = h("textarea", { rows: 6, maxlength: 3000, required: true });
         answer.value = faq?.answer || "";
@@ -421,6 +422,19 @@
         const active = h("input", { type: "checkbox" });
         active.checked = faq ? faq.active !== false : true;
         const save = h("button", { className: "button button-primary", type: "submit", text: creating ? "Add FAQ" : "Save changes" });
+        const remove = creating ? null : h("button", { className: "button button-danger-strong", type: "button", text: "Delete" });
+        if (remove) remove.addEventListener("click", () => UI.busy(remove, async () => {
+            const confirmed = await UI.confirm({ title: "Delete this FAQ?", message: faq.question, confirmLabel: "Delete", tone: "danger" });
+            if (!confirmed) return;
+            try {
+                await api(`/api/admin/chatbot/faqs/${encodeURIComponent(faq.id)}`, { method: "DELETE" });
+                UI.closeModal();
+                toast("FAQ deleted.", "success");
+                onSaved();
+            } catch (error) {
+                toast(error.message, "error");
+            }
+        }));
         const form = h("form", { className: "cb-faq-form" },
             h("header", { className: "order-modal-header" }, h("div", {},
                 h("p", { className: "eyebrow", text: "Chatbot FAQ" }),
@@ -432,23 +446,13 @@
                 h("div", { className: "form-field" }, h("label", { text: "Extra keywords (optional, English or Filipino)" }), keywords),
                 h("div", { className: "form-field" }, h("label", { text: "Position" }), order),
                 h("label", { className: "form-field full cb-check" }, active, " Active (used by the assistant)")),
-            h("div", { className: "dialog-actions" },
-                creating ? null : h("button", { className: "button button-danger-strong", type: "button", text: "Delete", onclick: async () => {
-                    const confirmed = await UI.confirm({ title: "Delete this FAQ?", message: faq.question, confirmLabel: "Delete", tone: "danger" });
-                    if (!confirmed) return;
-                    try {
-                        await api(`/api/admin/chatbot/faqs/${encodeURIComponent(faq.id)}`, { method: "DELETE" });
-                        UI.closeModal();
-                        toast("FAQ deleted.", "success");
-                        onSaved();
-                    } catch (error) {
-                        toast(error.message, "error");
-                    }
-                } }),
-                save));
+            h("div", { className: "dialog-actions" }, remove, save));
         form.addEventListener("submit", (event) => {
             event.preventDefault();
-            UI.busy(save, async () => {
+            if (submitting || save.disabled) return;
+            if (!form.reportValidity()) return;
+            submitting = true;
+            void UI.busy(save, async () => {
                 const body = {
                     question: question.value.trim(), answer: answer.value.trim(), keywords: keywords.value.trim(), active: active.checked,
                     ...(order.value === "" ? (creating ? {} : {}) : { sort_order: Number(order.value) }),
@@ -461,6 +465,8 @@
                     onSaved();
                 } catch (error) {
                     toast(error.message, "error");
+                } finally {
+                    submitting = false;
                 }
             });
         });

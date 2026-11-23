@@ -6198,3 +6198,104 @@ span.photo-gallery-main {
         font-size: 0.98rem;
     }
 }
+
+/* ---------- UI/UX audit: hierarchy, density, and pending actions ---------- */
+/* Scoped to the customer ordering and portal pages so other storefront pages keep their layout. */
+
+.order-system .page-hero-compact,
+.portal-system .page-hero-compact { padding: 36px 0 40px; }
+.order-system .page-main,
+.portal-system .page-main { padding: 40px 0 64px; }
+.order-system .card,
+.portal-system .card { padding: 24px; }
+.order-system .order-step-lead,
+.portal-system .order-step-lead { margin-bottom: 14px; }
+.order-system .invitation-subtitle { margin: 16px 0 8px; }
+.order-system .wizard-step { padding-top: 10px; }
+.portal-system .customer-panel { margin: 14px 0; padding: 16px; }
+.portal-system .customer-draft { margin: 14px 0; padding: 16px; border-color: var(--primary, var(--order-brown)); }
+.portal-system .detail-toggle { margin-top: 12px; }
+
+/* The action strip is the first thing after the status banner: urgent work, money, and primary actions. */
+.customer-action-strip {
+    margin: 12px 0 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--order-brown);
+    border-radius: 12px;
+    background: var(--glass-1);
+}
+.customer-action-strip[hidden] { display: none; }
+.action-strip-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px 14px;
+}
+.action-strip-heading strong {
+    font-size: 1rem;
+    color: var(--order-ink);
+}
+.action-strip-heading .field-hint { margin: 0; }
+.action-strip-items {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+.action-strip-items > .field-hint { margin: 0; }
+.action-strip-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: var(--glass-1);
+}
+.action-strip-item.is-urgent { background: var(--primary-soft, var(--cyan-soft)); }
+.action-strip-item > span:nth-child(2) { flex: 1 1 220px; }
+.action-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--order-brown);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.btn-small { padding: 7px 12px; font-size: 0.85rem; }
+
+/* A selected design keeps its name visible; the gallery itself collapses below the fold. */
+.design-gallery.detail-toggle { margin: 0 0 12px; }
+.design-gallery .detail-toggle-summary { padding: 10px 14px; }
+.design-gallery .detail-toggle-summary .invitation-subtitle { margin: 0; }
+.design-gallery .design-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+}
+.design-gallery .design-card-media { aspect-ratio: 4 / 3; }
+.design-gallery .design-card-body { padding: 10px; gap: 6px; }
+.design-gallery .design-card-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    margin: 0;
+}
+
+/* Field-specific validation must be visible, not just present in the DOM. */
+.field-error:not(:empty) {
+    color: #b42318;
+    font-weight: 600;
+}
+.order-system input[aria-invalid="true"],
+.portal-system input[aria-invalid="true"],
+.portal-system select[aria-invalid="true"] { border-color: #b42318; }
+
+@media (max-width: 620px) {
+    .action-strip-item { align-items: flex-start; }
+    .action-strip-item .btn-small { flex: 1 1 auto; }
+    .customer-action-strip { padding: 12px; }
+}

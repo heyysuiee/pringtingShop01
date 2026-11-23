@@ -11,7 +11,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, Response
 
 from backend.app.core.dependencies import require_admin
 from backend.app.core.security import require_same_origin, require_session
-from backend.app.services import fulfillment_services, refund_services, shop_settings_services
+from backend.app.services import fulfillment_services, location_services, refund_services, shop_settings_services
 
 
 router = APIRouter(tags=["operations"])
@@ -41,6 +41,12 @@ def payment_method_qr(method_id: str) -> Response:
 def fulfillment_options() -> dict[str, Any]:
     """Delivery areas (fee and estimated courier period), pickup locations, and instructions."""
     return shop_settings_services.public_fulfillment_options()
+
+
+@router.get("/api/locations")
+def locations() -> dict[str, Any]:
+    """Read-only PSGC provinces, their cities/municipalities, and island groups for the address form."""
+    return location_services.public_locations()
 
 
 # ================================================================== customer actions

@@ -1,5 +1,6 @@
-.env
-backend/app/.env
+.env*
+backend/app/.env*
+.vercel
 venv
 .venv
 __pycache__
