@@ -336,6 +336,28 @@ class PaymentVerificationResultsTests(unittest.TestCase):
         self.assertEqual(row["insufficient_by"], 200.0)
         self.assertFalse(row["counts_as_paid"])
 
+    def test_customer_cannot_submit_below_the_remaining_down_payment(self) -> None:
+        reference = self.place_order(total=2000, down_payment=1000)
+        payment_reference = unique_ref("BELOW")
+        text = self.receipt_text(payment_reference, 1000)
+        too_low = self.submit(reference, payment_reference, text, amount=999.99, expect=422)
+        self.assertIn("cannot be below the remaining down payment", too_low["detail"])
+        self.assertIn("PHP 1,000.00", too_low["detail"])
+        self.assertEqual(self.admin_view(reference)["payment_submissions"], [])
+
+        # Exactly the down payment and a larger amount are both accepted; only the shop confirms the money.
+        self.submit(reference, payment_reference, text, amount=1000)
+        self.assertEqual(self.pending_submission(reference)["amount"], 1000.0)
+
+        # A shop-recorded partial down payment lowers the customer minimum to what is still due.
+        self.verify_submission(reference, 400)
+        second_reference = unique_ref("ABOVE")
+        second_text = self.receipt_text(second_reference, 700)
+        still_low = self.submit(reference, second_reference, second_text, amount=599.99, expect=422)
+        self.assertIn("PHP 600.00", still_low["detail"])
+        self.submit(reference, second_reference, second_text, amount=700)
+        self.assertEqual(self.pending_submission(reference)["amount"], 700.0)
+
     def test_reference_mismatch_is_flagged_and_never_auto_confirmed(self) -> None:
         reference = self.place_order()
         entered_reference = unique_ref("ENTERED")
@@ -481,13 +503,13 @@ class PaymentVerificationResultsTests(unittest.TestCase):
         }, expect=409)
         self.assertEqual(len(self.admin_view(reference)["payments"]), 2)
 
-    def test_three_partial_payments_accumulate_to_a_1500_order(self) -> None:
-        """₱500 + ₱250 + ₱750: every confirmed payment adds to the cumulative total exactly once."""
+    def test_three_payments_accumulate_to_a_1500_order(self) -> None:
+        """₱750 down payment + ₱250 + ₱500: every confirmed payment adds to the total exactly once."""
         reference = self.place_order(total=1500)
 
-        stages = (500, 250, 750)
-        expected_statuses = ("Insufficient Down Payment", "Down Payment Paid", "Fully Paid")
-        expected_balances = (1000.0, 750.0, 0.0)
+        stages = (750, 250, 500)
+        expected_statuses = ("Down Payment Paid", "Partially Paid", "Fully Paid")
+        expected_balances = (750.0, 500.0, 0.0)
         for index, (amount, expected_status, expected_balance) in enumerate(
             zip(stages, expected_statuses, expected_balances), start=1
         ):

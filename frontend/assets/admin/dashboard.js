@@ -1424,30 +1424,34 @@
         const specs = specifications(order);
         const events = eventRows(order);
         const notes = order.customization?.notes || order.customization?.instructions || "";
+        const visibleSpecs = specs.slice(0, 3);
+        const remainingSpecs = specs.slice(3);
         const count = specs.length + events.length + (order.package ? 1 : 0) + (order.design ? 1 : 0) + (notes ? 1 : 0);
+
+        const summaryItems = [
+            order.order_kind ? ["Order type", orderKindLabel(order)] : null,
+            order.package?.name ? ["Selected package", order.package.name] : null,
+            order.design?.name ? ["Selected design", order.design.name] : null,
+            ...visibleSpecs,
+        ].filter(Boolean);
+
         const body = [
-            specs.length ? detailList(specs) : h("p", { className: "field-note", text: "No extra customization fields for this service." }),
+            remainingSpecs.length ? detailList(remainingSpecs) : (specs.length <= 3 && !events.length && !notes ? null : (specs.length ? detailList(specs) : h("p", { className: "field-note", text: "No extra customization fields for this service." }))),
             events.length ? h("div", {}, h("strong", { text: "Event details" }), detailList(events)) : null,
             packageCard(order),
             designCard(order),
-            h("div", {}, h("strong", { text: "Special instructions" }), h("p", { className: "prewrap", text: notes || "None provided." })),
+            notes ? h("div", {}, h("strong", { text: "Special instructions" }), h("p", { className: "prewrap", text: notes })) : null,
             order.admin_notes ? h("div", {}, h("strong", { text: "Latest internal note" }), h("p", { className: "prewrap", text: order.admin_notes })) : null,
-        ];
+        ].filter(Boolean);
+
         return h("section", { className: "od-panel od-specs", dataset: { focus: "specifications" } },
             odPanelHead("Order specifications", `${number(order.customization?.quantity)} pcs`),
-            detailList([
-                ["Service", summary.service],
-                ["Product", summary.product],
-                order.order_kind ? ["Order type", orderKindLabel(order)] : null,
-                ["Quantity", number(order.customization?.quantity)],
-                order.package?.name ? ["Selected package", order.package.name] : null,
-                order.design?.name ? ["Selected design", order.design.name] : null,
-            ]),
-            odDisclosure("View customization details", {
+            summaryItems.length ? detailList(summaryItems) : h("p", { className: "field-note", text: "Standard order specifications." }),
+            body.length ? odDisclosure("View all customization details", {
                 focus: "customization",
                 hint: count ? `${count} item${count === 1 ? "" : "s"}` : "",
                 body,
-            }));
+            }) : null);
     }
 
     /** Fulfillment at a glance; the address is intentionally omitted (it lives in Customer). */
@@ -1461,15 +1465,14 @@
             : null;
         const packed = Boolean(f.released_at || order.production?.packaging?.completed_at);
         const nextRelease = f.next_release_status || f.release_status;
+        const isDelivery = f.method === "delivery";
+        const destination = [shipping.delivery_province, shipping.destination_region ? `(${shipping.destination_region})` : ""].filter(Boolean).join(" ");
         return h("section", { className: "od-panel od-delivery", dataset: { focus: "fulfillment-summary" } },
-            odPanelHead("Delivery & pickup", f.method === "delivery" ? "Delivery" : "Pickup"),
+            odPanelHead("Delivery & pickup", isDelivery ? "Delivery" : "Store Pickup"),
             detailList([
-                ["Method", h("strong", { text: f.label || "Store Pickup" })],
-                f.courier ? ["Courier", `${f.courier}${f.courier_service ? ` · ${f.courier_service}` : ""}`] : null,
+                isDelivery ? (f.courier ? ["Courier", `${f.courier}${f.courier_service ? ` · ${f.courier_service}` : ""}`] : null) : ["Method", "Store Pickup"],
                 tracking ? ["Tracking number", tracking] : null,
-                shipping.delivery_province ? ["Delivery province", shipping.delivery_province] : null,
-                shipping.destination_region ? ["Destination region", shipping.destination_region] : null,
-                shipping.shipping_fee ? ["Shipping fee", money(shipping.shipping_fee)] : f.delivery_fee ? ["Delivery fee", money(f.delivery_fee)] : null,
+                destination ? ["Destination", destination] : null,
                 shipping.estimated_delivery || f.estimate_text ? ["Estimated delivery", shipping.estimated_delivery || f.estimate_text] : null,
                 f.scheduled_date ? ["Scheduled delivery", date(f.scheduled_date)] : null,
                 f.pickup_schedule ? ["Pickup schedule", `${date(f.pickup_schedule.date)} ${f.pickup_schedule.time || ""}`.trim()] : null,
@@ -1497,44 +1500,72 @@
                 ? "Half of the quotation"
                 : money(moneyNow.requiredDown));
         const shipping = order.shipping || {};
-        const metrics = [
-            ...(payment.order_subtotal === null || payment.order_subtotal === undefined ? [] : [
-                h("div", { className: "od-money" },
-                    h("span", { text: "Order subtotal" }),
-                    h("strong", { text: money(payment.order_subtotal) })),
-            ]),
-            ...(shipping.delivery_province ? [
-                h("div", { className: "od-money" },
-                    h("span", { text: `Shipping fee · ${shipping.destination_region}` }),
-                    h("strong", { text: money(payment.shipping_fee ?? shipping.shipping_fee ?? 0) })),
-            ] : []),
-            h("div", { className: "od-money" },
-                h("span", { text: cod ? "Down payment" : `Required down payment${payment.admin_set_down_payment ? "" : " (50%)"}` }),
-                h("strong", { text: downValue })),
-            h("div", { className: "od-money" },
-                h("span", { text: "Confirmed payments" }),
-                h("strong", { text: money(moneyNow.paid) })),
-            h("div", { className: "od-money" },
-                h("span", { text: cod ? "Due on delivery" : "Remaining balance" }),
-                h("strong", { className: moneyNow.balanceDue > 0 ? "od-balance-due" : "", text: moneyNow.balanceDue === null ? "—" : money(moneyNow.balanceDue) })),
-            h("div", { className: "od-money" },
-                h("span", { text: "Down payment status" }),
-                h("strong", {}, odStatus(payment.down_payment_status || "—"))),
-            h("div", { className: "od-money" },
-                h("span", { text: "Payment status" }),
-                h("strong", {}, odStatus(moneyNow.status))),
-            h("div", { className: "od-money" },
-                h("span", { text: "Work status" }),
-                h("strong", {}, odStatus(order.work_status || payment.work_status || "—"))),
+        const isFullyPaid = moneyNow.balanceDue !== null && moneyNow.balanceDue <= 0.005 && moneyNow.paid > 0.005;
+
+        // Structured Breakdown Table (Charges)
+        const breakdownRows = [];
+        if (payment.order_subtotal !== null && payment.order_subtotal !== undefined) {
+            breakdownRows.push(h("tr", {},
+                h("td", { text: "Order subtotal" }),
+                h("td", { className: "align-right", text: money(payment.order_subtotal) })));
+        }
+        const shippingFee = payment.shipping_fee ?? shipping.shipping_fee;
+        if (shipping.delivery_province || (shippingFee !== null && shippingFee !== undefined)) {
+            const locText = [shipping.delivery_province, shipping.destination_region ? `(${shipping.destination_region})` : ""].filter(Boolean).join(" ");
+            breakdownRows.push(h("tr", {},
+                h("td", { text: `Shipping fee${locText ? ` · ${locText}` : ""}` }),
+                h("td", { className: "align-right", text: money(shippingFee ?? 0) })));
+        }
+        if (breakdownRows.length > 1 && summary.total_amount !== null && summary.total_amount !== undefined) {
+            breakdownRows.push(h("tr", { className: "od-row-subtotal" },
+                h("td", {}, h("strong", { text: "Total order amount" })),
+                h("td", { className: "align-right" }, h("strong", { text: money(summary.total_amount) }))));
+        }
+
+        const breakdownTable = breakdownRows.length
+            ? h("table", { className: "od-breakdown-table" }, h("tbody", {}, ...breakdownRows))
+            : null;
+
+        // Settlement Summary (Payments & Balance)
+        const settlementItems = [
+            h("div", { className: "od-settle-item" },
+                h("span", { className: "od-settle-label", text: "Confirmed paid" }),
+                h("strong", { className: "od-settle-value", text: money(moneyNow.paid) })),
+            h("div", { className: "od-settle-item" },
+                h("span", { className: "od-settle-label", text: cod ? "Due on delivery" : "Remaining balance" }),
+                h("strong", {
+                    className: `od-settle-value ${moneyNow.balanceDue > 0 ? "od-balance-due" : "od-balance-zero"}`,
+                    text: moneyNow.balanceDue === null ? "—" : (moneyNow.balanceDue <= 0 ? `${money(0)} · Settled` : money(moneyNow.balanceDue)),
+                })),
         ];
+
+        // Down payment details are only shown when balance is still due
+        if (!isFullyPaid && (moneyNow.balanceDue > 0 || moneyNow.paid === 0)) {
+            settlementItems.push(
+                h("div", { className: "od-settle-item" },
+                    h("span", { className: "od-settle-label", text: cod ? "Down payment" : `Required down payment${payment.admin_set_down_payment ? "" : " (50%)"}` }),
+                    h("strong", { className: "od-settle-value", text: downValue })),
+                h("div", { className: "od-settle-item" },
+                    h("span", { className: "od-settle-label", text: "Down payment status" }),
+                    h("div", { style: "margin-top: 2px;" }, odStatus(payment.down_payment_status || "—")))
+            );
+        }
+
+        const totalFormatted = summary.total_amount === null || summary.total_amount === undefined
+            ? "Awaiting quotation"
+            : (typeof summary.total_amount === "number" || !isNaN(Number(summary.total_amount)) ? money(summary.total_amount) : summary.total_amount);
+
         return h("section", { className: "od-panel od-payment", dataset: { focus: "payments", orderSection: "payments" } },
             odPanelHead("Payment summary"),
             h("div", { className: "od-total" },
-                h("div", {}, h("span", { text: "Confirmed total" }),
-                    h("strong", { text: summary.total_amount === null || summary.total_amount === undefined ? "Awaiting quotation" : summary.total_amount })),
+                h("div", {},
+                    h("span", { text: "Confirmed total" }),
+                    h("strong", { text: totalFormatted })),
                 odStatus(summary.payment_status || "—")),
             h("p", { className: "od-section-label", text: "Payment breakdown" }),
-            h("div", { className: "od-money-grid" }, ...metrics),
+            breakdownTable,
+            h("div", { className: "od-settlement-block" },
+                h("div", { className: "od-settle-grid" }, ...settlementItems)),
             payment.pending_verification
                 ? h("p", { className: "od-inline-note" }, h("strong", { text: `${money(payment.pending_verification)} waiting for verification.` }), " It is not counted as paid yet.")
                 : null,

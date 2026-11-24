@@ -124,9 +124,19 @@ class TesseractProvider(OCRProvider):
         gray = ImageEnhance.Contrast(gray).enhance(1.3)
         return gray
 
-    def _ocr_image(self, pytesseract: Any, image: Any) -> str:
-        config = "--oem 3 --psm 6"
+    def _ocr_image(self, pytesseract: Any, image: Any, config: str = "--oem 3") -> str:
+        # Auto page segmentation (the default) preserves the column layout of e-wallet receipts. Forcing a
+        # single text block (PSM 6) used to merge or drop the amount line on some receipts, so it is now only
+        # a fallback when auto segmentation cannot find the payment fields.
         return str(pytesseract.image_to_string(image, lang=settings.ocr_language, timeout=settings.ocr_timeout_seconds, config=config) or "")
+
+    @staticmethod
+    def _text_score(text: str) -> tuple[int, int]:
+        """Rank OCR readings by the payment fields they contain, then by amount of readable text."""
+        parsed = parse_text(text, engine="tesseract")
+        fields = parsed.fields
+        useful = sum(1 for key in ("reference", "amount", "date_time", "method", "status") if fields.get(key))
+        return useful, len(re.sub(r"\s+", "", text))
 
     def extract_text(self, contents: bytes, mime_type: str) -> str:
         if not self.available() or self._modules is None:
@@ -149,13 +159,18 @@ class TesseractProvider(OCRProvider):
             image.thumbnail((2400, 2400))
         try:
             preprocessed = self._preprocess(image)
-            text = self._ocr_image(pytesseract, preprocessed)
-            # Fall back to the original image if preprocessing produced too little useful text.
-            if len(re.sub(r"\s+", "", text)) < 12:
-                original_text = self._ocr_image(pytesseract, image)
-                if len(re.sub(r"\s+", "", original_text)) > len(re.sub(r"\s+", "", text)):
-                    return original_text
-            return text
+            readings = [self._ocr_image(pytesseract, preprocessed)]
+            best = max(readings, key=self._text_score)
+            # Preprocessing can blur a faint amount, so compare it with the untouched screenshot.
+            if self._text_score(best)[0] < 2:
+                readings.append(self._ocr_image(pytesseract, image))
+                best = max(readings, key=self._text_score)
+            # PSM 6 is useful for very simple receipts, but it is no longer the default because it can drop
+            # the amount line on multi-section e-wallet receipts. Try it only when the safer passes failed.
+            if self._text_score(best)[0] < 2:
+                readings.append(self._ocr_image(pytesseract, preprocessed, config="--oem 3 --psm 6"))
+                best = max(readings, key=self._text_score)
+            return best
         except Exception:
             return self._ocr_image(pytesseract, image)
 
@@ -169,10 +184,15 @@ def set_provider(provider: OCRProvider | None) -> None:
     _provider = provider or NoEngineProvider()
 
 
-_AMOUNT_RE = re.compile(
-    r"(?:(?:[₱PHPp]\s*)|(?:amount|total|paid|value)\s*[:=]?\s*)([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))",
-    re.IGNORECASE,
+# Receipts do not always print cents ("Amount 500", "₱1,000"). Accept whole amounts as well as one or two
+# decimals, and match the full PHP token/standalone P without capturing unrelated letter sequences.
+_AMOUNT_NUMBER = r"([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)"
+_AMOUNT_LABEL = (
+    r"(?:payment\s+amount|amount\s+paid|amount\s+due|amount\s+to\s+pay|total\s+amount|"
+    r"amount|total|paid|value)\b[ \t]*[:=]?[ \t]*"
 )
+_AMOUNT_CURRENCY = r"(?:₱[ \t]*|PHP[ \t]*|(?<![A-Za-z])P(?=[ \t]*\d)[ \t]*)"
+_AMOUNT_RE = re.compile(rf"(?:{_AMOUNT_CURRENCY}|{_AMOUNT_LABEL}){_AMOUNT_NUMBER}", re.IGNORECASE)
 _REFERENCE_LABEL = r"(?:reference|ref\.?|transaction|txn|receipt|payment)\s*(?:no\.?|number|id|#)?"
 _REFERENCE_VALUE = r"([A-Z0-9][A-Z0-9\-/]{3,40})"
 _REFERENCE_RES = (

@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 
@@ -751,6 +752,79 @@ class OCRPaymentVerificationTests(unittest.TestCase):
         self.assertIn(primary, values)
         self.assertIn(secondary, values)
         self.assertIn("multiple_reference_candidates", result["ocr"].get("flags", []))
+
+    def test_receipt_amount_without_cents_is_still_read(self) -> None:
+        reference = self.place_order()
+        payment_reference = unique_ref("WHOLE")
+        text = self.receipt_text(payment_reference, 500, "GCash").replace("Amount: PHP 500.00", "Amount: 500")
+        result = self.scan(reference, "GCash", payment_reference, text)
+        self.assertEqual(result["ocr"]["fields"]["amount"], "500.00")
+        self.assertTrue(result["amount_match"])
+
+
+class ReceiptAmountParsingTests(unittest.TestCase):
+    def test_common_receipt_amount_formats_are_recognized(self) -> None:
+        cases = {
+            "Amount: 500": "500.00",
+            "Amount Paid: 1,000": "1000.00",
+            "PHP 500": "500.00",
+            "₱1,200": "1200.00",
+            "P500.50": "500.50",
+            "Total Amount\n₱ 1,200": "1200.00",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(ocr_services.parse_text(text).fields["amount"], expected)
+
+    def test_reference_number_is_not_mistaken_for_an_amount(self) -> None:
+        result = ocr_services.parse_text("Payment Successful\nReference: 123456789012")
+        self.assertEqual(result.fields["amount"], "")
+        self.assertEqual(result.fields["reference"], "123456789012")
+
+
+class TesseractReceiptLayoutTests(unittest.TestCase):
+    @staticmethod
+    def _fake_provider(texts: dict[str, str]) -> tuple[ocr_services.TesseractProvider, list[str]]:
+        configs: list[str] = []
+
+        def image_to_string(image: Any, *, lang: str, timeout: int, config: str) -> str:
+            configs.append(config)
+            return texts.get(config, "")
+
+        class FakeImage:
+            size = (100, 100)
+
+            def convert(self, mode: str) -> "TesseractReceiptLayoutTests.FakeImage":
+                return self
+
+            def thumbnail(self, size: tuple[int, int]) -> None:
+                return None
+
+        image = FakeImage()
+        provider = ocr_services.TesseractProvider()
+        provider._modules = (SimpleNamespace(image_to_string=image_to_string), SimpleNamespace(open=lambda stream: image))
+        provider._checked = True
+        return provider, configs
+
+    def test_auto_segmentation_is_preferred(self) -> None:
+        auto_text = "\n".join([
+            "GCash payment receipt", "Reference: ABC12345", "Amount: PHP 500.00", "Status: Success",
+        ])
+        provider, configs = self._fake_provider({"--oem 3": auto_text, "--oem 3 --psm 6": "Amount 999"})
+        with patch.object(provider, "_preprocess", side_effect=lambda image: image):
+            text = provider.extract_text(b"receipt", "image/png")
+        self.assertEqual(configs, ["--oem 3"])
+        self.assertEqual(ocr_services.parse_text(text).fields["amount"], "500.00")
+
+    def test_single_block_fallback_runs_only_when_auto_misses_payment_fields(self) -> None:
+        block_text = "\n".join([
+            "GCash payment receipt", "Reference: ABC12345", "Amount: 500", "Status: Success",
+        ])
+        provider, configs = self._fake_provider({"--oem 3": "GCash", "--oem 3 --psm 6": block_text})
+        with patch.object(provider, "_preprocess", side_effect=lambda image: image):
+            text = provider.extract_text(b"receipt", "image/png")
+        self.assertEqual(configs, ["--oem 3", "--oem 3", "--oem 3 --psm 6"])
+        self.assertEqual(ocr_services.parse_text(text).fields["amount"], "500.00")
 
 
 if __name__ == "__main__":  # pragma: no cover

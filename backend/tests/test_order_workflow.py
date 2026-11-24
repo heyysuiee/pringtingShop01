@@ -247,9 +247,13 @@ class DownPaymentTests(WorkflowTestCase):
         reference = self.accept(self.customized_order(1001))["reference"]
         view = self.admin_view(reference)
         self.assertEqual(view["payment"]["next_payment"], {"stage": "down_payment", "label": "50% down payment", "amount": 500.5})
-        # A customer may declare any positive amount, but the browser cannot credit it. Each declared value
-        # is only a pending claim and is rejected here so the server-calculated amount can be submitted next.
-        for amount in (100, 1001):
+        # An amount below the remaining down payment is refused before it can become a pending claim.
+        below = self.submit_payment(reference, amount=500, expect=422)
+        self.assertIn("cannot be below the remaining down payment", below["detail"])
+        self.assertEqual(self.admin_view(reference)["payment_submissions"], [])
+        # The down payment or more is accepted as a pending claim, but the browser cannot credit it. Each
+        # declared value is rejected here so the server-calculated amount can be submitted next.
+        for amount in (500.5, 1001):
             declared = self.submit_payment(reference, amount=amount)
             submission = self.pending_submission(reference)
             self.assertEqual(submission["amount"], float(amount))
@@ -597,9 +601,12 @@ class OrderSecurityTests(WorkflowTestCase):
         reference = quoted["reference"]
         accepted = self.accept(quoted, total_amount=1, down_payment_required=1)
         self.assertEqual((accepted["total_amount"], accepted["payment"]["down_payment_required"]), (1000.0, 500.0))
-        # A browser-supplied amount cannot become money or change the agreed price.
-        declared = self.submit_payment(reference, amount=1)
-        self.assertEqual(declared["payment_submissions"][0]["amount"], 1.0)
+        # A below-minimum amount is refused; a larger browser-supplied claim is still only pending and cannot
+        # become money or change the agreed price.
+        below = self.submit_payment(reference, amount=1, expect=422)
+        self.assertIn("cannot be below the remaining down payment", below["detail"])
+        declared = self.submit_payment(reference, amount=600)
+        self.assertEqual(declared["payment_submissions"][0]["amount"], 600.0)
         self.assertEqual(declared["payments"], [])
         wrong_submission = self.pending_submission(reference)
         self.admin_post(reference, f"payment-submissions/{wrong_submission['id']}/reject", {

@@ -712,19 +712,22 @@
             label.append(control);
             return label;
         };
+        const down = due.stage === "down_payment";
+        const minimumAmount = down ? Number(due.amount) : 0.01;
         const amount = make("input", "input");
         Object.assign(amount, {
-            type: "number", min: "0.01", step: "0.01", inputMode: "decimal",
-            placeholder: `Server suggestion: ${due.amount.toFixed(2)}`,
+            type: "number", min: minimumAmount.toFixed(2), step: "0.01", inputMode: "decimal",
+            placeholder: down ? `Minimum: ${money(minimumAmount)}` : `Server suggestion: ${due.amount.toFixed(2)}`,
         });
-        const amountHint = make("p", "field-hint", `Enter the amount you actually paid. Leave blank to use the amount detected on the receipt; if OCR cannot read it, the server will use ${money(due.amount)}.`);
+        const amountHint = make("p", "field-hint", down
+            ? `Enter the amount you actually paid (at least ${money(minimumAmount)}, the remaining down payment). Leave blank to use the amount detected on the receipt; if OCR cannot read it, the server will use ${money(due.amount)}. Amounts above the minimum are accepted.`
+            : `Enter the amount you actually paid. Leave blank to use the amount detected on the receipt; if OCR cannot read it, the server will use ${money(due.amount)}.`);
         const reference = make("input", "input");
         Object.assign(reference, { maxLength: 120, minLength: 4, required: true, placeholder: "Reference number", autocomplete: "off" });
         const proof = make("input", "input");
         Object.assign(proof, { type: "file", required: true, accept: ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf" });
         const submit = make("button", "btn btn-dark", "Submit payment for verification");
         submit.type = "submit";
-        const down = due.stage === "down_payment";
         const referenceStatusHint = make("p", "field-hint", "Enter the reference number from your receipt if OCR cannot detect it.");
         const referenceLabel = field("Reference Number", reference);
         referenceLabel.append(referenceStatusHint);
@@ -918,7 +921,7 @@
                 if (previewExcess > 0.005) {
                     scanResult.append(make("p", "notice", `Excess of ${money(previewExcess)} over the whole order. It will be flagged for admin review and will not be treated as a confirmed payment until the shop checks it.`));
                 } else if (previewShortfall > 0.005) {
-                    scanResult.append(make("p", "notice", `The down payment is still short by ${money(previewShortfall)}. A partial payment is accepted, but the order cannot be confirmed until the minimum down payment is verified.`));
+                    scanResult.append(make("p", "notice", `The down payment is still short by ${money(previewShortfall)}. Pay at least ${money(due.amount)} (the remaining down payment) to submit a payment; amounts above it are accepted.`));
                 }
                 if (previewMoney.payment_status) {
                     scanResult.append(make("p", "field-hint", `Status if confirmed: ${previewMoney.payment_status}. Confirmed paid so far: ${money(previewMoney.cumulative_paid || 0)}; balance after: ${money(previewMoney.remaining_balance || 0)}.`));
@@ -979,7 +982,7 @@
 
         formElement.append(
             make("h4", "", down ? `Pay your ${due.label.toLowerCase()}` : "Pay the remaining balance"),
-            make("p", "field-hint", `Choose an e-wallet, pay the amount you actually sent to the shop's account, then upload the payment screenshot. The shop suggests ${money(due.amount)} for this stage; you can correct the amount below if you paid a different amount. The system scans the receipt only to assist review. Your payment stays Pending Verification until the shop checks the money in its account${down ? "; your order is confirmed once the minimum down payment is verified" : ""}. The shop never asks for your PIN or OTP.`),
+            make("p", "field-hint", `Choose an e-wallet, pay the amount you actually sent to the shop's account, then upload the payment screenshot. ${down ? `The minimum for this stage is ${money(minimumAmount)} (the remaining down payment); you can pay more if you already sent a bigger amount.` : `Pay any amount toward the remaining balance of ${money(due.amount)}.`} The system scans the receipt only to assist review. Your payment stays Pending Verification until the shop checks the money in its account${down ? "; your order is confirmed once the minimum down payment is verified" : ""}. The shop never asks for your PIN or OTP.`),
             cards,
             details,
             (() => { const label = field(`Amount you paid (${due.label}, PHP)`, amount); label.append(amountHint); return label; })(),
@@ -1024,8 +1027,18 @@
                     return;
                 }
                 declaredAmount = Math.round((declaredAmount + Number.EPSILON) * 100) / 100;
+                if (down && declaredAmount < minimumAmount - 0.005) {
+                    detailError.textContent = `The payment cannot be below the remaining down payment of ${money(minimumAmount)}. Enter that amount or more.`;
+                    amount.focus();
+                    return;
+                }
             }
             const reportedAmount = declaredAmount ?? (fieldsAmount(detectedAmountPaid.value) ?? due.amount);
+            if (down && reportedAmount < minimumAmount - 0.005) {
+                detailError.textContent = `The receipt shows ${money(reportedAmount)}, below the remaining down payment of ${money(minimumAmount)}. Enter the amount you actually paid (at least ${money(minimumAmount)}), or upload a clearer receipt.`;
+                amount.focus();
+                return;
+            }
             if (!(await confirmAction(`Submit your ${chosen.provider} payment of ${money(reportedAmount)} (reference ${referenceValue}) for verification? Only the shop's confirmation will count it as paid.`, { title: "Submit payment?", confirmLabel: "Submit payment" }))) return;
             let proofPayload;
             try {

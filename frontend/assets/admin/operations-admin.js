@@ -164,13 +164,17 @@
         if (!drafts.length) return null;
         return h("section", { className: "fact-card", dataset: { focus: "drafts" } },
             h("h3", { text: `Draft history (${drafts.length})` }),
-            h("ol", { className: "op-list" }, ...[...drafts].reverse().map((item) => h("li", {},
-                h("div", { className: "op-list-head" }, h("strong", { text: `Draft ${item.number}` }), badge(item.status_label || item.status)),
-                item.file ? h("a", { href: item.file.url, target: "_blank", rel: "noopener", text: item.file.name }) : null,
-                h("span", { className: "table-secondary", text: [item.sent_at ? `Sent ${dateTime(item.sent_at)}` : "", item.sent_by ? `by ${item.sent_by}` : "", item.responded_at ? `· answered ${dateTime(item.responded_at)}` : ""].filter(Boolean).join(" ") }),
-                item.remarks ? h("p", { className: "field-note", text: `Remarks: ${item.remarks}` }) : null,
-                item.revision_note ? h("p", { className: "field-note", text: `Customer's revision request: ${item.revision_note}` }) : null,
-            ))),
+            h("ol", { className: "op-list" }, ...[...drafts].reverse().map((item) => {
+                const fileName = item.file?.name || "Draft layout file";
+                const shortName = fileName.length > 32 ? `${fileName.slice(0, 16)}…${fileName.slice(-12)}` : fileName;
+                return h("li", { className: "op-draft-row" },
+                    h("div", { className: "op-list-head" }, h("strong", { text: `Draft ${item.number}` }), badge(item.status_label || item.status)),
+                    item.file ? h("a", { className: "op-file-link", href: item.file.url, target: "_blank", rel: "noopener", title: fileName, text: `📄 ${shortName}` }) : null,
+                    h("span", { className: "table-secondary", text: [item.sent_at ? `Sent ${dateTime(item.sent_at)}` : "", item.sent_by ? `by ${item.sent_by}` : "", item.responded_at ? `· answered ${dateTime(item.responded_at)}` : ""].filter(Boolean).join(" ") }),
+                    item.remarks ? h("p", { className: "field-note", text: `Remarks: ${item.remarks}` }) : null,
+                    item.revision_note ? h("p", { className: "field-note revision-note", text: `Customer revision request: ${item.revision_note}` }) : null,
+                );
+            })),
         );
     }
 
@@ -242,7 +246,6 @@
                 h("div", { className: "op-list-head" }, h("strong", { text: `${item.id} · ${item.reason_label}` }), badge(CANCEL_LABEL[item.status] || item.status)),
                 ctx.detailList([
                     ["Requested", dateTime(item.requested_at)],
-                    ["Order status when requested", item.order_status],
                     ["Verified payments", money(item.verified_paid)],
                     item.remarks ? ["Customer remarks", item.remarks] : null,
                     item.refund_recipient?.name ? ["Refund to", `${item.refund_recipient.provider}: ${item.refund_recipient.name} · ${item.refund_recipient.number}`] : null,

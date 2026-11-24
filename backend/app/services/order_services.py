@@ -2138,6 +2138,30 @@ def _scan_receipt(
     return ocr_view, verification
 
 
+def minimum_customer_payment(due: Mapping[str, Any]) -> float:
+    """The smallest amount the customer form accepts for the current stage.
+
+    While the down payment is outstanding the customer must pay at least the remaining down payment the
+    server calculated; a larger amount is always accepted and credited in full. Once the down payment is
+    covered, any positive amount toward the balance may still be submitted.
+    """
+    if due.get("stage") != "down_payment":
+        return 0.01
+    return round(max(0.0, float(due.get("amount") or 0.0)), 2)
+
+
+def ensure_customer_payment_minimum(amount: float, due: Mapping[str, Any]) -> None:
+    minimum = minimum_customer_payment(due)
+    if amount < minimum - MONEY_TOLERANCE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The payment cannot be below the remaining down payment of PHP {minimum:,.2f}. "
+                "Pay that amount or more; amounts above it are accepted."
+            ),
+        )
+
+
 def scan_customer_payment(reference: str, email: Any, payload: Mapping[str, Any], customer_id: str | None = None) -> dict[str, Any]:
     """Read-only receipt preview: OCR and matching feedback before the customer submits.
 
@@ -2160,7 +2184,9 @@ def scan_customer_payment(reference: str, email: Any, payload: Mapping[str, Any]
     declared = payload.get("amount")
     if not _valid_amount(declared) or float(declared) <= 0:
         declared = due["amount"]
-    submission = {"id": "preview", "reference": reference_text, "amount": round(float(declared), 2), "receipt_hash": ocr_services.receipt_hash(contents)}
+    declared = round(float(declared), 2)
+    ensure_customer_payment_minimum(declared, due)
+    submission = {"id": "preview", "reference": reference_text, "amount": declared, "receipt_hash": ocr_services.receipt_hash(contents)}
     ocr_view, verification = _scan_receipt(order, submission, metadata, contents, method, due)
     checks = {item.get("key"): item for item in (verification.get("checks") or []) if isinstance(item, dict)}
     duplicate_check = checks.get("duplicate", {})
@@ -2231,11 +2257,12 @@ def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, An
         raise HTTPException(status_code=409, detail=due["reason"])
     declared = payload.get("amount")
     if declared not in (None, ""):
-        # The customer may pay any positive amount, not just exactly 50% or exactly the amount due. The shop
-        # credits the actual amount the customer says was paid, but only after an administrator confirms it.
+        # The minimum is the remaining down payment calculated by the server; anything above it is accepted
+        # and credited in full after an administrator confirms the money actually arrived.
         if not _valid_amount(declared) or float(declared) <= 0:
             raise HTTPException(status_code=422, detail="Enter the amount actually paid.")
         declared = round(float(declared), 2)
+        ensure_customer_payment_minimum(declared, due)
     method = payload.get("method")
     # Only an active e-wallet configured by the shop (GCash when an older page does not name one).
     method = shop_settings_services.default_provider() if method in (None, "") else shop_settings_services.active_provider(method)
@@ -2270,6 +2297,9 @@ def submit_customer_payment(reference: str, email: Any, payload: Mapping[str, An
             extracted = None
         if extracted is not None and extracted > 0:
             submission["amount"] = extracted
+    # A receipt that reads below the down payment cannot be submitted as a down payment. The customer must
+    # correct the amount; an unreadable receipt falls back to the server-calculated amount, which meets it.
+    ensure_customer_payment_minimum(float(submission["amount"]), due)
     review = _excess_review(order, float(submission["amount"]))
     submission.update(review)
     if review["requires_admin_review"]:
