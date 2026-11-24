@@ -767,6 +767,9 @@ def _transaction_entries(order: OrderRecord, base: Mapping[str, Any]) -> list[di
             "entry_type": "submission",
             "payment_number": None,
             "submission_id": item.get("id"),
+            # The actual workflow state. ``verification_status`` stays legacy-compatible for filters, but the
+            # admin table must not offer Verify on a superseded "receipt_requested" row that looks pending.
+            "submission_status": status,
             "amount": money(item.get("amount")),
             "method": item.get("method", ""),
             "payment_reference": str(item.get("reference") or ""),

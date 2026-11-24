@@ -90,6 +90,7 @@ def down_payment_calculation(
     required_down = stored if stored is not None and 0 < stored <= total + 0.005 else round(total * DOWN_PAYMENT_RATE, 2)
     paid_before = round(max(0.0, _number(already_paid) or 0.0), 2)
     actual = _number(extracted_amount)
+    amount_detected = actual is not None
     paid_after = round(paid_before + (actual or 0.0), 2)
     due = round(max(0.0, _number(stage_required) or 0.0), 2)
     shortfall = round(max(0.0, due - actual), 2) if actual is not None and due > actual + 0.005 else 0.0
@@ -98,10 +99,18 @@ def down_payment_calculation(
     # Excess is money above the whole order, not merely above one stage. Stage excess is kept separately so
     # the admin can still see that a receipt paid more than the current instalment.
     excess = round(max(0.0, paid_after - total), 2)
+    preview_status = order_services.payment_status_from_amounts(
+        round(total, 2), round(required_down, 2), paid_after
+    )
+    # An unreadable receipt is not a ₱0.00 payment. Until a human confirms an amount, describe the preview as
+    # pending instead of presenting "No Payment" as a final decision to the customer.
+    if not amount_detected and preview_status == order_services.NO_PAYMENT:
+        preview_status = "Payment Verification Pending"
     return {
         "total_order_amount": round(total, 2),
         "required_down_payment": round(required_down, 2),
         "stage_amount_due": due,
+        "amount_detected": amount_detected,
         "actual_amount_paid": actual,
         "previously_paid": paid_before,
         "cumulative_paid": paid_after,
@@ -113,9 +122,7 @@ def down_payment_calculation(
         "down_payment_shortfall": remaining_down,
         "additional_needed_for_down_payment": remaining_down,
         "insufficient_by": shortfall,
-        "payment_status": order_services.payment_status_from_amounts(
-            round(total, 2), round(required_down, 2), paid_after
-        ),
+        "payment_status": preview_status,
         "payment_percentage": round((paid_after / total) * 100, 1) if total > 0 else 0.0,
         "down_payment_percentage": round((min(paid_after, required_down) / required_down) * 100, 1) if required_down > 0 else 0.0,
         "down_payment_met": bool(total > 0 and paid_after >= required_down - 0.005),
@@ -356,8 +363,12 @@ def _duplicate_details(
         for payment in order.get("payments") or []:
             if key and _key(payment.get("reference")) == key:
                 details.append(f"Reference is already recorded on order {reference_label}.")
+            if hash_key and _key(payment.get("receipt_hash")) == hash_key:
+                details.append(f"The same receipt file already backs a verified payment on order {reference_label}.")
         for item in order.get("payment_submissions") or []:
-            if item.get("id") == ignore_id:
+            if item.get("id") == ignore_id or item.get("status") == "rejected":
+                # A rejected submission is history: the customer was told they can retry, so it releases both
+                # the reference and the receipt-file claim. Verified payments and live submissions still block.
                 continue
             superseded = item.get("status") == "receipt_requested" and same_order
             if key and not superseded and _key(item.get("reference")) == key:
@@ -535,7 +546,10 @@ def build_verification(
         status = DUPLICATE
     elif invalid_status or (provider["attempted"] and provider["detail"].startswith("The provider did not confirm")):
         status = REJECTED
-    elif "inconsistent" in states or "missing" in states or "engine_unavailable" in flags or "unreadable" in flags:
+    elif (
+        "inconsistent" in states or "missing" in states
+        or {"engine_unavailable", "unreadable", "ocr_error", "unsupported_type"} & set(flags)
+    ):
         status = ADMIN_REVIEW
     elif provider["confirmed"]:
         status = VERIFIED
@@ -554,7 +568,7 @@ def build_verification(
         issues.append(RESULT_INSUFFICIENT)
     if (
         "inconsistent" in states or "missing" in states
-        or "engine_unavailable" in flags or "unreadable" in flags or "ocr_error" in flags
+        or {"engine_unavailable", "unreadable", "ocr_error", "unsupported_type"} & set(flags)
     ):
         issues.append(RESULT_MANUAL_REVIEW)
     result = next(

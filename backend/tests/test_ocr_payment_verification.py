@@ -32,7 +32,7 @@ from backend.app.core.rate_limit import limiter  # noqa: E402
 from backend.app.core.security import create_session_token, SESSION_COOKIE  # noqa: E402
 from backend.app.main import app  # noqa: E402
 from backend.app.repositories import payment_method_repository  # noqa: E402
-from backend.app.services import ocr_services  # noqa: E402
+from backend.app.services import ocr_services, order_services  # noqa: E402
 
 
 PASSWORD = "Correct-Horse-Battery-1"
@@ -760,6 +760,153 @@ class OCRPaymentVerificationTests(unittest.TestCase):
         result = self.scan(reference, "GCash", payment_reference, text)
         self.assertEqual(result["ocr"]["fields"]["amount"], "500.00")
         self.assertTrue(result["amount_match"])
+
+    # ------------------------------------------------------------ end-to-end payment workflow
+
+    def test_end_to_end_below_minimum_down_payment_is_rejected(self) -> None:
+        reference = self.place_order(758)
+        payment_reference = unique_ref("LOW")
+        payload = {
+            "method": "GCash",
+            "reference": payment_reference,
+            "amount": 200,
+            "proof": self.proof(),
+        }
+        with scanned_text(self.receipt_text(payment_reference, 200, "GCash")):
+            preview = self.customer_post(reference, "payments/scan", payload, expect=422)
+            self.assertIn("cannot be below the remaining down payment", str(preview["detail"]).casefold())
+
+        with scanned_text(self.receipt_text(payment_reference, 200, "GCash")):
+            refused = self.customer_post(reference, "payments", payload, expect=422)
+        self.assertIn("cannot be below the remaining down payment", str(refused["detail"]).casefold())
+
+        view = self.admin_view(reference)
+        self.assertEqual(view["payment_submissions"], [])
+        self.assertEqual(view["payments"], [])
+        self.assertEqual(view["payment"]["payment_calculation"]["confirmed_payments"], 0.0)
+        self.assertEqual(view["payment"]["payment_calculation"]["remaining_balance"], 758.0)
+
+    def test_end_to_end_equal_above_and_full_down_payments_are_all_credited(self) -> None:
+        cases = [
+            (379.0, "Down Payment Paid", 379.0),
+            (500.0, "Partially Paid", 258.0),
+            (758.0, "Fully Paid", 0.0),
+        ]
+        for amount, expected_status, expected_balance in cases:
+            with self.subTest(amount=amount):
+                reference = self.place_order(758)
+                payment_reference = unique_ref("E2E")
+                text = self.receipt_text(payment_reference, amount, "GCash")
+
+                result = self.scan(reference, "GCash", payment_reference, text)
+                self.assertEqual(result["required_amount"], 379.0)
+                self.assertEqual(result["down_payment"]["required_down_payment"], 379.0)
+                # A larger payment is valid even though it is above this stage's 50% minimum; the scan flags
+                # the difference instead of rejecting it or capping the amount.
+                if amount == 379.0:
+                    self.assertTrue(result["amount_match"])
+                else:
+                    self.assertFalse(result["amount_match"])
+                    self.assertGreater(result["down_payment"]["stage_excess_amount"], 0)
+                self.assertEqual(result["customer_status_label"], "Payment Verification Pending")
+
+                self.submit(reference, "GCash", payment_reference, text, amount=amount)
+                pending = self.pending_submission(reference)
+                self.assertEqual(pending["amount"], amount)
+                self.assertEqual(pending["customer_status_label"], "Payment Verification Pending")
+                self.assertEqual(self.admin_view(reference)["payments"], [])
+
+                verified = self.verify_submission(reference, amount)
+                calculation = verified["payment"]["payment_calculation"]
+                self.assertEqual(len(verified["payments"]), 1)
+                self.assertEqual(calculation["confirmed_payments"], amount)
+                self.assertEqual(calculation["remaining_balance"], expected_balance)
+                self.assertEqual(calculation["payment_status"], expected_status)
+                self.assertEqual(verified["payment"]["balance"], expected_balance)
+
+    def test_end_to_end_ocr_failure_preserves_receipt_then_manual_entry_is_verified(self) -> None:
+        reference = self.place_order(758)
+        payment_reference = unique_ref("MANUAL")
+        proof = self.proof()
+        error = RuntimeError("OCR engine unavailable")
+
+        with scanned_text(error=error):
+            result = self.customer_post(reference, "payments/scan", {
+                "method": "GCash",
+                "reference": payment_reference,
+                "proof": proof,
+            })
+        self.assertEqual(result["ocr_status"], "Failed")
+        self.assertTrue(result["ocr_failed"])
+        self.assertFalse(result["amount_detected"])
+        self.assertTrue(result["manual_review_required"])
+        self.assertIn("ocr_error", result["ocr"]["flags"])
+        self.assertEqual(result["customer_status_label"], "OCR Failed – Manual Review Required")
+        self.assertEqual(result["ocr_failure_message"], order_services.OCR_FAILURE_MESSAGE)
+        self.assertEqual(
+            result["down_payment"]["payment_status"],
+            "Payment Verification Pending",
+        )
+        self.assertIsNone(result["down_payment"]["actual_amount_paid"])
+        self.assertFalse(result["down_payment"]["amount_detected"])
+
+        with scanned_text(error=error):
+            submitted = self.customer_post(reference, "payments", {
+                "method": "GCash",
+                "reference": payment_reference,
+                "amount": 379,
+                "proof": proof,
+            })
+        self.assertEqual(submitted["payment"]["payment_calculation"]["confirmed_payments"], 0.0)
+
+        pending = self.pending_submission(reference)
+        self.assertTrue(pending["ocr_failed"])
+        self.assertFalse(pending["amount_detected"])
+        self.assertTrue(pending["manual_review_required"])
+        self.assertEqual(pending["customer_status_label"], "OCR Failed – Manual Review Required")
+        self.assertEqual(pending["reference"], payment_reference)
+        self.assertEqual(pending["amount"], 379.0)
+        self.assertEqual(pending["proof"]["name"], "receipt.png")
+        self.assertTrue(pending["proof"]["url"])
+
+        verified = self.verify_submission(reference, 379)
+        calculation = verified["payment"]["payment_calculation"]
+        self.assertEqual(calculation["confirmed_payments"], 379.0)
+        self.assertEqual(calculation["remaining_balance"], 379.0)
+        self.assertEqual(len(verified["payments"]), 1)
+        self.assertEqual(verified["payments"][0]["reference"], payment_reference)
+        self.assertTrue(verified["payments"][0]["receipt"]["url"])
+
+    def test_end_to_end_rejected_reference_can_be_retried_without_a_duplicate_flag(self) -> None:
+        reference = self.place_order(758)
+        payment_reference = unique_ref("RETRY")
+        text = self.receipt_text(payment_reference, 379, "GCash")
+
+        first_proof = self.proof()
+        self.submit(reference, "GCash", payment_reference, text, amount=379, proof=first_proof)
+        submission = self.pending_submission(reference)
+        self.admin_post(reference, f"payment-submissions/{submission['id']}/reject", {
+            "note": "Reference not found in the shop account.",
+        })
+
+        view = self.admin_view(reference)
+        self.assertEqual([item for item in view["payment_submissions"] if item["status"] == "pending"], [])
+        self.assertEqual(view["payments"], [])
+
+        # A rejection releases both claims: the same reference and the same receipt file can be retried.
+        retry_scan = self.scan(reference, "GCash", payment_reference, text, proof=first_proof)
+        self.assertFalse(retry_scan["duplicate_reference"])
+        self.assertEqual(retry_scan["duplicate_message"], "")
+
+        self.customer_post(reference, "payments", {
+            "method": "GCash",
+            "reference": payment_reference,
+            "amount": 379,
+            "proof": first_proof,
+        }, expect=200)
+        retry = self.pending_submission(reference)
+        self.assertEqual(retry["reference"], payment_reference)
+        self.assertEqual(retry["amount"], 379.0)
 
 
 class ReceiptAmountParsingTests(unittest.TestCase):

@@ -352,6 +352,7 @@ class AdminEndpointAccessTests(unittest.TestCase):
         entries = report_services._transaction_entries(order, row)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["verification_result"], "receipt_requested")
+        self.assertEqual(entries[0]["submission_status"], "receipt_requested")
         self.assertFalse(entries[0]["counts_as_paid"])
         summary = report_services.payment_list({"page_size": "all"})
         # synthetic order not in repo; verify summary calculation directly via payment_rows logic

@@ -17,6 +17,8 @@
     const workReviewPanel = document.querySelector("#customer-work-review");
     const actionStrip = document.querySelector("#customer-actions");
     const MAX_PROOF_BYTES = 5 * 1024 * 1024;
+    const OCR_FAILURE_MESSAGE = "Unable to automatically read your receipt. Your uploaded receipt has been saved and will be reviewed by the shop. You may also enter your payment details manually.";
+    const OCR_FAILURE_STATUS = "OCR Failed – Manual Review Required";
     // Replaced by the server value when /api/payment-methods is loaded; never invented in the browser.
     let proofLimitBytes = MAX_PROOF_BYTES;
     let allowedProofTypes = ["image/jpeg", "image/png", "application/pdf"];
@@ -116,6 +118,33 @@
             percentage: number(calc.payment_percentage, null),
         };
     }
+
+    /** Customer-facing wording. The server owns the canonical status; this only translates it for the portal. */
+    function customerPaymentStatus(order, submissionsList = order.payment_submissions || []) {
+        const payment = order.payment || {};
+        const pending = submissionsList.find((item) => item.status === "pending");
+        if (pending) {
+            return pending.customer_status_label
+                || (pending.ocr_failed ? OCR_FAILURE_STATUS : "Payment Verification Pending");
+        }
+        const latest = submissionsList[submissionsList.length - 1];
+        if (latest?.customer_status_label) return latest.customer_status_label;
+        if (latest?.status === "rejected") return "Payment Rejected";
+        const status = payment.customer_status_label
+            || payment.payment_calculation?.payment_status
+            || payment.payment_status
+            || "";
+        if (status === "Down Payment Paid" || status === "Partially Paid" || status === "Excess Payment") {
+            return "Down Payment Satisfied";
+        }
+        return status;
+    }
+
+    const receiptScanFailed = (result) => Boolean(
+        result?.ocr_failed
+        || result?.ocr_status === "Failed"
+        || (result?.ocr?.flags || []).some((flag) => ["ocr_error", "engine_unavailable", "unreadable", "unsupported_type"].includes(flag))
+    );
 
     async function request(url, options = {}) {
         const response = await fetch(url, options);
@@ -490,7 +519,12 @@
         document.querySelector("#request-work-revision").disabled = !canAct || actions.request_work_revision === false;
     }
 
-    const SUBMISSION_LABELS = { pending: "Pending Verification", verified: "Verified", rejected: "Not verified" };
+    const SUBMISSION_LABELS = {
+        pending: "Payment Verification Pending",
+        verified: "Verified",
+        rejected: "Payment Rejected",
+        receipt_requested: "New Receipt Requested",
+    };
 
     /** Payment status, instructions, and the GCash payment form (amount set by the shop). */
     function renderPaymentPanel(order) {
@@ -514,9 +548,9 @@
             typeof payment.order_subtotal === "number" ? ["Order subtotal", money(payment.order_subtotal)] : ["", ""],
             shipping.delivery_province ? ["Shipping fee", money(payment.shipping_fee ?? payment.delivery_fee ?? 0)] : ["", ""],
             shipping.estimated_delivery ? ["Estimated delivery", shipping.estimated_delivery] : ["", ""],
-            cod ? ["Down payment", "Not required (Cash on Delivery, arranged before the down payment rule)"] : [downPaymentLabel(payment), `${money(moneyNow.requiredDown)} · ${moneyNow.status}`],
+            cod ? ["Down payment", "Not required (Cash on Delivery, arranged before the down payment rule)"] : [downPaymentLabel(payment), `${money(moneyNow.requiredDown)} · ${customerPaymentStatus(order, submissionsList)}`],
             cod ? ["", ""] : moneyNow.shortfall > 0.005 ? ["Still due on the down payment", money(moneyNow.shortfall)] : ["", ""],
-            payment.pending_verification ? ["Pending verification", money(payment.pending_verification)] : ["", ""],
+            payment.pending_verification ? ["Submitted, awaiting verification (not counted yet)", money(payment.pending_verification)] : ["", ""],
             moneyNow.excess > 0.005 ? ["Excess — admin review", money(moneyNow.excess)] : ["", ""],
             payment.refunded ? ["Refunded to you", money(payment.refunded)] : ["", ""],
         ]));
@@ -545,8 +579,12 @@
         } else if (!agreed) {
             paymentPanel.append(make("p", "notice", "Payment opens after the shop approves your order and shares the payment instructions."));
         } else if (pending) {
-            const status = pending.verification_status_label || "Pending Verification";
-            paymentPanel.append(make("p", "notice", `Your ${pending.method} payment of ${money(pending.amount)} (reference ${pending.reference}) is ${status}. ${order.status === "Awaiting Down Payment" ? "Your order is confirmed only after the shop verifies it." : "The shop will update your balance once it is verified."} A receipt scan is not proof that funds were received.`));
+            const status = pending.customer_status_label || customerPaymentStatus(order, submissionsList);
+            const reported = pending.amount ? ` You reported ${money(pending.amount)} (reference ${pending.reference}); that amount is not counted as paid yet.` : "";
+            paymentPanel.append(make("p", "notice", `Payment status: ${status}. We received your ${pending.method} receipt and it is waiting for the shop's review.${reported} ${order.status === "Awaiting Down Payment" ? "Your order is confirmed only after the shop verifies it." : "The shop will update your balance once it is verified."} A receipt scan is not proof that funds were received.`));
+            if (pending.ocr_failed) {
+                paymentPanel.append(make("p", "notice notice-warning", pending.ocr_failure_message || OCR_FAILURE_MESSAGE));
+            }
         } else if (due && due.locked) {
             paymentPanel.append(make("p", "notice", due.reason || payment.final_payment_lock || "The remaining balance is locked."));
         } else if (due && order.customer_actions && !order.customer_actions.pay) {
@@ -562,12 +600,15 @@
             const listElement = make("ul", "payment-submissions");
             submissionsList.slice().reverse().forEach((item) => {
                 const entry = make("li", `submission-${item.status}`);
-                const label = item.status_label || SUBMISSION_LABELS[item.status] || item.status;
+                const label = item.customer_status_label || item.status_label || SUBMISSION_LABELS[item.status] || item.status;
                 const amount = typeof item.verified_amount === "number" && Math.abs(item.verified_amount - item.amount) > 0.005
                     ? `${money(item.amount)} (verified ${money(item.verified_amount)})` : money(item.amount);
                 entry.append(make("strong", "", `${amount} · ${item.method} · ${item.reference}`), make("span", "field-hint", `${label} · submitted ${formatDate(item.submitted_at)}`));
                 if (item.verification_status_label && item.verification_status_label !== label) {
                     entry.append(make("span", "status-badge", item.verification_status_label));
+                }
+                if (item.ocr_failed) {
+                    entry.append(make("span", "field-hint", item.ocr_failure_message || OCR_FAILURE_MESSAGE));
                 }
                 if (item.requires_admin_review || item.excess_amount > 0.005) {
                     entry.append(make("span", "status-badge", `Needs admin review · excess ${money(item.excess_amount || 0)}`));
@@ -824,7 +865,7 @@
             submit.disabled = false;
             duplicateDetected = false;
             scanResult.hidden = false;
-            ocrStatus.textContent = "OCR Status: Scanning...";
+            ocrStatus.textContent = "OCR Status: OCR Processing";
             ocrStatus.className = "notice";
             scanResult.replaceChildren(make("p", "field-hint", "Scanning your payment receipt. Please wait..."));
             try {
@@ -842,19 +883,22 @@
                 const ocr = result.ocr || {};
                 const fields = ocr.fields || {};
                 const verification = result.verification || {};
-                const status = result.ocr_status || (fields.reference || fields.amount ? "Detected" : "Failed");
-                ocrStatus.textContent = `OCR Status: ${status}`;
-                ocrStatus.className = status === "Failed" ? "notice" : status === "Detected" ? "notice notice-success" : "notice";
+                const failed = receiptScanFailed(result);
+                ocrStatus.textContent = `OCR Status: ${failed ? OCR_FAILURE_STATUS : "Payment Verification Pending"}`;
+                ocrStatus.className = failed ? "notice notice-warning" : "notice";
                 scanResult.replaceChildren();
                 const detectedAny = Boolean(fields.reference || fields.amount || fields.date_time);
                 const detectedAll = Boolean(fields.reference && fields.amount && fields.date_time);
-                const statusMessage = status === "Failed"
-                    ? "Unable to read this receipt. Please upload a clearer screenshot or enter the details manually."
+                const statusMessage = failed
+                    ? "Your receipt will be sent to the shop for manual review. You can enter the payment details below."
                     : (detectedAny && !detectedAll)
                         ? "Some payment details were detected. Please complete or correct the missing information."
-                        : "Receipt scanned successfully. Please review the detected payment details.";
+                        : "Receipt details were read. They are not confirmed until the shop verifies them.";
                 scanResult.append(make("strong", "", statusMessage));
-                if (status !== "Failed" && Number.isFinite(verification.confidence) && verification.confidence > 0) {
+                if (failed) {
+                    scanResult.append(make("p", "notice notice-warning", result.ocr_failure_message || OCR_FAILURE_MESSAGE));
+                }
+                if (!failed && Number.isFinite(verification.confidence) && verification.confidence > 0) {
                     scanResult.append(make("p", "field-hint", `OCR confidence: ${Math.round(verification.confidence * 100)}%`));
                 }
                 const detected = make("div", "ocr-detected");
@@ -923,20 +967,28 @@
                 } else if (previewShortfall > 0.005) {
                     scanResult.append(make("p", "notice", `The down payment is still short by ${money(previewShortfall)}. Pay at least ${money(due.amount)} (the remaining down payment) to submit a payment; amounts above it are accepted.`));
                 }
-                if (previewMoney.payment_status) {
-                    scanResult.append(make("p", "field-hint", `Status if confirmed: ${previewMoney.payment_status}. Confirmed paid so far: ${money(previewMoney.cumulative_paid || 0)}; balance after: ${money(previewMoney.remaining_balance || 0)}.`));
+                if (failed) {
+                    scanResult.append(make("p", "field-hint", "Status if confirmed: Payment Verification Pending. No amount has been confirmed; the shop will review your receipt."));
+                } else if (previewMoney.payment_status) {
+                    const prefix = previewMoney.amount_detected === false
+                        ? "Status from verified payments so far"
+                        : "Status if the detected amount is confirmed";
+                    scanResult.append(make("p", "field-hint", `${prefix}: ${previewMoney.payment_status}. Confirmed paid so far: ${money(previewMoney.cumulative_paid || 0)}; balance after: ${money(previewMoney.remaining_balance || 0)}.`));
                 }
                 duplicateDetected = Boolean(result.duplicate_reference);
                 if (duplicateDetected) submit.disabled = true;
                 (ocr.notes || []).forEach((note) => scanResult.append(make("p", "field-hint", note)));
-                if (status === "Failed") {
-                    scanResult.append(make("p", "notice", "Unable to detect the reference number. Please upload a clearer payment screenshot or enter the reference number manually."));
+                if (failed) {
+                    scanResult.append(make("p", "field-hint", "Please enter the amount and reference number from your receipt manually, or scan a clearer image. Your receipt is still attached."));
                 }
                 scanResult.append(make("p", "field-hint", "Scanning reads the receipt only. Payment is confirmed after the shop or provider verifies it."));
             } catch (issue) {
-                ocrStatus.textContent = "OCR Status: Failed";
-                ocrStatus.className = "notice";
-                scanResult.replaceChildren(make("p", "notice", issue instanceof Error ? issue.message : "The receipt could not be scanned. The shop will review it."));
+                ocrStatus.textContent = `OCR Status: ${OCR_FAILURE_STATUS}`;
+                ocrStatus.className = "notice notice-warning";
+                scanResult.replaceChildren(
+                    make("p", "notice notice-warning", OCR_FAILURE_MESSAGE),
+                    make("p", "field-hint", issue instanceof Error ? issue.message : "The receipt could not be scanned. You can enter the payment details manually or scan it again.")
+                );
             } finally {
                 scanning = false;
                 scanAgain.disabled = !receiptDataUrl;

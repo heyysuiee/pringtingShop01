@@ -193,14 +193,20 @@ _AMOUNT_LABEL = (
 )
 _AMOUNT_CURRENCY = r"(?:₱[ \t]*|PHP[ \t]*|(?<![A-Za-z])P(?=[ \t]*\d)[ \t]*)"
 _AMOUNT_RE = re.compile(rf"(?:{_AMOUNT_CURRENCY}|{_AMOUNT_LABEL}){_AMOUNT_NUMBER}", re.IGNORECASE)
-_REFERENCE_LABEL = r"(?:reference|ref\.?|transaction|txn|receipt|payment)\s*(?:no\.?|number|id|#)?"
+_REFERENCE_LABEL = r"(?:reference|ref(?:erence)?\s*(?:no|number|num|id|#)?|transaction|txn|receipt|payment|field)\s*(?:no\.?|number|num|id|#)?"
 _REFERENCE_VALUE = r"([A-Z0-9][A-Z0-9\-/]{3,40})"
 _REFERENCE_RES = (
-    # A label with a delimiter ("Reference: ABC123", "Txn No. ABC123").
+    # A label with a delimiter ("Reference: ABC123", "Txn No. ABC123", "Field: 12345").
     re.compile(rf"\b({_REFERENCE_LABEL})[ \t]*[:#=.\-][ \t]*{_REFERENCE_VALUE}\b", re.I),
     # A label followed by a space ("Reference ABC123"); [ \t] never crosses the newline into the next label.
     re.compile(rf"\b({_REFERENCE_LABEL})[ \t]+{_REFERENCE_VALUE}\b", re.I),
+    # GCash/Maya receipts often use only a short label ("Ref: 1234", "Txn 1234") or put the label below the value.
+    re.compile(rf"\b({_REFERENCE_LABEL})[ \t]*\n[ \t]*{_REFERENCE_VALUE}\b", re.I),
+    # A label with OCR-confused delimiter ("Ref 0 1234", "Reference - 1234").
+    re.compile(rf"\b({_REFERENCE_LABEL})[ \t]+(?:0|O|o|\-)[ \t]*{_REFERENCE_VALUE}\b", re.I),
     re.compile(rf"(?:^|\s)#({_REFERENCE_VALUE})", re.I | re.M),
+    # Some wallet receipts print only the reference number without a label.
+    re.compile(rf"(?:^|\n)[ \t]*({_REFERENCE_VALUE})[ \t]*(?:\n|$)", re.M),
 )
 _NON_REFERENCE_CONTEXT = re.compile(
     r"\b(?:mobile|phone|contact|account|acct|wallet|card|number\s*to|send\s*to|amount|total|balance|due|fee|php|₱)\b",

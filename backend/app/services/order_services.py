@@ -726,6 +726,67 @@ def payment_calculation(order: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+# An extraction failure is a review problem, never a money decision. These flags come from the OCR layer only;
+# a receipt that says "Failed" is a different check and is handled by the verification comparison.
+OCR_FAILURE_FLAGS = {"ocr_error", "engine_unavailable", "unreadable", "unsupported_type"}
+OCR_FAILURE_MESSAGE = (
+    "Unable to automatically read your receipt. Your uploaded receipt has been saved and will be reviewed by "
+    "the shop. You may also enter your payment details manually."
+)
+
+
+def ocr_flags(ocr: Any) -> set[str]:
+    if isinstance(ocr, Mapping):
+        return {str(flag) for flag in (ocr.get("flags") or [])}
+    return {str(flag) for flag in (getattr(ocr, "flags", None) or [])}
+
+
+def ocr_amount_detected(ocr: Any) -> bool:
+    fields = ocr.get("fields") if isinstance(ocr, Mapping) else getattr(ocr, "fields", None)
+    return bool(str((fields or {}).get("amount") or "").strip())
+
+
+def ocr_failure_detected(ocr: Any, verification: Any = None) -> bool:
+    """True only when the shop could not read the receipt, not when the receipt says a payment failed."""
+    flags = ocr_flags(ocr)
+    if flags & OCR_FAILURE_FLAGS:
+        return True
+    if "failed_status" in flags or "conflicting_status" in flags:
+        return False
+    if isinstance(verification, Mapping) and not ocr_amount_detected(ocr):
+        fields = ocr.get("fields") if isinstance(ocr, Mapping) else getattr(ocr, "fields", None)
+        if str((fields or {}).get("status") or "").casefold() == "failed":
+            return False
+        return str(verification.get("status") or "").casefold() == verification_services.ADMIN_REVIEW
+    return False
+
+
+def customer_payment_status_label(order: Mapping[str, Any], item: Mapping[str, Any] | None = None) -> str:
+    """One of the customer-facing payment states, without changing the canonical stored status.
+
+    ``item`` scopes the label to one history row; without it the helper describes the order as a whole.
+    """
+    if item is None:
+        pending = pending_submissions(order)
+        if pending:
+            if any(ocr_failure_detected(entry.get("ocr"), entry.get("verification")) for entry in pending):
+                return "OCR Failed – Manual Review Required"
+            return "Payment Verification Pending"
+        history = submissions(order)
+        if history:
+            latest = history[-1]
+            if latest.get("status") == "rejected":
+                return "Payment Rejected"
+            if latest.get("status") == "receipt_requested" and ocr_failure_detected(latest.get("ocr"), latest.get("verification")):
+                return "OCR Failed – Manual Review Required"
+    status = payment_calculation(order)["payment_status"]
+    if status == FULLY_PAID:
+        return "Fully Paid"
+    if status in {DOWN_PAYMENT_PAID, PARTIALLY_PAID, EXCESS_PAYMENT}:
+        return "Down Payment Satisfied"
+    return status
+
+
 def work_approval(order: Mapping[str, Any]) -> dict[str, Any]:
     value = order.get("work_approval")
     return json_copy(value) if isinstance(value, dict) else {}
@@ -890,6 +951,9 @@ def payment_breakdown(order: Mapping[str, Any]) -> dict[str, Any]:
         "next_payment": next_customer_payment(order),
         # New workflow fields: payment progress is independent of work progress.
         "payment_status": payment_status(order),
+        # The short, customer-facing wording used by the portal. Canonical statuses remain unchanged so older
+        # reports and filters keep working.
+        "customer_status_label": customer_payment_status_label(order),
         "work_status": work_status(order),
         "down_payment_verified": down_payment_met(order),
         "work_approved": work_approved(order),
@@ -1236,6 +1300,8 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
     result["payment_submissions"] = []
     for item in submissions(order):
         stored_verification = item.get("verification") if isinstance(item.get("verification"), dict) else {}
+        item_ocr = item.get("ocr") or {}
+        item_ocr_failed = ocr_failure_detected(item_ocr, stored_verification)
         view = {
             "id": item["id"],
             "amount": item["amount"],
@@ -1259,7 +1325,21 @@ def order_view(order: Mapping[str, Any], admin: bool = False) -> dict[str, Any]:
             "verification_method": item.get("verification_method") or stored_verification.get("verification_method", "manual"),
             "excess_amount": item.get("excess_amount", 0.0),
             "requires_admin_review": bool(item.get("requires_admin_review", False)),
-            "ocr": item.get("ocr") or {},
+            "ocr": item_ocr,
+            "ocr_failed": item_ocr_failed,
+            "amount_detected": ocr_amount_detected(item_ocr),
+            "manual_review_required": item_ocr_failed or str(stored_verification.get("status") or "") in {
+                verification_services.ADMIN_REVIEW,
+                verification_services.DUPLICATE,
+                verification_services.REJECTED,
+            },
+            "ocr_failure_message": OCR_FAILURE_MESSAGE if item_ocr_failed else "",
+            "customer_status_label": (
+                "Payment Rejected" if item.get("status") == "rejected"
+                else "OCR Failed – Manual Review Required" if item_ocr_failed and item.get("status") != "verified"
+                else "Payment Verification Pending" if item.get("status") in {"pending", "receipt_requested"}
+                else customer_payment_status_label(order, item)
+            ),
             "verification": stored_verification,
             # Customers see the note text and time in their payment history, but not the shop
             # actor's private account details that the full admin record carries.
@@ -2192,11 +2272,9 @@ def scan_customer_payment(reference: str, email: Any, payload: Mapping[str, Any]
     duplicate_check = checks.get("duplicate", {})
     amount_check = checks.get("amount", {})
     reference_field = str((ocr_view.get("fields") or {}).get("reference") or "").strip()
-    ocr_status = "Detected"
-    if "ocr_error" in (ocr_view.get("flags") or []) or "engine_unavailable" in (ocr_view.get("flags") or []):
-        ocr_status = "Failed"
-    elif "unreadable" in (ocr_view.get("flags") or []):
-        ocr_status = "Failed"
+    ocr_failed = ocr_failure_detected(ocr_view, verification)
+    amount_detected = ocr_amount_detected(ocr_view)
+    ocr_status = "Failed" if ocr_failed else "Detected"
     duplicate_reference = duplicate_check.get("state") == "inconsistent"
     reference_message = ""
     if reference_field:
@@ -2212,6 +2290,15 @@ def scan_customer_payment(reference: str, email: Any, payload: Mapping[str, Any]
         "stage": due["stage"],
         "label": due["label"],
         "ocr_status": ocr_status,
+        "ocr_failed": ocr_failed,
+        "amount_detected": amount_detected,
+        "manual_review_required": ocr_failed or str(verification.get("status") or "") in {
+            verification_services.ADMIN_REVIEW,
+            verification_services.DUPLICATE,
+            verification_services.REJECTED,
+        },
+        "ocr_failure_message": OCR_FAILURE_MESSAGE if ocr_failed else "",
+        "customer_status_label": "OCR Failed – Manual Review Required" if ocr_failed else "Payment Verification Pending",
         "ocr": ocr_view,
         "verification": verification,
         "duplicate_reference": duplicate_reference,

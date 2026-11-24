@@ -283,9 +283,10 @@
     }
 
     /** Client-side preview only; the server recomputes and stores this when the payment is confirmed. */
-    function paymentStatusAfter(total, requiredDown, paidAfter, cod = false) {
+    function paymentStatusAfter(total, requiredDown, paidAfter, cod = false, excess = 0) {
         if (total === null) return "No Payment";
-        if (!cod && paidAfter > total + MONEY_TOLERANCE) return "Excess Payment";
+        // Match the server: excess already held on the order, or created by this confirmation, wins.
+        if (excess > MONEY_TOLERANCE || paidAfter > total + MONEY_TOLERANCE) return "Excess Payment";
         if (paidAfter >= total - MONEY_TOLERANCE) return "Fully Paid";
         if (paidAfter <= MONEY_TOLERANCE) return "No Payment";
         const required = cod ? 0 : requiredDown || 0;
@@ -1778,7 +1779,12 @@
     function submissionHistory(order) {
         const items = order.payment_submissions || [];
         if (!items.length) return null;
-        const label = { pending: "Pending verification", verified: "Verified", rejected: "Rejected" };
+        const label = {
+            pending: "Pending verification",
+            verified: "Verified",
+            rejected: "Rejected",
+            receipt_requested: "New receipt requested",
+        };
         return h("div", { className: "submission-history" },
             h("h4", { text: `Customer payment submissions (${items.length})` }),
             h("div", { className: "table-wrap" }, h("table", { className: "data-table compact-table" },
@@ -2375,11 +2381,13 @@
             }
             const paidAfter = Math.round((moneyNow.paid + value) * 100) / 100;
             const exact = moneyNow.total === null ? null : Math.round((moneyNow.total - paidAfter) * 100) / 100;
-            const statusAfter = paymentStatusAfter(moneyNow.total, down, paidAfter, cod);
-            const review = exact !== null && exact < -MONEY_TOLERANCE;
+            const statusAfter = paymentStatusAfter(moneyNow.total, down, paidAfter, cod, moneyNow.excess);
+            const newExcess = exact !== null && exact < -MONEY_TOLERANCE ? -exact : 0;
+            const heldExcess = moneyNow.excess > MONEY_TOLERANCE ? moneyNow.excess : 0;
+            const review = newExcess > 0 || heldExcess > 0;
             amountPreview.className = `notice-card${review ? " notice-warning" : ""}`;
             amountPreview.textContent = `After this payment: cumulative confirmed ${money(paidAfter)}, balance ${money(Math.max(0, exact ?? 0))}, status ${statusAfter}.`
-                + (review ? ` Excess of ${money(-exact)} over the order total will be flagged for admin review.` : "")
+                + (review ? ` Excess of ${money(Math.max(newExcess, heldExcess))} over the order total is held for admin review.` : "")
                 + (!cod && moneyNow.total !== null && paidAfter < down - MONEY_TOLERANCE
                     ? ` Down payment still short by ${money(Math.round((down - paidAfter) * 100) / 100)}.` : "");
         }
@@ -2515,8 +2523,10 @@
             const paidAfter = Math.round((moneyNow.paid + value) * 100) / 100;
             const remainingExact = moneyNow.total === null ? null : Math.round((moneyNow.total - paidAfter) * 100) / 100;
             const remaining = Math.max(0, remainingExact ?? 0);
-            const statusAfter = paymentStatusAfter(moneyNow.total, down, paidAfter, cod);
-            const adminReview = remainingExact !== null && remainingExact < -MONEY_TOLERANCE;
+            const statusAfter = paymentStatusAfter(moneyNow.total, down, paidAfter, cod, moneyNow.excess);
+            const newExcess = remainingExact !== null && remainingExact < -MONEY_TOLERANCE ? -remainingExact : 0;
+            const heldExcess = moneyNow.excess > MONEY_TOLERANCE ? moneyNow.excess : 0;
+            const adminReview = newExcess > 0;
             const changes = [];
             if (Math.abs(value - initial.amount) > 0.005) changes.push(["Amount", `${fmtAmount(initial.amount)} → ${fmtAmount(value)}`]);
             if (method.value !== initial.method) changes.push(["Method", `${initial.method} → ${method.value}`]);
@@ -2538,7 +2548,7 @@
                     ["Cumulative after payment", money(paidAfter)],
                     ["Remaining balance after", money(remaining)],
                     ["Payment status after", statusAfter],
-                    ...(adminReview ? [["Admin review", `Excess of ${money(-remainingExact)} over the order total`]] : []),
+                    ...(adminReview || heldExcess > 0 ? [["Admin review", `Excess of ${money(Math.max(newExcess, heldExcess))} over the order total is held for review`]] : []),
                 ],
             });
             if (!answer) return;
@@ -3097,7 +3107,11 @@
         const basis = verification.verification_basis_label || row.verification_basis_label || "";
         const checks = (verification.checks || []).map((check) => h("li", { className: `ocr-check ocr-${check.state}` },
             h("strong", { text: `${check.label}: ` }), h("span", { text: check.detail })));
-        const pending = row.entry_type === "submission";
+        // A receipt_requested row is still "Pending Verification" for legacy filters, but the customer has
+        // been asked to upload a new receipt. It cannot be verified until that new submission exists.
+        const pending = row.entry_type === "submission"
+            && row.submission_status === "pending"
+            && row.verification_result !== "receipt_requested";
 
         host.replaceChildren(
             h("h2", { className: "dialog-heading", text: "Payment verification details" }),
@@ -3178,7 +3192,8 @@
                 h("button", { className: "button button-small", type: "button", text: "Close", onclick: () => UI.closeModal() }),
                 h("button", {
                     className: "button button-primary", type: "button",
-                    text: pending ? "Review & verify in order" : "Open payment history",
+                    text: pending ? "Review & verify in order"
+                        : row.verification_result === "receipt_requested" ? "Awaiting new receipt" : "Open payment history",
                     onclick: () => openOrder(row.reference, { focus: pending ? "verify" : "payments" }),
                 })),
         );
@@ -3209,7 +3224,11 @@
         let balances = [];
         /** Every row opens the verification record: receipt, extracted details, calculations, and checks. */
         const verificationAction = (row) => {
-            const pending = row.entry_type === "submission" && Boolean(row.submission_id) && row.verification_status === "Pending Verification";
+            const pending = row.entry_type === "submission"
+                && Boolean(row.submission_id)
+                && row.submission_status === "pending"
+                && row.verification_status === "Pending Verification"
+                && row.verification_result !== "receipt_requested";
             return h("button", {
                 className: `button button-small${pending ? " button-primary" : ""}`,
                 type: "button",
