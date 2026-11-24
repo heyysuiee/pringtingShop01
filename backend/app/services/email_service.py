@@ -60,10 +60,10 @@ def send_password_reset_code(recipient: str, name: str, code: str, lifetime_minu
     greeting = f"Hello {name}," if name else "Hello,"
     body = (
         f"{greeting}\n\n"
-        f"Your ImPRESSion PrintShop verification code is: {code}\n\n"
+        f"Your ImPRESS Print Works verification code is: {code}\n\n"
         f"The code expires in {lifetime_minutes} minutes and can be used once. If you did not request a password reset, "
         "you can ignore this email; your password will not change.\n\n"
-        "For your security, never share this code with anyone. ImPRESSion PrintShop staff will never ask for it."
+        "For your security, never share this code with anyone. ImPRESS Print Works staff will never ask for it."
     )
     safe_greeting = html.escape(greeting)
     html_body = f"""\
@@ -72,7 +72,7 @@ def send_password_reset_code(recipient: str, name: str, code: str, lifetime_minu
 <body style="margin:0;padding:24px;background:#f4f4f4;font-family:Segoe UI,Arial,sans-serif;color:#2b2b2b;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #d4d4d4;border-radius:12px;">
     <tr><td style="padding:28px 32px 8px;">
-      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESSion PrintShop</p>
+      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESS Print Works</p>
       <p style="margin:4px 0 0;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#5c5c5c;">Password reset</p>
     </td></tr>
     <tr><td style="padding:16px 32px;">
@@ -82,11 +82,11 @@ def send_password_reset_code(recipient: str, name: str, code: str, lifetime_minu
       <p style="margin:0 0 12px;font-size:14px;line-height:1.6;">The code expires in {lifetime_minutes} minutes and can be used once.</p>
       <p style="margin:0;font-size:13px;line-height:1.6;color:#5c5c5c;">If you did not request a password reset, you can ignore this email; your password will not change. Never share this code with anyone.</p>
     </td></tr>
-    <tr><td style="padding:12px 32px 28px;font-size:12px;color:#5c5c5c;">This is an automated message from ImPRESSion PrintShop.</td></tr>
+    <tr><td style="padding:12px 32px 28px;font-size:12px;color:#5c5c5c;">This is an automated message from ImPRESS Print Works.</td></tr>
   </table>
 </body>
 </html>"""
-    send_message(recipient, "Your ImPRESSion PrintShop password reset code", body, html_body)
+    send_message(recipient, "Your ImPRESS Print Works password reset code", body, html_body)
 
 
 def send_email_verification_code(recipient: str, name: str, code: str, lifetime_minutes: int) -> None:
@@ -94,7 +94,7 @@ def send_email_verification_code(recipient: str, name: str, code: str, lifetime_
     greeting = f"Hello {name}," if name else "Hello,"
     body = (
         f"{greeting}\n\n"
-        f"Your ImPRESSion PrintShop email verification code is: {code}\n\n"
+        f"Your ImPRESS Print Works email verification code is: {code}\n\n"
         f"Enter this code on the Verify Email page within {lifetime_minutes} minutes to finish creating your account. "
         "If you did not create this account, you can ignore this email; no one can sign in until the code is entered.\n\n"
         "For your security, never share this code with anyone."
@@ -106,7 +106,7 @@ def send_email_verification_code(recipient: str, name: str, code: str, lifetime_
 <body style="margin:0;padding:24px;background:#f4f4f4;font-family:Segoe UI,Arial,sans-serif;color:#2b2b2b;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #d4d4d4;border-radius:12px;">
     <tr><td style="padding:12px 32px;">
-      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESSion PrintShop</p>
+      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESS Print Works</p>
       <p style="margin:4px 0 0;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#5c5c5c;">Email verification</p>
     </td></tr>
     <tr><td style="padding:8px 32px 24px;">
@@ -119,13 +119,13 @@ def send_email_verification_code(recipient: str, name: str, code: str, lifetime_
   </table>
 </body>
 </html>"""
-    send_message(recipient, "Verify your ImPRESSion PrintShop email address", body, html_body)
+    send_message(recipient, "Verify your ImPRESS Print Works email address", body, html_body)
 
 
 def send_admin_password_reset_code(recipient: str, code: str, lifetime_minutes: int) -> None:
     body = (
         "Hello Administrator,\n\n"
-        f"Your ImPRESSion PrintShop administrator verification code is: {code}\n\n"
+        f"Your ImPRESS Print Works administrator verification code is: {code}\n\n"
         f"The code expires in {lifetime_minutes} minutes and can be used once. If you did not request "
         "a password reset, you can ignore this email; the administrator password will not change.\n\n"
         "For your security, never share this code with anyone."
@@ -136,7 +136,7 @@ def send_admin_password_reset_code(recipient: str, code: str, lifetime_minutes: 
 <body style="margin:0;padding:24px;background:#f4f4f4;font-family:Segoe UI,Arial,sans-serif;color:#2b2b2b;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #d4d4d4;border-radius:12px;">
     <tr><td style="padding:28px 32px 8px;">
-      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESSion PrintShop</p>
+      <p style="margin:0;font-family:Georgia,serif;font-size:22px;">ImPRESS Print Works</p>
       <p style="margin:4px 0 0;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#5c5c5c;">Administrator password reset</p>
     </td></tr>
     <tr><td style="padding:16px 32px;">
@@ -146,8 +146,8 @@ def send_admin_password_reset_code(recipient: str, code: str, lifetime_minutes: 
       <p style="margin:0 0 12px;font-size:14px;line-height:1.6;">The code expires in {lifetime_minutes} minutes and can be used once.</p>
       <p style="margin:0;font-size:13px;line-height:1.6;color:#5c5c5c;">If you did not request a password reset, you can ignore this email; the administrator password will not change. Never share this code with anyone.</p>
     </td></tr>
-    <tr><td style="padding:12px 32px 28px;font-size:12px;color:#5c5c5c;">This is an automated message from ImPRESSion PrintShop.</td></tr>
+    <tr><td style="padding:12px 32px 28px;font-size:12px;color:#5c5c5c;">This is an automated message from ImPRESS Print Works.</td></tr>
   </table>
 </body>
 </html>"""
-    send_message(recipient, "Your ImPRESSion PrintShop administrator password reset code", body, html_body)
+    send_message(recipient, "Your ImPRESS Print Works administrator password reset code", body, html_body)

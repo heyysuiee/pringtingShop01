@@ -139,10 +139,6 @@ body.admin-page {
     color: var(--text-primary);
 }
 
-.topbar-date {
-    color: var(--text-secondary);
-    font-weight: 600;
-}
 
 .icon-button {
     display: inline-grid;
@@ -1035,10 +1031,6 @@ button.notification-item:hover {
 }
 
 @media (max-width: 680px) {
-    .topbar-date {
-        display: none;
-    }
-
     .stat-card .stat-value {
         font-size: 24px;
     }

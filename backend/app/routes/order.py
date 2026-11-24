@@ -74,6 +74,13 @@ def account_order(reference: str, request: Request) -> dict[str, Any]:
     return order_services.account_order(claims["sub"], reference)
 
 
+@router.get("/api/account/orders/{reference}/state")
+def account_order_state(reference: str, request: Request) -> dict[str, Any]:
+    """Lightweight change detection for a customer's open order."""
+    claims = require_session(request, "customer")
+    return order_services.account_order_state(claims["sub"], reference)
+
+
 @router.get("/api/orders/{reference}")
 def customer_order(reference: str, request: Request) -> dict[str, Any]:
     claims = require_session(request, "customer")
@@ -202,6 +209,13 @@ def admin_orders(request: Request) -> dict[str, Any]:
 def admin_order(reference: str, request: Request) -> dict[str, Any]:
     require_admin(request)
     return order_services.admin_order(reference)
+
+
+@router.get("/api/admin/orders/{reference}/state")
+def admin_order_state(reference: str, request: Request) -> dict[str, Any]:
+    """Lightweight change detection for the order open in the admin workspace."""
+    require_admin(request)
+    return order_services.admin_order_state(reference)
 
 
 @router.get("/api/admin/dashboard")

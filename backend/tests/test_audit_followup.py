@@ -246,6 +246,7 @@ class FinancialAccuracyTests(AuditTestCase):
         payment_number = len(over["payments"])
         order_total = float(over["payment"]["total_amount"])
         self.assertEqual(over["payment"]["payment_status"], "Excess Payment")
+        self.assertTrue(self.admin_view(reference)["actions"]["complete_requires_payment"])
         self.admin_post(reference, "status", {"status": "Completed"}, expect=409)
 
         resolved = self.admin_post(
@@ -298,7 +299,10 @@ class FinancialAccuracyTests(AuditTestCase):
         self.admin_post(reference, f"refunds/{refund_id}/processing")
         self.admin_post(reference, f"refunds/{refund_id}/fail", {"reason": "Wrong number"})
         failed = report_services.payment_summary([stored_order(reference)], [], None, None)
-        self.assertEqual((failed["refunds_completed"], failed["net_collections"], failed["refunds_in_progress"]), (0.0, 1000.0, 250.0))
+        self.assertEqual(
+            (failed["refunds_completed"], failed["net_collections"], failed["refunds_in_progress"], failed.get("refunds_failed")),
+            (0.0, 1000.0, 0.0, 250.0),
+        )
         self.admin_post(reference, f"refunds/{refund_id}/processing", {"confirmed_not_sent": True})
         self.admin_post(reference, f"refunds/{refund_id}/complete", operations.RefundTests.complete_body(self, **operations.RECIPIENT))
         partial = report_services.payment_summary([stored_order(reference)], [], None, None)

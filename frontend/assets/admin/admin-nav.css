@@ -11,9 +11,8 @@
     min-height: 0;
     align-content: start;
     gap: 3px;
-    margin-right: -6px;
-    padding-right: 6px;
     overflow-y: auto;
+    overflow-x: hidden;
     overscroll-behavior: contain;
     scrollbar-width: thin;
 }
@@ -158,14 +157,106 @@
     margin-left: auto;
 }
 
-/* Tablet (681–980px) shows the sidebar at 232px with slightly larger text. */
-@media (min-width: 681px) and (max-width: 980px) {
+/* Collapsed icon rail: show group submenus as flyouts. */
+@media (max-width: 980px) and (min-width: 681px) {
+    .sidebar {
+        overflow: visible;
+    }
+
+    .sidebar-nav {
+        overflow: visible;
+    }
+
+    .nav-group {
+        position: relative;
+    }
+
     .nav-group-toggle {
-        font-size: 13px;
+        width: 48px;
+        justify-content: center;
+        padding: 0;
+        font-size: 0;
+        gap: 0;
+    }
+
+    .nav-group-toggle .nav-icon {
+        width: auto;
+        font-size: 18px;
+    }
+
+    .nav-group-toggle .nav-label,
+    .nav-group-toggle .nav-chevron {
+        display: none;
+    }
+
+    .nav-group-toggle .nav-group-count {
+        position: absolute;
+        top: 2px;
+        right: 1px;
+        min-width: 15px;
+        height: 15px;
+        margin: 0;
+        padding: 0 3px;
+        font-size: 8px;
+    }
+
+    .nav-group-toggle[aria-expanded="true"] .nav-group-count {
+        display: inline-grid;
+    }
+
+    .nav-submenu {
+        display: none;
+        position: absolute;
+        left: calc(100% + 8px);
+        top: -4px;
+        min-width: 220px;
+        padding: 8px;
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--bg-elevated, #fff);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+        z-index: 40;
+    }
+
+    .nav-submenu::before {
+        display: none;
+    }
+
+    .nav-group:hover > .nav-submenu,
+    .nav-group:focus-within > .nav-submenu {
+        display: grid;
+    }
+
+    .nav-submenu[hidden] {
+        display: none;
+    }
+
+    .nav-group:hover > .nav-submenu[hidden],
+    .nav-group:focus-within > .nav-submenu[hidden] {
+        display: grid;
     }
 
     .sidebar-nav .nav-submenu a {
-        font-size: 12.5px;
+        width: auto;
+        justify-content: flex-start;
+        min-height: 36px;
+        padding: 0 10px;
+        font-size: 12px;
+        gap: 8px;
+    }
+
+    .sidebar-nav .nav-submenu a.active::before {
+        inset: 8px auto 8px 0;
+    }
+
+    .sidebar-nav .nav-submenu .nav-count {
+        position: static;
+        min-width: 20px;
+        height: 20px;
+        margin-left: auto;
+        padding: 0 5px;
+        font-size: 10px;
     }
 }
 

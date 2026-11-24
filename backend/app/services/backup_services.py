@@ -295,7 +295,7 @@ def create_backup(actor: str) -> tuple[bytes, str, dict[str, Any]]:
     document = {
         "format": FORMAT,
         "version": VERSION,
-        "application": "ImPRESSion PrintShop",
+        "application": "ImPRESS Print Works",
         "created_at": created_at,
         "created_by": actor,
         "database": _database_kind(),
@@ -331,9 +331,9 @@ def validate_backup(document: Any) -> tuple[dict[str, Any], dict[str, bytes], in
     base64 can reach the restore step.
     """
     if not isinstance(document, dict):
-        raise _invalid("it is not an ImPRESSion PrintShop backup.")
+        raise _invalid("it is not an ImPRESS Print Works backup.")
     if document.get("format") != FORMAT:
-        raise _invalid("it is not an ImPRESSion PrintShop backup.")
+        raise _invalid("it is not an ImPRESS Print Works backup.")
     version = document.get("version")
     if isinstance(version, bool) or not isinstance(version, int) or version not in SUPPORTED_VERSIONS:
         raise _invalid(f"backup version {document.get('version')!r} is not supported.")

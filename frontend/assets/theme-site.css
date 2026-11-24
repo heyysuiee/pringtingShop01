@@ -2015,3 +2015,32 @@ textarea:disabled {
         grid-column: auto;
     }
 }
+
+
+/* ==========================================================================
+   ImPRESS Print Works — original artwork lockups
+   ========================================================================== */
+.brand-link .brand-logo,
+.auth-brand .auth-brand-logo,
+.footer-brand .footer-brand-logo {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: none;
+    object-fit: contain;
+    object-position: center;
+}
+
+.brand-link .brand-logo { height: 34px; }
+.brand-link .brand-logo-small { display: none; height: 42px; }
+
+.auth-brand .auth-brand-logo { height: 46px; }
+
+.footer-brand { text-decoration: none; }
+.footer-brand .footer-brand-logo { height: 40px; }
+
+@media (max-width: 520px) {
+    .brand-link .brand-logo-wide { display: none; }
+    .brand-link .brand-logo-small { display: block; }
+    .footer-brand .footer-brand-logo { height: 34px; }
+}

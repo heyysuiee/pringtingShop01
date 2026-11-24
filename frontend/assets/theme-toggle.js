@@ -1,5 +1,5 @@
 /* ==========================================================================
-   ImPRESSion PrintShop — theme mode toggle.
+   ImPRESS Print Works — theme mode toggle.
    Sets data-theme on <html>, remembers the preference in localStorage, and
    injects the same accessible button into customer and admin pages.
    Loaded in <head> (without defer) so the saved theme is applied before paint.
@@ -9,6 +9,13 @@
 
     var STORAGE_KEY = "impress-theme";
     var root = document.documentElement;
+    /* Live logos are crops of the preserved original artwork. The artwork keeps its
+       black background in every theme, so there are no light/dark file variants. */
+    var BRAND_LOGOS = {
+        horizontal: "/assets/image/brand/logo-horizontal.jpg",
+        compact: "/assets/image/brand/logo-horizontal.jpg",
+        icon: "/assets/image/brand/logo-icon.jpg"
+    };
 
     function readTheme() {
         try {
@@ -23,6 +30,14 @@
         if (meta) {
             meta.setAttribute("content", theme === "dark" ? "#08090D" : "#FAF8F4");
         }
+    }
+
+    function syncBrandLogos() {
+        document.querySelectorAll("img[data-brand-logo]").forEach(function (image) {
+            var next = BRAND_LOGOS[image.getAttribute("data-brand-logo")];
+            if (!next) return;
+            if (image.getAttribute("src") !== next) image.setAttribute("src", next);
+        });
     }
 
     function syncButton(theme) {
@@ -43,6 +58,7 @@
         root.setAttribute("data-theme", theme);
         updateMeta(theme);
         syncButton(theme);
+        syncBrandLogos();
 
         if (persist) {
             try {
@@ -122,10 +138,15 @@
 
     applyTheme(readTheme(), false);
 
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", mountButton);
-    } else {
+    function mountAll() {
         mountButton();
+        syncBrandLogos();
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", mountAll);
+    } else {
+        mountAll();
     }
 
     window.addEventListener("storage", function (event) {

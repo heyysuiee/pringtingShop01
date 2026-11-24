@@ -86,6 +86,7 @@
             response = await fetch(url, {
                 method,
                 credentials: "same-origin",
+                cache: "no-store",
                 headers: body === undefined ? { Accept: "application/json" } : { "Content-Type": "application/json", Accept: "application/json" },
                 body: body === undefined ? undefined : JSON.stringify(body),
             });
@@ -93,7 +94,9 @@
             throw new Error("The server could not be reached. Check the connection and try again.");
         }
         if (response.status === 401) {
-            window.location.assign("/admin/login");
+            // Return to the exact admin page after signing in again instead of the Dashboard.
+            const target = window.location.pathname + window.location.search;
+            window.location.assign(`/admin/login?${new URLSearchParams({ next: target })}`);
             throw new Error("Your administrator session has ended. Please sign in again.");
         }
         if (response.status === 204) return null;

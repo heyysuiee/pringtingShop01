@@ -1,4 +1,4 @@
-"""Customer support chatbot (ImPRESSion Assistant): answers from live data, order privacy, AI handling, admin tools.
+"""Customer support chatbot (ImPRESS Assistant): answers from live data, order privacy, AI handling, admin tools.
 
 Scenarios required for the chatbot:
 1. Available services            5. A signed-in customer checks their order
@@ -121,7 +121,7 @@ class ShopInformationTests(ChatbotTestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["enabled"])
-        self.assertEqual(data["assistant_name"], "ImPRESSion Assistant")
+        self.assertEqual(data["assistant_name"], "ImPRESS Assistant")
         self.assertTrue(data["welcome_message"])
         self.assertNotIn("key", json.dumps(data).lower().replace("max_message", ""))
 

@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * ImPRESSion PrintShop admin application.
+ * ImPRESS Print Works admin application.
  * Every figure, table, and action uses the backend API; nothing on these pages is sample data.
  * Shared building blocks (tables, charts, image viewer, dialogs) live in admin-core.js.
  */
@@ -152,6 +152,9 @@
     };
     // Called after an order action so the visible table/report shows the saved change.
     let refreshActiveView = () => {};
+    let reportSummaryState = null;
+    // One watcher for the order modal; replaced when another order is opened, released when it closes.
+    let orderWatch = null;
 
     // ================================================================ small builders
 
@@ -317,10 +320,27 @@
         },
     };
 
+    // Per-order deep links are served by the Order Management shell. Without this check the final path
+    // segment ("payments") would be mistaken for the Payment Monitoring view on Back/Forward.
+    const ADMIN_ORDER_PATH = /^\/admin\/orders\/([^/]+)(\/payments)?\/?$/;
+    function adminOrderRoute() {
+        const match = ADMIN_ORDER_PATH.exec(window.location.pathname);
+        if (!match) return null;
+        try { return { reference: decodeURIComponent(match[1]), focus: match[2] ? "payments" : "" }; }
+        catch { return null; }
+    }
+
     function viewFromLocation() {
+        // history.state and the path describe the view being revisited on Back/Forward; the server-provided
+        // body view is the fallback for a fresh load of a per-order deep link such as /admin/orders/<ref>.
+        const stateView = window.history.state?.view;
+        if (LABELS[stateView]) return stateView;
+        if (ADMIN_ORDER_PATH.test(window.location.pathname)) return "orders";
         const segment = window.location.pathname.split("/").filter(Boolean).pop();
         const route = VIEW_ALIASES[segment] || segment;
-        return LABELS[route] ? route : "dashboard";
+        if (LABELS[route]) return route;
+        const bodyView = document.body.dataset.adminView;
+        return LABELS[bodyView] ? bodyView : "dashboard";
     }
 
     /** The open tab of a SECTION_TABS view, read from the URL hash ("" for other views). */
@@ -353,13 +373,17 @@
         const nextView = LABELS[view] ? view : "dashboard";
         const path = nextView === "dashboard" ? "/admin/dashboard" : `/admin/${nextView}`;
         const config = SECTION_TABS[nextView];
-        const section = config?.tabs.includes(tab) ? tab : "";
+        const hashTab = config?.tabs.includes(window.location.hash.slice(1)) ? window.location.hash.slice(1) : "";
+        const section = config ? (config.tabs.includes(tab) ? tab : hashTab) : "";
         const hash = section && section !== config.fallback ? `#${section}` : "";
         closeSidebar();
         closeNotificationPanel();
         if (nextView === activeView && window.location.pathname === path) {
-            if (section) {
-                config.open(section);
+            if (config) {
+                const target = section || config.fallback;
+                if (addHistory) window.history.replaceState({ view: nextView }, "", path + hash);
+                config.open(target);
+                markActiveNavigation();
                 return;
             }
             renderView();
@@ -367,18 +391,22 @@
         }
         try {
             const response = await fetch(path, { credentials: "same-origin" });
+            if (response.status === 401 || response.status === 403 || (response.redirected && /\/admin\/login(?:[?#]|$)/.test(response.url))) {
+                window.location.assign("/admin/login");
+                return;
+            }
             if (!response.ok) throw new Error(`The admin page could not be loaded (HTTP ${response.status}).`);
             const pageDocument = new DOMParser().parseFromString(await response.text(), "text/html");
             const incomingView = pageDocument.querySelector("#view-root");
             if (!incomingView || pageDocument.body.dataset.adminView !== nextView) {
-                window.location.assign(response.url || "/admin/login");
-                return;
+                throw new Error("The admin page could not be loaded. Please refresh and try again.");
             }
             viewRoot.replaceChildren(...Array.from(incomingView.childNodes, (node) => document.importNode(node, true)));
             document.title = pageDocument.title;
             activeView = nextView;
             document.body.dataset.adminView = nextView;
             if (addHistory) window.history.pushState({ view: nextView }, "", path + hash);
+            else window.history.replaceState({ view: nextView }, "", path + hash);
             // The view opens the tab named in the URL hash (set just above).
             renderView();
             viewRoot.focus({ preventScroll: true });
@@ -390,7 +418,21 @@
 
     // ---------------------------------------------------------------- sidebar groups
 
+    const NAV_GROUPS_KEY = "printshop.admin.navGroups";
     const navGroups = () => document.querySelectorAll(".sidebar-nav .nav-group");
+
+    function readNavGroups() {
+        try {
+            const value = JSON.parse(sessionStorage.getItem(NAV_GROUPS_KEY) || "[]");
+            return Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function writeNavGroups(ids) {
+        try { sessionStorage.setItem(NAV_GROUPS_KEY, JSON.stringify([...new Set(ids)])); } catch { /* ignore */ }
+    }
 
     function setNavGroupOpen(group, open) {
         group.querySelector(".nav-group-toggle")?.setAttribute("aria-expanded", String(open));
@@ -398,11 +440,22 @@
         if (submenu) submenu.hidden = !open;
     }
 
+    function syncNavGroupState() {
+        const expanded = new Set(readNavGroups());
+        navGroups().forEach((group) => {
+            const id = group.dataset.navGroup;
+            const open = id ? expanded.has(id) : group.querySelector(".nav-group-toggle")?.getAttribute("aria-expanded") === "true";
+            setNavGroupOpen(group, open);
+        });
+    }
+
     /** Groups open one at a time (accordion), so the sidebar stays short. */
     function toggleNavGroup(button) {
         const group = button.closest(".nav-group");
         const open = button.getAttribute("aria-expanded") !== "true";
         navGroups().forEach((other) => setNavGroupOpen(other, other === group ? open : false));
+        const id = group?.dataset.navGroup;
+        writeNavGroups(open && id ? [id] : []);
     }
 
     let lastActiveGroup;
@@ -431,11 +484,21 @@
         });
         const activeGroup = activeLink?.closest(".nav-group") || null;
         navGroups().forEach((group) => group.classList.toggle("has-active", group === activeGroup));
-        // Open the group of the page just opened (and close the others); a refresh of the same page keeps
-        // whatever the administrator expanded.
+        // Open the group of the active page; preserve the user's expanded section across refresh/navigation.
         if (activeGroup !== lastActiveGroup) {
-            navGroups().forEach((group) => setNavGroupOpen(group, group === activeGroup));
+            const expanded = new Set(readNavGroups());
+            const activeId = activeGroup?.dataset.navGroup;
+            if (activeId) expanded.add(activeId);
+            navGroups().forEach((group) => {
+                const id = group.dataset.navGroup;
+                const open = id ? expanded.has(id) : group === activeGroup;
+                setNavGroupOpen(group, open);
+            });
+            writeNavGroups([...navGroups()].filter((group) => group.querySelector(".nav-group-toggle")?.getAttribute("aria-expanded") === "true").map((group) => group.dataset.navGroup).filter(Boolean));
             lastActiveGroup = activeGroup;
+        } else if (activeGroup) {
+            // Keep active group open even if storage was cleared.
+            setNavGroupOpen(activeGroup, true);
         }
         // Notifications has no sidebar entry: it is opened from the bell, which shows as current instead.
         document.querySelector('[data-action="toggle-notifications"]')?.classList.toggle("is-active", activeView === "notifications");
@@ -926,13 +989,48 @@
 
     // ================================================================ order details modal
 
+    /** Redraw an open order modal from the database, but never while the admin is filling in a form. */
+    function refreshOpenOrder(reference, container, options) {
+        if (!dialog.open || !container.isConnected || container.dataset.dirty === "true") return;
+        void api(`/api/admin/orders/${encodeURIComponent(reference)}`).then((order) => {
+            if (!dialog.open || !container.isConnected || container.dataset.dirty === "true") return;
+            container.replaceChildren(...orderModalContent(order, options));
+            const nav = container.querySelector(".order-section-nav");
+            if (nav) watchOrderSections(container, nav);
+        }).catch(() => { /* the next version change retries; the current view stays usable */ });
+    }
+
+    /** Refresh/back-safe URL for the order modal; the step only controls the initial scroll/focus. */
+    function syncOrderUrl(reference, focus = "") {
+        const suffix = ["payments", "payment", "verify"].includes(focus) ? "/payments" : "";
+        const url = `/admin/orders/${encodeURIComponent(reference)}${suffix}`;
+        if (window.location.pathname !== url) {
+            window.history.pushState({ view: "orders", reference, focus }, "", url);
+        }
+    }
+
     async function openOrder(reference, { back = null, focus = "" } = {}) {
+        orderWatch?.();
+        orderWatch = null;
+        syncOrderUrl(reference, focus);
         const container = h("div", { className: "order-modal" }, loadingBlock("Loading order details…"));
+        // Track in-progress edits so a live update cannot discard an admin's typing or chosen file.
+        const markDirty = (event) => {
+            if (event.target.matches("textarea, input[type=text], input[type=number], input[type=file], select")) {
+                container.dataset.dirty = "true";
+            }
+        };
+        container.addEventListener("input", markDirty, true);
+        container.addEventListener("change", markDirty, true);
         UI.openModal(container, { wide: true, size: "xl" });
         let order;
         try {
             order = await api(`/api/admin/orders/${encodeURIComponent(reference)}`);
         } catch (error) {
+            if (error?.status === 404) {
+                // A hand-written or deleted order link must not leave a stale route behind.
+                window.history.replaceState({ view: "orders" }, "", "/admin/orders");
+            }
             container.replaceChildren(errorBlock(error.message, () => openOrder(reference, { back, focus })));
             return;
         }
@@ -940,6 +1038,14 @@
         container.replaceChildren(...orderModalContent(order, { back, focus }));
         const nav = container.querySelector(".order-section-nav");
         if (nav) watchOrderSections(container, nav);
+        if (window.PrintShopWorkflowSync) {
+            orderWatch = window.PrintShopWorkflowSync.watch({
+                reference,
+                role: "admin",
+                version: order.version,
+                onChange: () => refreshOpenOrder(reference, container, { back, focus }),
+            });
+        }
         if (focus) {
             const target = revealOrderTarget(container.querySelector(`[data-focus="${focus}"]`) || orderSectionTarget(container, focus));
             target?.scrollIntoView({ block: "start" });
@@ -1353,6 +1459,8 @@
                 ? h("a", { href: f.tracking_url, target: "_blank", rel: "noopener", text: f.tracking_number })
                 : f.tracking_number)
             : null;
+        const packed = Boolean(f.released_at || order.production?.packaging?.completed_at);
+        const nextRelease = f.next_release_status || f.release_status;
         return h("section", { className: "od-panel od-delivery", dataset: { focus: "fulfillment-summary" } },
             odPanelHead("Delivery & pickup", f.method === "delivery" ? "Delivery" : "Pickup"),
             detailList([
@@ -1368,7 +1476,8 @@
                 f.preferred_pickup_date ? ["Preferred pickup date", date(f.preferred_pickup_date)] : null,
                 f.pickup_location ? ["Pickup location", `${f.pickup_location.name} · ${f.pickup_location.address}`] : null,
                 f.pickup_notes ? ["Pickup notes", f.pickup_notes] : null,
-                ["Status", badge(f.release_status || "Ready for Pickup")],
+                ["Fulfillment status", badge(f.fulfillment_status || "Not started")],
+                packed && nextRelease ? ["Release destination", nextRelease] : null,
                 f.recorded ? null : ["Note", "Placed before delivery options existed: store pickup."],
             ]),
             deliveryOps.length
@@ -1580,6 +1689,7 @@
         "payment.verified": "Payment verified",
         "payment.rejected": "Payment rejected",
         "payment.recorded": "Payment recorded by admin",
+        "payment.terms_set": "Payment terms set/revised",
         "payment.option_changed": "Payment option changed",
         "draft.sent": "Draft sent",
         "draft.approved": "Draft approved by customer",
@@ -1591,6 +1701,8 @@
         const parts = [];
         if (d.status_from || d.status_to) parts.push(`${d.status_from || "—"} → ${d.status_to || "—"}`);
         if (typeof d.total_from === "number" || typeof d.total_to === "number") parts.push(`Total ${typeof d.total_from === "number" ? money(d.total_from) : "—"} → ${typeof d.total_to === "number" ? money(d.total_to) : "—"}`);
+        if (typeof d.down_payment === "number") parts.push(`Down ${money(d.down_payment)}${d.down_payment_source === "custom" ? " (custom)" : d.down_payment_source === "default_50_percent" ? " (50%)" : ""}`);
+        if (typeof d.remaining_after_down_payment === "number") parts.push(`Balance after down ${money(d.remaining_after_down_payment)}`);
         if (typeof d.amount === "number") parts.push(`Amount ${money(d.amount)}`);
         if (typeof d.reported_amount === "number" && Math.abs(d.reported_amount - (d.amount || 0)) > 0.005) parts.push(`reported ${money(d.reported_amount)}`);
         if (d.reference) parts.push(`Ref ${d.reference}`);
@@ -1757,7 +1869,7 @@
         });
         if (buttons.childElementCount) section.append(buttons);
         if (actions.complete_requires_payment) {
-            section.append(h("p", { className: "notice-card notice-warning", text: `Record the remaining balance of ${money(summary.balance)} before marking this order as completed. Only fully paid orders count as completed revenue.` }));
+            section.append(h("p", { className: "notice-card notice-warning", text: `Resolve any pending payment review or record the remaining balance of ${money(summary.balance)} before marking this order as completed. Only fully paid orders count as completed revenue.` }));
         }
         if (actions.cancel_blocked_by_payments && order.allowed_statuses.some((status) => status === "Rejected" || status === "Cancelled")) {
             section.append(h("p", { className: "field-note", text: "This order has recorded or submitted payments, so it cannot be rejected or cancelled from here. Paid orders are cancelled through a reviewed cancellation request, with any refund recorded separately." }));
@@ -1937,42 +2049,125 @@
     /** Correct the agreed total or set a custom down payment while no money has been recorded yet. */
     function paymentTermsForm(order, reload) {
         const currentTotal = order.total_amount ?? order.payment?.confirmed_total ?? "";
+        const storedTotal = currentTotal === "" ? null : Number(currentTotal);
+        const storedDown = order.required_down_payment === null || order.required_down_payment === undefined
+            ? null : Number(order.required_down_payment);
+        const storedInstructions = String(order.payment_instructions || "");
+        const fee = Math.round((Number(order.payment?.delivery_fee ?? order.shipping?.shipping_fee ?? 0) || 0) * 100) / 100;
+        const roundMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
         const total = h("input", { id: "payment-terms-total", type: "number", min: "0.01", max: "100000000", step: "0.01", required: true, value: currentTotal });
-        const down = h("input", { id: "payment-terms-down", type: "number", min: "0.01", max: String(currentTotal || 100000000), step: "0.01", placeholder: currentTotal ? `50% of ${money(Number(currentTotal))}` : "50% of the total" });
+        const down = h("input", { id: "payment-terms-down", type: "number", min: "0.01", max: String(currentTotal || 100000000), step: "0.01" });
         down.value = order.required_down_payment ?? "";
         const instructions = h("textarea", { id: "payment-terms-instructions", maxlength: 1000, placeholder: "The shop's configured e-wallet number and account name" });
-        instructions.value = order.payment_instructions || "";
+        instructions.value = storedInstructions;
+        const noteLabel = h("label", { for: "payment-terms-note", text: "Reason (optional)" });
         const note = h("textarea", { id: "payment-terms-note", maxlength: 1000, placeholder: "Why the terms are being changed (recorded in the order history)" });
+        const breakdownView = h("div", { className: "od-money-grid", dataset: { focus: "payment-terms-preview" } });
         const submit = h("button", { className: "button button-primary", type: "submit", text: "Save payment terms" });
+
+        const readMoney = (input) => input.value.trim() === "" ? null : Number(input.value);
+        const snapshot = () => {
+            const value = readMoney(total);
+            const downValue = readMoney(down);
+            const validTotal = Number.isFinite(value) && value > 0;
+            const effectiveDown = downValue === null && validTotal ? roundMoney(value * 0.5) : downValue;
+            const validDown = Number.isFinite(effectiveDown) && effectiveDown > 0 && (!validTotal || effectiveDown <= value + MONEY_TOLERANCE);
+            return {
+                value, downValue, validTotal, effectiveDown, validDown,
+                subtotal: validTotal ? roundMoney(value - fee) : null,
+                fee,
+                remaining: validTotal && validDown ? roundMoney(value - effectiveDown) : null,
+            };
+        };
+        const isChanged = (state) => {
+            const totalChanged = storedTotal === null ? state.validTotal : Math.abs(storedTotal - (state.value ?? 0)) > MONEY_TOLERANCE;
+            const downChanged = Number.isFinite(storedDown)
+                ? Math.abs(storedDown - (state.effectiveDown ?? 0)) > MONEY_TOLERANCE
+                : state.effectiveDown !== null;
+            return totalChanged || downChanged || instructions.value.trim() !== storedInstructions;
+        };
+        const breakdownRows = (state) => {
+            const rows = [
+                ["Printing subtotal", money(state.subtotal)],
+                ["Delivery fee", money(state.fee)],
+                ["Confirmed total", money(state.value)],
+                state.downValue === null
+                    ? ["Required down payment", `${money(state.effectiveDown)} (50% default)`]
+                    : ["Required down payment", state.validDown ? `${money(state.effectiveDown)} (custom)` : "—"],
+                ["Remaining after down payment", state.remaining === null ? "—" : money(state.remaining)],
+                ["Amount due next", state.validDown ? money(state.effectiveDown) : "—"],
+            ];
+            return rows;
+        };
+        const refresh = () => {
+            const state = snapshot();
+            const limit = state.validTotal ? state.value : 100000000;
+            down.max = String(limit);
+            down.placeholder = state.validTotal
+                ? `50% of ${money(roundMoney(state.value * 0.5))} — leave blank to use this`
+                : "50% of the total";
+            breakdownView.replaceChildren(...breakdownRows(state).map(([label, value]) =>
+                h("div", { className: "od-money" }, h("span", { text: label }), h("strong", { text: value }))));
+            const changed = isChanged(state);
+            noteLabel.text = changed ? "Reason for this change (required)" : "Reason (optional)";
+            note.required = changed;
+        };
+        total.addEventListener("input", refresh);
+        down.addEventListener("input", refresh);
+        instructions.addEventListener("input", refresh);
+        refresh();
+
         const form = h("form", { className: "action-form", dataset: { focus: "payment-terms" } },
             h("h4", { text: "Set payment terms" }),
-            h("p", { className: "field-note", text: "Available only before a payment is submitted or recorded. Leave the down payment blank to use the default 50%." }),
+            h("p", { className: "field-note", text: "Available only before a payment is submitted or recorded. Leave the down payment blank to use the default 50%. Review the calculated breakdown before saving." }),
             h("div", { className: "form-grid" },
                 h("div", { className: "form-field" }, h("label", { for: "payment-terms-total", text: "Confirmed total (PHP, including delivery fee)" }), total),
                 h("div", { className: "form-field" }, h("label", { for: "payment-terms-down", text: "Required down payment (PHP, optional)" }), down),
                 h("div", { className: "form-field full" }, h("label", { for: "payment-terms-instructions", text: "Payment instructions" }), instructions),
-                h("div", { className: "form-field full" }, h("label", { for: "payment-terms-note", text: "Reason (optional)" }), note)),
+                h("div", { className: "form-field full" }, noteLabel, note)),
+            h("h4", { text: "Payment breakdown preview" }),
+            breakdownView,
+            h("p", { className: "field-note", text: "The customer is notified with this breakdown and the payment instructions. The reason is kept in the order history and audit log." }),
             h("div", { className: "dialog-actions" }, submit));
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
-            const totalValue = Number(total.value);
+            const state = snapshot();
+            if (!state.validTotal) {
+                toast("Enter a valid confirmed total.", "error");
+                total.focus();
+                return;
+            }
+            if (state.downValue !== null && (!Number.isFinite(state.downValue) || state.downValue <= 0)) {
+                toast("The down payment must be greater than zero.", "error");
+                down.focus();
+                return;
+            }
+            if (state.downValue !== null && state.downValue > state.value + MONEY_TOLERANCE) {
+                toast("The down payment cannot exceed the total.", "error");
+                down.focus();
+                return;
+            }
+            if (isChanged(state) && !note.value.trim()) {
+                toast("Enter the reason for this change.", "error");
+                note.focus();
+                return;
+            }
+            const details = breakdownRows(state).filter(([, value]) => value !== "—");
+            if (note.value.trim()) details.push(["Reason", note.value.trim()]);
             const answer = await UI.confirm({
                 title: "Save these payment terms?",
-                message: "The customer sees the updated total and down payment in their portal.",
+                message: "The customer is notified with this breakdown and sees the updated amounts in their portal.",
                 confirmLabel: "Save terms",
-                details: [
-                    ["Confirmed total", money(totalValue)],
-                    down.value ? ["Required down payment", money(Number(down.value))] : ["Down payment", "50% of the total"],
-                ],
+                details,
             });
             if (!answer) return;
             await submitAction(submit, order, "payment-terms", {
-                total_amount: totalValue,
-                down_payment_amount: down.value === "" ? null : Number(down.value),
+                total_amount: state.value,
+                down_payment_amount: state.downValue,
                 payment_instructions: instructions.value.trim(),
                 note: note.value.trim(),
-            }, reload, "Payment terms saved.");
+            }, reload, "Payment terms saved and the customer was notified.");
         });
         return form;
     }
@@ -2653,7 +2848,7 @@
             dt { color: #555; } dd { margin: 0; }
             footer { margin-top: 10px; color: #555; font-size: 8.5pt; }
         </style></head><body>
-            <header><div><h1>ImPRESSion PrintShop — ${e(title)}</h1><p>${e(filtersUsed.length ? filtersUsed.join(" · ") : single ? "Complete customer record" : "No filters applied")}</p></div>
+            <header><div><h1>ImPRESS Print Works — ${e(title)}</h1><p>${e(filtersUsed.length ? filtersUsed.join(" · ") : single ? "Complete customer record" : "No filters applied")}</p></div>
             <div class="meta"><p>Generated ${e(dateTime(data.generated_at))}</p><p>Prepared by ${e(adminEmail || "Administrator")}</p></div></header>
             ${single ? "" : `<div class="totals"><span>Customers<strong>${e(number(sm.customers))}</strong></span><span>Total transactions<strong>${e(money(sm.total_transaction_amount))}</strong></span><span>Total paid<strong>${e(money(sm.total_paid))}</strong></span><span>Outstanding<strong>${e(money(sm.outstanding_balance))}</strong></span><span>Amount spent<strong>${e(money(sm.total_spent))}</strong></span></div>`}
             ${single || data.include_history ? data.customers.map(customerBlock).join("") : listTable}
@@ -2958,10 +3153,22 @@
         );
     }
 
+    /** Keep the verification filter in the URL so a refresh of Payment Verification stays there. */
+    function syncVerificationParam(value) {
+        const url = new URL(window.location.href);
+        if (value) url.searchParams.set("verification", value);
+        else url.searchParams.delete("verification");
+        if (url.pathname + url.search + url.hash !== window.location.pathname + window.location.search + window.location.hash) {
+            window.history.replaceState(window.history.state, "", url);
+        }
+    }
+
     function renderPayments() {
         const body = viewBody();
         if (!body) return;
         const f = filters.payments;
+        f.verification = new URLSearchParams(window.location.search).get("verification") || f.verification || "";
+        syncVerificationParam(f.verification);
         const cards = h("section", { className: "stats-grid stats-grid-6", "aria-label": "Payment summary" }, loadingBlock());
         const tableHost = h("div");
         const countLabel = h("span", { className: "table-secondary" });
@@ -3057,6 +3264,7 @@
         });
         const apply = (values) => {
             Object.assign(f, values);
+            if ("verification" in values) syncVerificationParam(values.verification);
             table.setQuery({ ...f });
         };
         const verificationSelect = selectInput(VERIFICATION_FILTERS, f.verification, (value) => apply({ verification: value }));
@@ -3080,6 +3288,7 @@
                 field("Received to", dateInput(f.date_to, (value) => apply({ date_to: value }))),
                 h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
                     Object.keys(f).forEach((key) => { f[key] = ""; });
+                    syncVerificationParam("");
                     renderPayments();
                 } }),
             ),
@@ -3114,12 +3323,89 @@
 
     // ================================================================ reports
 
+    const REPORT_TABS = ["summary", "payments", "completed", "services"];
+    const SUMMARY_PRESETS = new Set(["all", "today", "week", "month", "year", "custom"]);
+    const SUMMARY_GROUPS = new Set(["", "day", "week", "month", "year"]);
+
+    function cleanReportValue(value, max = 80) {
+        return typeof value === "string" ? value.trim().slice(0, max) : "";
+    }
+
+    function readReportFiltersFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const tab = cleanReportValue(params.get("tab") || params.get("rtab"), 20);
+        if (REPORT_TABS.includes(tab)) filters.reports.tab = tab;
+
+        const summary = filters.reports.summary;
+        const preset = cleanReportValue(params.get("spreset"), 20);
+        if (SUMMARY_PRESETS.has(preset)) summary.preset = preset;
+        summary.date_from = cleanReportValue(params.get("sfrom"), 20);
+        summary.date_to = cleanReportValue(params.get("sto"), 20);
+        const groupBy = cleanReportValue(params.get("sgroup"), 20);
+        summary.group_by = SUMMARY_GROUPS.has(groupBy) ? groupBy : "";
+        summary.service = cleanReportValue(params.get("sservice"), 80);
+        if (summary.preset === "custom" && !(summary.date_from && summary.date_to)) {
+            // Keep custom selected but empty dates show the existing validation message on load.
+        }
+
+        const completed = filters.reports.completed;
+        completed.service = cleanReportValue(params.get("cservice"), 80);
+        completed.customer = cleanReportValue(params.get("ccustomer"), 120);
+        completed.request_from = cleanReportValue(params.get("creqfrom"), 20);
+        completed.request_to = cleanReportValue(params.get("creqto"), 20);
+        completed.completed_from = cleanReportValue(params.get("ccompfrom"), 20);
+        completed.completed_to = cleanReportValue(params.get("ccompto"), 20);
+        const payStatus = cleanReportValue(params.get("cpay"), 40);
+        completed.payment_status = PAYMENT_STATUSES.includes(payStatus) ? payStatus : "";
+        completed.min_days = cleanReportValue(params.get("cmindays"), 10);
+        completed.max_days = cleanReportValue(params.get("cmaxdays"), 10);
+
+        const service = filters.reports.service;
+        service.service = cleanReportValue(params.get("svservice"), 80);
+        service.completed_from = cleanReportValue(params.get("svcompfrom"), 20);
+        service.completed_to = cleanReportValue(params.get("svcompto"), 20);
+        service.request_from = cleanReportValue(params.get("svreqfrom"), 20);
+        service.request_to = cleanReportValue(params.get("svreqto"), 20);
+    }
+
+    function syncReportUrl() {
+        const url = new URL(window.location.href);
+        const params = url.searchParams;
+        ["tab", "rtab", "spreset", "sfrom", "sto", "sgroup", "sservice", "cservice", "ccustomer", "creqfrom", "creqto", "ccompfrom", "ccompto", "cpay", "cmindays", "cmaxdays", "svservice", "svcompfrom", "svcompto", "svreqfrom", "svreqto"].forEach((key) => params.delete(key));
+        const r = filters.reports;
+        params.set("tab", r.tab);
+        const s = r.summary;
+        if (s.preset && s.preset !== "month") params.set("spreset", s.preset);
+        if (s.date_from) params.set("sfrom", s.date_from);
+        if (s.date_to) params.set("sto", s.date_to);
+        if (s.group_by) params.set("sgroup", s.group_by);
+        if (s.service) params.set("sservice", s.service);
+        const c = r.completed;
+        if (c.service) params.set("cservice", c.service);
+        if (c.customer) params.set("ccustomer", c.customer);
+        if (c.request_from) params.set("creqfrom", c.request_from);
+        if (c.request_to) params.set("creqto", c.request_to);
+        if (c.completed_from) params.set("ccompfrom", c.completed_from);
+        if (c.completed_to) params.set("ccompto", c.completed_to);
+        if (c.payment_status) params.set("cpay", c.payment_status);
+        if (c.min_days) params.set("cmindays", c.min_days);
+        if (c.max_days) params.set("cmaxdays", c.max_days);
+        const sv = r.service;
+        if (sv.service) params.set("svservice", sv.service);
+        if (sv.completed_from) params.set("svcompfrom", sv.completed_from);
+        if (sv.completed_to) params.set("svcompto", sv.completed_to);
+        if (sv.request_from) params.set("svreqfrom", sv.request_from);
+        if (sv.request_to) params.set("svreqto", sv.request_to);
+        const next = `${url.pathname}${params.toString() ? `?${params.toString()}` : ""}${url.hash}`;
+        const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (next !== current) history.replaceState(history.state, "", next);
+    }
+
     function renderReports() {
         const body = viewBody();
         if (!body) return;
-        const requested = new URLSearchParams(window.location.search).get("tab");
-        const reportTabs = ["summary", "payments", "completed", "services"];
-        if (requested && reportTabs.includes(requested)) filters.reports.tab = requested;
+        readReportFiltersFromUrl();
+        syncReportUrl();
         const hosts = {
             summary: h("div"),
             payments: h("div"),
@@ -3166,11 +3452,13 @@
                 this.notify(data, null, false);
             },
         };
+        reportSummaryState = summaryState;
         const loadSummaryIfNeeded = () => {
             if (!summaryState.data && !summaryState.error && !summaryState.loading) summaryState.load();
         };
         const show = (key) => {
             filters.reports.tab = key;
+            syncReportUrl();
             if (!rendered.has(key)) {
                 rendered.add(key);
                 ({
@@ -3218,10 +3506,20 @@
     function renderSummaryTab(host, state) {
         const f = filters.reports.summary;
         const content = h("div", {}, loadingBlock("Calculating…"));
-        const fromInput = dateInput(f.date_from, (value) => { f.date_from = value; if (f.date_to) state.load(); });
-        const toInput = dateInput(f.date_to, (value) => { f.date_to = value; if (f.date_from) state.load(); });
+        const loadCustom = () => {
+            syncReportUrl();
+            if (f.preset !== "custom") { state.load(); return; }
+            if (f.date_from && f.date_to) { state.load(); return; }
+            state.loading = false;
+            state.data = null;
+            state.error = new Error("Choose both a start and an end date for a custom period.");
+            state.notify(null, state.error, false);
+        };
+        const fromInput = dateInput(f.date_from, (value) => { f.date_from = value; loadCustom(); });
+        const toInput = dateInput(f.date_to, (value) => { f.date_to = value; loadCustom(); });
         const customFields = h("div", { className: "filter-inline" }, field("From", fromInput), field("To", toInput));
-        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => { f.service = value; state.load(); });
+        const serviceSelect = selectInput(serviceOptions(), f.service, (value) => { f.service = value; loadCustom(); });
+        const groupSelect = selectInput([["", "Automatic"], ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["year", "Yearly"]], f.group_by, (value) => { f.group_by = value; loadCustom(); });
         const presetSelect = selectInput([
             ["all", "All time"], ["today", "Today"], ["week", "This week"], ["month", "This month"], ["year", "This year"], ["custom", "Custom date range"],
         ], f.preset, (value) => {
@@ -3229,9 +3527,8 @@
             f.group_by = "";
             groupSelect.value = "";
             customFields.hidden = value !== "custom";
-            if (value !== "custom" || (f.date_from && f.date_to)) state.load();
+            loadCustom();
         });
-        const groupSelect = selectInput([["", "Automatic"], ["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"], ["year", "Yearly"]], f.group_by, (value) => { f.group_by = value; state.load(); });
         customFields.hidden = f.preset !== "custom";
         const params = () => ({ ...f });
         const shortcut = (label, preset, group) => {
@@ -3455,7 +3752,7 @@
                 " · Verified collections minus completed refunds", ` ${money(p.net_collections)}`, ` · Refunds completed ${number(p.refund_count)} (${money(p.refunds_completed)})`),
             cards,
             panel("Payment methods", `Money received in ${data.period.label} by payment date`, methodHost,
-                UI.exportButtons("payments", () => ({ date_from: data.period.start || "", date_to: data.period.end || "", service: data.service?.id || "" }))),
+                UI.exportButtons("payment_summary", () => ({ ...filters.reports.summary }), { label: "Payment summary" })),
         ];
     }
 
@@ -3513,6 +3810,7 @@
         });
         const apply = (values) => {
             Object.assign(f, values);
+            syncReportUrl();
             table.setQuery({ ...f });
         };
         host.replaceChildren(
@@ -3528,6 +3826,7 @@
                 field("Max. days", numberInput(f.max_days, (value) => apply({ max_days: value }), "Any"), "narrow"),
                 h("button", { className: "button button-small", type: "button", text: "Clear filters", onclick: () => {
                     Object.keys(f).forEach((key) => { f[key] = ""; });
+                    syncReportUrl();
                     renderCompletedTab(host);
                 } }),
             ),
@@ -3558,7 +3857,7 @@
                 className: `service-card${item.service_id === f.service ? " active" : ""}`,
                 type: "button",
                 "aria-pressed": String(item.service_id === f.service),
-                onclick: () => { f.service = item.service_id; loadCards(); },
+                onclick: () => { f.service = item.service_id; syncReportUrl(); loadCards(); },
             },
             h("strong", { text: item.service }),
             h("span", { className: "service-card-revenue", text: money(item.confirmed_revenue) }),
@@ -3599,6 +3898,7 @@
         }
         const apply = (values) => {
             Object.assign(f, values);
+            syncReportUrl();
             loadCards();
         };
         host.replaceChildren(
@@ -3873,7 +4173,7 @@
             }
             if (token !== selectionToken) return;
             if (data?.format !== "impression-printshop-backup" || typeof data.tables !== "object" || !data.counts) {
-                return invalid("This file is not an ImPRESSion PrintShop backup.");
+                return invalid("This file is not an ImPRESS Print Works backup.");
             }
             chosen = { file, data, text };
             const rows = Object.values(data.counts).reduce((sum, value) => sum + Number(value || 0), 0);
@@ -4043,6 +4343,10 @@
     dialog.addEventListener("close", () => {
         // The close event is dispatched asynchronously: if another editor was opened in the meantime, keep it.
         if (dialog.open) return;
+        orderWatch?.();
+        orderWatch = null;
+        // Closing an order returns the address bar to the ordinary Order Management route.
+        if (adminOrderRoute()) window.history.pushState({ view: "orders" }, "", "/admin/orders");
         dialog.classList.remove("admin-dialog-wide", "admin-dialog-xl");
         document.querySelector("#dialog-content").replaceChildren();
     });
@@ -4050,10 +4354,19 @@
     dialog.addEventListener("click", (event) => {
         if (event.target === dialog) UI.closeModal();
     });
-    window.addEventListener("popstate", () => navigate(viewFromLocation(), false));
+    window.addEventListener("popstate", () => {
+        const route = adminOrderRoute();
+        if (route) {
+            // Back/Forward into an order link rebuilds the modal from the database, not from a cached view.
+            void navigate("orders", false).then(() => openOrder(route.reference, { focus: route.focus }));
+            return;
+        }
+        const view = viewFromLocation();
+        void navigate(view, false, { tab: sectionFromLocation(view) });
+        if (dialog.open) UI.closeModal();
+    });
 
     document.body.classList.toggle("compact-tables", localStorage.getItem(COMPACT_KEY) === "true");
-    document.querySelector("#today-date").textContent = new Date().toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", timeZone: "Asia/Manila" });
     activeView = document.body.dataset.adminView || viewFromLocation();
     renderView();
     // Read state used to live in this browser's storage; move it to the server once.
@@ -4066,16 +4379,42 @@
     } else {
         refreshBadges();
     }
-    window.setInterval(() => {
-        if (document.visibilityState === "visible") refreshBadges();
-    }, 30000);
-    document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") refreshBadges();
-    });
+    // Badge/view freshness is handled by refreshVisibleTable below (30s + visibility/focus/online).
 
-    // Deep links: /admin/orders?order=IPS-11-08-26 or /admin/customers?customer=<id>
+    // Keep the order, payments, and reports views current without a manual refresh. A dialog is left alone so an
+    // administrator never loses a half-finished verification form.
+    const refreshVisibleTable = () => {
+        if (document.visibilityState !== "visible") return;
+        refreshBadges();
+        if (dialog.open) return;
+        if (activeView === "orders" || activeView === "payments" || activeView === "production" || activeView === "fulfillment" || activeView === "refunds") {
+            refreshActiveView();
+            return;
+        }
+        if (activeView === "reports") {
+            const tab = filters.reports.tab;
+            if ((tab === "summary" || tab === "payments") && reportSummaryState && !reportSummaryState.loading) {
+                reportSummaryState.load();
+            } else if (tab === "completed" || tab === "services") {
+                refreshActiveView();
+            }
+        }
+    };
+    window.setInterval(refreshVisibleTable, 30000);
+    document.addEventListener("visibilitychange", refreshVisibleTable);
+    window.addEventListener("focus", refreshVisibleTable);
+    window.addEventListener("online", refreshVisibleTable);
+
+    // Deep links: /admin/orders/<ref>[/payments], the older ?order=<ref>, or /admin/customers?customer=<id>.
     const params = new URLSearchParams(window.location.search);
-    if (params.get("order")) openOrder(params.get("order"));
+    const orderPath = /^\/admin\/orders\/([^/]+)(?:\/(payments))?\/?$/.exec(window.location.pathname);
+    let deepReference = params.get("order");
+    let deepFocus = "";
+    if (orderPath) {
+        try { deepReference = decodeURIComponent(orderPath[1]); } catch { /* malformed links are ignored */ }
+        deepFocus = orderPath[2] ? "payments" : "";
+    }
+    if (deepReference) openOrder(deepReference, { focus: deepFocus });
     else if (params.get("customer")) openCustomer(params.get("customer"));
 
     window.PrintShopAdmin = { openOrder, openCustomer, navigate };

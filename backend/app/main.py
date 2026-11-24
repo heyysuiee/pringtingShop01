@@ -2,6 +2,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -127,7 +128,7 @@ async def lifespan(app: FastAPI):
         app.state.database_ready = False
 
 
-app = FastAPI(title="ImPRESSion PrintShop", lifespan=lifespan)
+app = FastAPI(title="ImPRESS Print Works", lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 if settings.cors_origins:
     app.add_middleware(
@@ -222,10 +223,24 @@ def _customer_page(filename: str):
     return handler
 
 
+def _customer_order_page(filename: str):
+    def handler(request: Request) -> Response:
+        # The portal shell itself is public, but a direct per-order link is private. Preserve it through
+        # sign-in so the customer returns to the same order instead of the account list.
+        if session_claims(request, "customer") is None:
+            target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            return RedirectResponse(f"/sign-in?{urlencode({'next': target})}", status_code=303)
+        return FileResponse(CUSTOMER_DIR / filename)
+
+    return handler
+
+
 def _admin_page(filename: str):
     def handler(request: Request) -> Response:
         if session_claims(request, "admin") is None:
-            return RedirectResponse("/admin/login", status_code=303)
+            # Keep the requested admin page so signing in returns here instead of the Dashboard.
+            target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            return RedirectResponse(f"/admin/login?{urlencode({'next': target})}", status_code=303)
         return FileResponse(ADMIN_DIR / filename)
 
     return handler
@@ -250,6 +265,20 @@ for _path, _filename in CUSTOMER_PAGES.items():
     app.add_api_route(_path, _customer_page(_filename), methods=["GET"])
 for _path, _filename in ADMIN_PAGES.items():
     app.add_api_route(_path, _admin_page(_filename), methods=["GET"])
+# Stable per-order URLs. Both shells read the reference from the path and restore the order from the
+# database; they are added after the exact view routes so nothing existing is shadowed.
+for _suffix in ("", "/payment", "/approval"):
+    app.add_api_route(
+        f"/customer/orders/{{reference}}{_suffix}",
+        _customer_order_page("customer-portal.html"),
+        methods=["GET"],
+    )
+for _suffix in ("", "/payments"):
+    app.add_api_route(
+        f"/admin/orders/{{reference}}{_suffix}",
+        _admin_page("OrderManagement.html"),
+        methods=["GET"],
+    )
 for _path, _target in REDIRECTS.items():
     app.add_api_route(_path, _redirect(_target), methods=["GET"])
 for _path in ("/login", "/admin", "/admin/login"):

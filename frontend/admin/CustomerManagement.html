@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#FAF8F4">
     <meta name="robots" content="noindex, nofollow">
-    <link rel="icon" href="data:,">
-    <title>Customer Management — ImPRESSion PrintShop Admin</title>
+    <link rel="icon" href="/assets/image/brand/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" href="/assets/image/brand/favicon.png">
+    <link rel="apple-touch-icon" href="/assets/image/brand/favicon.png">
+    <title>Customer Management — ImPRESS Print Works Admin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- Loaded without blocking the first paint; system fonts are used until it arrives (or if offline). -->
@@ -25,9 +27,9 @@
     <a class="skip-link" href="#view-root">Skip to content</a>
     <div class="admin-shell">
         <aside class="sidebar" id="admin-sidebar">
-            <a class="admin-brand" href="/admin/dashboard" data-view="dashboard" aria-label="ImPRESSion PrintShop admin dashboard">
-                <span class="admin-brand-mark">iP</span>
-                <span><strong>ImPRESSion</strong><small>PRINTSHOP · ADMIN</small></span>
+            <a class="admin-brand" href="/admin/dashboard" data-view="dashboard" aria-label="ImPRESS Print Works admin dashboard">
+                <img class="admin-brand-logo" data-brand-logo="icon" src="/assets/image/brand/logo-icon.jpg" width="512" height="512" alt="" aria-hidden="true">
+                <span><strong>ImPRESS</strong><small>Print Works · Admin</small></span>
             </a>
             <div class="sidebar-label">WORKSPACE</div>
             <nav class="sidebar-nav" aria-label="Admin navigation">
@@ -83,7 +85,6 @@
                         <button class="icon-button" type="button" aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false" aria-controls="notification-panel" data-action="toggle-notifications"><span data-icon="bell" aria-hidden="true">♧</span><span class="nav-count bell-count" id="notification-count"></span></button>
                         <div class="notification-panel" id="notification-panel" role="dialog" aria-label="Recent notifications" hidden></div>
                     </div>
-                    <div class="topbar-date" id="today-date"></div>
                     <details class="profile-menu">
                         <summary class="profile-trigger" aria-label="Administrator menu"><span class="avatar" aria-hidden="true">A</span><span class="profile-name"><strong>Administrator</strong><small data-admin-email></small></span><span class="profile-caret" aria-hidden="true">▾</span></summary>
                         <div class="profile-menu-list" role="menu">
@@ -121,6 +122,7 @@
         <script src="/assets/admin/size-admin.js"></script>
 <script src="/assets/admin/chatbot-admin.js"></script>
     <script src="/assets/admin/operations-admin.js"></script>
+    <script src="/assets/workflow-sync.js"></script>
     <script src="/assets/admin/dashboard.js"></script>
 </body>
 </html>

@@ -504,21 +504,34 @@ def complete_packaging(reference: str, payload: Mapping[str, Any], actor: str = 
         order, "packaging_completed", "packaging-completed", "Packaging completed",
         f"Your order {order['reference']} ({quantity:,} pcs) is packed.",
     )]
-    if order_services.is_fully_paid(order):
+    if order_services.release_ready(order):
         status, released, notice = order_services.release_updates(order)
         updates.update({"status": status, "fulfillment": released})
         notifications.append(notice)
         event = f"Administrator completed packaging ({quantity:,} pcs). The order is fully paid and now {status}."
     else:
-        balance = float(order_services.payment_breakdown(order)["balance"] or 0)
         updates["status"] = "Awaiting Full Payment"
         how = "pickup" if order_services.fulfillment_method(order) == "pickup" else "dispatch"
+        pending_excess = order_services.pending_excess_amount(order)
+        if pending_excess > order_services.MONEY_TOLERANCE:
+            reason = f"Resolve the flagged excess of PHP {pending_excess:,.2f} before release"
+            notice_message = (
+                f"Your order {order['reference']} is packed. The shop needs to review an excess payment of "
+                f"PHP {pending_excess:,.2f} before it can release the order for {how}."
+            )
+            event_reason = f"Waiting for the flagged excess of PHP {pending_excess:,.2f} to be reviewed before release."
+        else:
+            balance = float(order_services.payment_breakdown(order)["balance"] or 0)
+            reason = f"Pay the remaining balance of PHP {balance:,.2f}"
+            notice_message = (
+                f"Your order {order['reference']} is packed. Pay the remaining balance of PHP {balance:,.2f} in your customer "
+                f"portal so the shop can release it for {how}."
+            )
+            event_reason = f"Waiting for the remaining balance of PHP {balance:,.2f} before release."
         notifications.append(notification_services.build(
-            order, "balance_due", "balance-due", "Remaining balance due",
-            f"Your order {order['reference']} is packed. Pay the remaining balance of PHP {balance:,.2f} in your customer "
-            f"portal so the shop can release it for {how}.",
+            order, "balance_due", "balance-due", "Remaining balance due", notice_message,
         ))
-        event = f"Administrator completed packaging ({quantity:,} pcs). Waiting for the remaining balance of PHP {balance:,.2f} before release."
+        event = f"Administrator completed packaging ({quantity:,} pcs). {reason}; {event_reason}"
     if remarks:
         event += f" Remarks: {remarks}"
     return _save_with_files(
@@ -928,6 +941,14 @@ def admin_fulfillment(params: Mapping[str, Any]) -> dict[str, Any]:
                              "detail": " · ".join(str(value) for value in (attempt.get("courier"), attempt.get("tracking_number"), FAILURE_REASONS.get(attempt.get("failure_reason", ""), ""), attempt.get("received_by")) if value),
                              "at": attempt.get("delivered_at") or attempt.get("failed_at") or attempt.get("dispatched_at") or "",
                              "customer_name_search": base["customer_name"]})
+            for item in stored.get("reschedules", []):
+                rows.append({
+                    **base,
+                    "event": "Delivery rescheduled",
+                    "detail": " · ".join(str(value) for value in (f"New date {item.get('scheduled_date')}" if item.get("scheduled_date") else "", item.get("remarks")) if value),
+                    "at": item.get("at", ""),
+                    "customer_name_search": base["customer_name"],
+                })
             pickup = stored.get("pickup_confirmation")
             if pickup:
                 rows.append({**base, "event": "Order claimed", "detail": f"{pickup.get('claimant_name')} ({pickup.get('claimant_type_label', '')})", "at": pickup.get("claimed_at", "")})

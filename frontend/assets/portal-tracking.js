@@ -422,7 +422,7 @@
         const refunds = (order.refunds || []).filter((item) => item.status === "refunded").map((item) => `<tr><td>${escapeHtml(context.formatDate(item.refunded_at))}</td><td>Refund ${escapeHtml(item.id)}</td><td>${escapeHtml(item.method)}</td><td>${escapeHtml(item.transaction_reference)}</td><td class="r">−${escapeHtml(money(item.amount))}</td><td class="r">—</td></tr>`).join("");
         const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Receipt ${escapeHtml(order.reference)}</title>
 <style>body{font-family:system-ui,sans-serif;margin:32px;color:#111}h1{font-size:20px;margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border-bottom:1px solid #ddd;padding:6px 4px;text-align:left;font-size:13px}.r{text-align:right}.muted{color:#555;font-size:12px}dl{display:grid;grid-template-columns:200px 1fr;gap:4px 12px;font-size:13px}dt{color:#555}</style></head><body>
-<h1>ImPRESSion PrintShop — Payment receipt</h1><p class="muted">Order ${escapeHtml(order.reference)} · printed ${escapeHtml(new Date().toLocaleString("en-PH"))}</p>
+<h1>ImPRESS Print Works — Payment receipt</h1><p class="muted">Order ${escapeHtml(order.reference)} · printed ${escapeHtml(new Date().toLocaleString("en-PH"))}</p>
 <dl><dt>Customer</dt><dd>${escapeHtml(order.customer?.name)}</dd><dt>Item</dt><dd>${escapeHtml(order.product?.name)} × ${escapeHtml(order.customization?.quantity)}</dd>
 <dt>Fulfillment</dt><dd>${escapeHtml(order.fulfillment?.label)}</dd>${payment.delivery_fee ? `<dt>Delivery fee</dt><dd>${escapeHtml(money(payment.delivery_fee))}</dd>` : ""}
 <dt>Order total</dt><dd>${escapeHtml(money(calc.total))}</dd><dt>Confirmed payments</dt><dd>${escapeHtml(money(calc.paid))}</dd>

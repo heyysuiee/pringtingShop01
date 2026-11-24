@@ -7,6 +7,19 @@ const passwordToggle = document.querySelector(".password-toggle");
 const loginError = document.querySelector("#login-error");
 const RESET_EMAIL_KEY = "printshop.adminResetEmail";
 
+/** Only same-origin admin pages are valid return addresses after sign-in. */
+function nextPath() {
+    const value = new URLSearchParams(window.location.search).get("next") || "";
+    if (!value.startsWith("/")) return "/admin/dashboard";
+    try {
+        const url = new URL(value, window.location.origin);
+        if (url.origin !== window.location.origin || !url.pathname.startsWith("/admin/")) return "/admin/dashboard";
+        return url.pathname + url.search + url.hash;
+    } catch {
+        return "/admin/dashboard";
+    }
+}
+
 // The Forgot Password page saves the address so it does not have to be typed again here.
 const savedEmail = sessionStorage.getItem(RESET_EMAIL_KEY);
 sessionStorage.removeItem(RESET_EMAIL_KEY);
@@ -55,7 +68,7 @@ loginForm.addEventListener("submit", async (event) => {
             const detail = Array.isArray(result.detail) ? result.detail.map((item) => item.msg).join(" ") : result.detail;
             throw new Error(detail || "Administrator sign in failed.");
         }
-        window.location.assign("/admin/dashboard");
+        window.location.assign(nextPath());
     } catch (error) {
         loginError.textContent = error instanceof Error ? error.message : "Administrator sign in failed.";
         loginError.hidden = false;

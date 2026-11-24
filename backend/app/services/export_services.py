@@ -19,7 +19,7 @@ from backend.app.services import report_services as reports
 from backend.app.utils.order_number import SHOP_TIMEZONE
 
 
-BUSINESS_NAME = "ImPRESSion PrintShop"
+BUSINESS_NAME = "ImPRESS Print Works"
 FORMATS = {"pdf", "xlsx"}
 
 # A cell whose text starts with one of these characters is interpreted as a formula by Excel and
@@ -162,8 +162,9 @@ def build_completed(params: Mapping[str, Any]) -> Report:
 def build_service(params: Mapping[str, Any]) -> Report:
     service_id = reports.param_text(params, "service", 80)
     base = {key: value for key, value in params.items() if key != "service"}
-    rows, services = reports.completed_rows(base)
-    data = reports.service_report({**base, "page_size": "all"})
+    orders, services = reports._load()
+    rows, services = reports.completed_rows(base, orders, services)
+    data = reports.service_report({**base, "page_size": "all"}, orders=orders, services=services, completed=rows)
     filters = [
         ("Request date", _range_text(params, "request_from", "request_to")),
         ("Completion date", _range_text(params, "completed_from", "completed_to")),
@@ -371,10 +372,13 @@ def _payment_section(data: dict[str, Any]) -> Section:
 def _payment_summary_items(data: dict[str, Any]) -> list[tuple[str, Any, str]]:
     payments = data["payments"]
     return [
-        ("Payments received in period", payments["received_total"], "money"),
+        ("Payments received in period (verified collections)", payments["received_total"], "money"),
         ("  of which down payments (50%)", payments["down_payments"], "money"),
         ("  of which balance payments", payments["balance_payments"], "money"),
         ("  of which Cash on Delivery collections", payments["cod_collections"], "money"),
+        ("Completed refunds in period", payments.get("refunds_completed", 0.0), "money"),
+        ("Refunds in progress (approved/processing, period-scoped)", payments.get("refunds_in_progress", 0.0), "money"),
+        ("Net collections (received minus completed refunds)", payments.get("net_collections", payments["received_total"]), "money"),
         ("Orders paying with 50% down payment", payments["orders_down_payment"], "int"),
         ("Orders paying Cash on Delivery", payments["orders_cod"], "int"),
         ("Outstanding balance of open orders in period", payments["outstanding_balance"], "money"),
@@ -419,13 +423,34 @@ def _summary_sections(data: dict[str, Any]) -> list[Section]:
     ]
 
 
-def _summary_filters(data: dict[str, Any]) -> list[tuple[str, str]]:
-    grouping = {"day": "Daily", "week": "Weekly", "month": "Monthly", "year": "Yearly"}[data["period"]["group_by"]]
-    return [
+def _summary_filters(data: dict[str, Any], params: Mapping[str, Any] | None = None) -> list[tuple[str, str]]:
+    params = params or {}
+    grouping = {"day": "Daily", "week": "Weekly", "month": "Monthly", "year": "Yearly"}.get(data["period"]["group_by"], data["period"]["group_by"])
+    preset = reports.param_text(params, "preset", 20)
+    preset_label = {
+        "all": "All time", "today": "Today", "week": "This week", "month": "This month", "year": "This year", "custom": "Custom date range",
+    }.get(preset, "")
+    filters = [
+        ("Period", data["period"].get("label") or "All time"),
         ("Service", data["service"]["label"] if data["service"] else "All services"),
         ("Grouping", grouping),
-        ("Counting rules", "Orders by request date; completed orders and revenue by completion date"),
     ]
+    if preset_label:
+        filters.append(("Period filter", preset_label))
+    fulfillment = reports.param_text(params, "fulfillment", 20)
+    if fulfillment:
+        filters.append(("Fulfillment", reports.FULFILLMENT_METHODS.get(fulfillment, fulfillment)))
+    status = reports.param_text(params, "status", 60)
+    if status:
+        filters.append(("Order status", status))
+    customer = reports.param_text(params, "customer", 64)
+    if customer:
+        filters.append(("Customer ID", customer))
+    payment_method = reports.param_text(params, "payment_method", 60)
+    if payment_method:
+        filters.append(("Payment method", payment_method))
+    filters.append(("Counting rules", "Orders by request date; completed orders and revenue by completion date; payments by payment date"))
+    return filters
 
 
 def build_summary(params: Mapping[str, Any]) -> Report:
@@ -435,7 +460,7 @@ def build_summary(params: Mapping[str, Any]) -> Report:
         "Overall Business Summary",
         "business-summary",
         data["period"]["label"],
-        _summary_filters(data),
+        _summary_filters(data, params),
         [
             ("Total customers (registered accounts)", totals["total_customers"], "int"),
             ("New customers in period", totals["new_customers"], "int"),
@@ -474,13 +499,47 @@ def build_revenue(params: Mapping[str, Any]) -> Report:
         "Revenue Report",
         "revenue-report",
         data["period"]["label"],
-        _summary_filters(data),
+        _summary_filters(data, params),
         [
             ("Total confirmed revenue", data["totals"]["confirmed_revenue"], "money"),
             ("Completed and fully paid transactions", len(transactions), "int"),
             ("Completed orders in period", data["totals"]["completed_orders"], "int"),
         ],
         sections,
+    )
+
+
+def build_payment_summary(params: Mapping[str, Any]) -> Report:
+    data = reports.business_summary(params)
+    p = data["payments"]
+    return Report(
+        "Payment Summary Report",
+        "payment-summary",
+        data["period"]["label"],
+        _summary_filters(data, params),
+        [
+            ("Payments received", p["received_total"], "money"),
+            ("Payment count", p["payment_count"], "int"),
+            ("Down payments (50%)", p["down_payments"], "money"),
+            ("Balance payments", p["balance_payments"], "money"),
+            ("Cash on Delivery collected", p["cod_collections"], "money"),
+            ("Completed refunds (deducted)", p["refunds_completed"], "money"),
+            ("Refunds in progress (not deducted)", p["refunds_in_progress"], "money"),
+            ("Net collections", p["net_collections"], "money"),
+            ("Outstanding balance (active orders)", p["outstanding_balance"], "money"),
+            ("Orders awaiting down payment", p["awaiting_down_payment"], "int"),
+        ],
+        [
+            Section("Payment methods", [
+                Column("method", "Payment method", width=2.0),
+                Column("count", "Payments", "int"),
+                Column("amount", "Amount received", "money"),
+            ], p["by_method"], {
+                "method": "Total",
+                "count": sum(row["count"] for row in p["by_method"]),
+                "amount": p["received_total"],
+            }, "Payment Methods"),
+        ],
     )
 
 
@@ -548,12 +607,12 @@ def build_payments(params: Mapping[str, Any]) -> Report:
         [
             ("Verified payments", len(verified), "int"),
             ("Amount received (verified)", reports.money(sum(row["amount"] for row in verified)), "money"),
-            ("Submissions not counted as paid (pending or rejected)", len(rows) - len(verified), "int"),
+            ("Submissions not counted as paid (pending, receipt requested, or rejected)", len(rows) - len(verified), "int"),
         ],
-        [Section("Payments", columns, rows, {
+        [Section("Payment transactions (by payment/submission date)", columns, rows, {
             "received_date": f"Total verified ({len(verified)} payments)",
             "amount": reports.money(sum(row["amount"] for row in verified)),
-        }, "Payments", "No payments match the selected filters. (Pending and rejected submissions are never included in the total.)")],
+        }, "Payments", "No payment transactions match the selected filters. Pending, receipt-requested, and rejected submissions are never included in the verified total.")],
     )
 
 
@@ -564,6 +623,8 @@ BUILDERS = {
     "customer": build_customer,
     "summary": build_summary,
     "revenue": build_revenue,
+    "payment_summary": build_payment_summary,
+    "payment-summary": build_payment_summary,
     "orders": build_orders,
     "payments": build_payments,
 }

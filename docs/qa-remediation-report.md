@@ -1,4 +1,4 @@
-# ImPRESSion PrintShop — QA remediation report
+# ImPRESS Print Works — QA remediation report
 
 Date: 2026-11-23
 

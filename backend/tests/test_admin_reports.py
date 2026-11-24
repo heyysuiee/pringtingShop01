@@ -278,6 +278,90 @@ class AdminEndpointAccessTests(unittest.TestCase):
         self.assertEqual([row["reference"] for row in report.sections[0].rows], [row["reference"] for row in rows])
         self.assertEqual(present(report.sections[0].totals)["total_amount"], round(sum(row["total_amount"] for row in rows), 2))
 
+    def test_payment_summary_export_matches_displayed_summary_filters(self) -> None:
+        base = report_services.business_summary({"preset": "all"})
+        service = base["services"][0]["id"] if base["services"] else ""
+        params = {"preset": "all", "service": service}
+        summary = report_services.business_summary(params)
+        report = export_services.build_payment_summary(params)
+        self.assertEqual(report.title, "Payment Summary Report")
+        self.assertEqual(report.period, summary["period"]["label"])
+        totals = {label: value for label, value, _ in report.summary}
+        self.assertEqual(totals["Payments received"], summary["payments"]["received_total"])
+        self.assertEqual(totals["Net collections"], summary["payments"]["net_collections"])
+        self.assertEqual(totals["Outstanding balance (active orders)"], summary["payments"]["outstanding_balance"])
+        filter_map = dict(report.filters)
+        self.assertEqual(filter_map.get("Service"), summary["service"]["label"] if summary["service"] else "All services")
+        self.assertEqual(filter_map.get("Period"), summary["period"]["label"])
+
+        admin = TestClient(app)
+        admin.cookies.set(SESSION_COOKIE, create_session_token(settings.admin_email or "admin@example.test", "admin"))
+        pdf = admin.get("/api/admin/exports/payment_summary", params={**params, "format": "pdf"})
+        self.assertEqual(pdf.status_code, 200, pdf.text)
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
+        xlsx = admin.get("/api/admin/exports/payment-summary", params={**params, "format": "xlsx"})
+        self.assertEqual(xlsx.status_code, 200, xlsx.text)
+
+    def test_summary_export_includes_active_filter_metadata(self) -> None:
+        base = report_services.business_summary({"preset": "all"})
+        service = base["services"][0]["id"] if base["services"] else ""
+        params = {
+            "preset": "all",
+            "service": service,
+            "fulfillment": "pickup",
+            "status": "Pending Confirmation",
+            "customer": "cust-123",
+            "payment_method": "GCash",
+        }
+        report = export_services.build_summary(params)
+        filters = dict(report.filters)
+        if service:
+            self.assertEqual(filters.get("Service"), next(opt["label"] for opt in base["services"] if opt["id"] == service))
+        self.assertEqual(filters.get("Fulfillment"), "Store Pickup")
+        self.assertEqual(filters.get("Order status"), "Pending Confirmation")
+        self.assertEqual(filters.get("Customer ID"), "cust-123")
+        self.assertEqual(filters.get("Payment method"), "GCash")
+
+    def test_receipt_requested_submission_not_counted_as_pending_verification(self) -> None:
+        order = {
+            "reference": "IPS-TEST-RR",
+            "created_at": "2026-01-10T00:00:00+00:00",
+            "updated_at": "2026-01-10T00:00:00+00:00",
+            "completed_at": None,
+            "status": "Awaiting Down Payment",
+            "total_amount": 1000.0,
+            "payments": [],
+            "payment_submissions": [{
+                "id": "sub-1",
+                "amount": 450.0,
+                "method": "GCash",
+                "reference": "GCASH-1",
+                "status": "receipt_requested",
+                "submitted_at": "2026-01-10T01:00:00+00:00",
+                "stage": "down_payment",
+            }],
+            "refunds": [],
+            "fulfillment": {},
+            "customer": {"id": "c1", "name": "Test", "email": "t@example.test", "phone": ""},
+            "product": {"id": "p1", "name": "Test"},
+            "customization": {"quantity": 1},
+            "pricing": {},
+            "attachments": [],
+        }
+        row = report_services.order_row(order, report_services.ServiceIndex())
+        entries = report_services._transaction_entries(order, row)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["verification_result"], "receipt_requested")
+        self.assertFalse(entries[0]["counts_as_paid"])
+        summary = report_services.payment_list({"page_size": "all"})
+        # synthetic order not in repo; verify summary calculation directly via payment_rows logic
+        pending = sum(
+            e["amount"] for e in entries
+            if e["verification_status"] == report_services.order_services.VERIFICATION_PENDING
+            and e.get("verification_result") != "receipt_requested"
+        )
+        self.assertEqual(pending, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

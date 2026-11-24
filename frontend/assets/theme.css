@@ -1,5 +1,5 @@
 /* ==========================================================================
-   ImPRESSion PrintShop — Light Studio design system
+   ImPRESS Print Works — Light Studio design system
    Shared by the storefront, the customer portal, and the admin workspace.
    Load order on every page: legacy page CSS → theme.css → theme-site.css or
    admin/theme-admin.css → light-theme.css (final normalization layer).

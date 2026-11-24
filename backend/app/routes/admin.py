@@ -42,22 +42,26 @@ def admin_customer(customer_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/api/admin/payments")
-def admin_payments(request: Request) -> dict[str, Any]:
+def admin_payments(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
     return report_services.payment_list(_params(request))
 
 
 @router.get("/api/admin/reports/completed")
-def completed_report(request: Request) -> dict[str, Any]:
+def completed_report(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
     return report_services.completed_list(_params(request))
 
 
 @router.get("/api/admin/reports/services")
-def service_report(request: Request) -> dict[str, Any]:
+def service_report(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
     return report_services.service_report(_params(request))
 
 
 @router.get("/api/admin/reports/summary")
-def business_summary(request: Request) -> dict[str, Any]:
+def business_summary(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
     return report_services.business_summary(_params(request))
 
 

@@ -52,8 +52,8 @@ def deliver(reference: str, notifications: list[dict[str, Any]]) -> None:
         body = (
             f"{notification['message']}\n\n"
             f"Order reference: {reference}\n"
-            "Sign in to the ImPRESSion PrintShop customer portal to see the details.\n\n"
-            "This is an automated message from ImPRESSion PrintShop."
+            "Sign in to the ImPRESS Print Works customer portal to see the details.\n\n"
+            "This is an automated message from ImPRESS Print Works."
         )
         threading.Thread(
             target=_send_email,

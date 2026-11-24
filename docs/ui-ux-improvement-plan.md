@@ -1,4 +1,4 @@
-# ImPRESSion PrintShop — UI/UX & Validation Improvement Plan
+# ImPRESS Print Works — UI/UX & Validation Improvement Plan
 
 Date: 2026-11-22 · Baseline: `python -m unittest discover -s backend/tests` → **292 tests, OK**. No production data changed; no unrelated feature will be rebuilt.
 

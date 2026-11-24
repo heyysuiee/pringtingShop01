@@ -696,6 +696,11 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
 
     def test_full_delivery_flow_from_confirmation_to_completion(self) -> None:
         reference = self.confirmed_order(1000, fulfillment=DELIVERY)["reference"]
+        opening = self.admin_view(reference)
+        # A future release destination is not current fulfillment progress.
+        self.assertEqual(opening["fulfillment"]["fulfillment_status"], "Not started")
+        self.assertEqual(opening["fulfillment"]["next_release_status"], "Ready for Dispatch")
+        self.assertFalse(opening["fulfillment"]["release_ready"])
         # No production before the customer approves a draft.
         self.admin_post(reference, "status", {"status": "In Production"}, expect=409)
         self.assertEqual(self.admin_view(reference)["allowed_statuses"], ["Draft Preparation"])
@@ -714,23 +719,62 @@ class ProductionAndFulfillmentTests(WorkflowTestCase):
         self.admin_post(reference, "status", {"status": "Out for Delivery"}, expect=409)
         self.admin_post(reference, "status", {"status": "Quality Checking"})
         checks = {key: True for key in ("product_quality", "print_quality", "color_accuracy", "quantity_verified", "material_condition")}
-        self.assertEqual(self.admin_post(reference, "quality-check", {"checks": checks})["status"], "Packaging")
+        packed_after_check = self.admin_post(reference, "quality-check", {"checks": checks})
+        self.assertEqual(packed_after_check["status"], "Packaging")
+        self.assertEqual(packed_after_check["fulfillment"]["fulfillment_status"], "Packaging")
         # Packed with a balance outstanding: the order waits for the remaining 50% before it is released.
         packed = self.admin_post(reference, "packaging", {"completed_quantity": 2})
         self.assertEqual(packed["status"], "Awaiting Full Payment")
+        self.assertEqual(packed["fulfillment"]["fulfillment_status"], "Awaiting full payment")
+        self.assertFalse(packed["fulfillment"]["release_ready"])
+        self.assertEqual(packed["fulfillment"]["next_release_status"], "Ready for Dispatch")
         self.admin_post(reference, "dispatch", {"tracking_number": "JT1234567890"}, expect=409)
         self.admin_post(reference, "status", {"status": "Completed"}, expect=409)
         self.submit_payment(reference)
         collected = self.verify(reference)
         self.assertEqual(collected["payments"][-1]["kind"], "Balance payment")
         self.assertEqual(collected["status"], "Ready for Dispatch")
+        self.assertEqual(collected["fulfillment"]["fulfillment_status"], "Ready for dispatch")
+        self.assertTrue(collected["fulfillment"]["release_ready"])
         dispatched = self.admin_post(reference, "dispatch", {"tracking_number": f"JT{uuid.uuid4().int % 10**10:010d}"})
         self.assertEqual((dispatched["status"], dispatched["fulfillment"]["courier"]), ("Out for Delivery", "J&T Express"))
+        self.assertEqual(dispatched["fulfillment"]["fulfillment_status"], "Out for delivery")
         delivered = self.admin_post(reference, "delivery/delivered", {"proof": [{"name": "pod.png", "dataUrl": PNG}]})
         self.assertEqual(delivered["status"], "Delivered")
+        self.assertEqual(delivered["fulfillment"]["fulfillment_status"], "Delivered")
         completed = self.admin_post(reference, "status", {"status": "Completed"})
         self.assertEqual((completed["status"], completed["payment"]["balance"]), ("Completed", 0.0))
+        self.assertEqual(completed["fulfillment"]["fulfillment_status"], "Completed")
         self.assertIn("status_changed", self.kinds(reference))
+        # Every valid transition is recorded once, including the draft revision and the separate release step.
+        timeline_response = self.shopper.get(f"/api/orders/{reference}")
+        self.assertEqual(timeline_response.status_code, 200, timeline_response.text)
+        self.assertEqual([item["status"] for item in timeline_response.json()["status_timeline"]], [
+            "Pending Confirmation", "Under Review", "Quotation Sent", "Awaiting Down Payment", "Confirmed",
+            "Awaiting Customer Approval", "Draft Preparation", "Awaiting Customer Approval", "Approved for Printing",
+            "In Production", "Quality Checking", "Packaging", "Awaiting Full Payment", "Ready for Dispatch",
+            "Out for Delivery", "Delivered", "Completed",
+        ])
+
+    def test_flagged_excess_keeps_a_packed_order_out_of_ready_status(self) -> None:
+        reference = self.confirmed_order(1000, fulfillment=DELIVERY)["reference"]
+        self.through_draft_approval(reference)
+        self.admin_post(reference, "status", {"status": "In Production"})
+        self.admin_post(reference, "status", {"status": "Quality Checking"})
+        checks = {key: True for key in ("product_quality", "print_quality", "color_accuracy", "quantity_verified", "material_condition")}
+        self.admin_post(reference, "quality-check", {"checks": checks})
+        packed = self.admin_post(reference, "packaging", {"completed_quantity": 2})
+        self.assertEqual(packed["status"], "Awaiting Full Payment")
+
+        balance = float(packed["payment"]["balance"])
+        over = self.admin_post(reference, "payments", {"amount": balance + 0.51, "method": "Cash", "received": True})
+        self.assertEqual(over["status"], "Awaiting Full Payment")
+        self.assertEqual(over["payment"]["payment_status"], "Excess Payment")
+        self.assertEqual(over["payment"]["excess_amount"], 0.51)
+        self.assertEqual(over["fulfillment"]["fulfillment_status"], "Awaiting full payment")
+        self.assertFalse(over["fulfillment"]["release_ready"])
+        self.admin_post(reference, "dispatch", {"tracking_number": "JT1234567890"}, expect=409)
+        self.admin_post(reference, "status", {"status": "Completed"}, expect=409)
 
     def test_production_needs_the_down_payment_even_for_older_records(self) -> None:
         reference = self.accept(self.customized_order(1000))["reference"]

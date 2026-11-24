@@ -27,9 +27,44 @@
     let detailSource = "account";
     // Changing an order (accepting a quotation, paying, approving a draft) needs the signed-in account.
     let signedIn = false;
-    fetch("/api/customer/session", { credentials: "same-origin" })
-        .then((response) => { signedIn = response.ok; })
-        .catch(() => { signedIn = false; });
+    // account.js restores the session on every page load; wait for it before opening an order from the URL.
+    const sessionReady = window.PrintShopAccount?.ready || Promise.resolve(null);
+    sessionReady.then((customer) => { signedIn = Boolean(customer); }).catch(() => { signedIn = false; });
+
+    // Stable order routes: /customer/orders/<ref>[/payment|/approval]. The reference always comes from the
+    // address bar on a refresh, never from a temporary navigation state.
+    const ORDER_ROUTE = /^\/customer\/orders\/([^/]+)(?:\/(payment|approval))?\/?$/;
+    const STEP_TARGETS = { payment: () => paymentPanel, approval: () => workReviewPanel };
+    let currentStep = "";
+    let unwatch = null;
+
+    function parseOrderRoute() {
+        const match = ORDER_ROUTE.exec(window.location.pathname);
+        if (!match) return null;
+        try { return { reference: decodeURIComponent(match[1]), step: match[2] || "" }; }
+        catch { return null; }
+    }
+
+    function orderUrl(reference, step = "") {
+        return `/customer/orders/${encodeURIComponent(reference)}${step ? `/${step}` : ""}`;
+    }
+
+    function syncOrderUrl(reference, step = currentStep, replace = false) {
+        const url = orderUrl(reference, step);
+        if (window.location.pathname === url) return;
+        window.history[replace ? "replaceState" : "pushState"]({ reference, step }, "", url);
+    }
+
+    function focusStep(step) {
+        const target = STEP_TARGETS[step]?.();
+        if (target && !target.hidden) target.scrollIntoView({ block: "start", behavior: "instant" });
+    }
+
+    const PENDING_STATUSES = ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"];
+    function canCancelOrder(order) {
+        return PENDING_STATUSES.includes(order.status) && order.payments.length === 0
+            && !(order.payment_submissions || []).some((item) => item.status === "pending");
+    }
 
     const make = (tag, className, value) => {
         const element = document.createElement(tag);
@@ -1047,6 +1082,8 @@
             }
         }
         const workStatus = order.work_status || payment.work_status || "Not available";
+        // The server derives this from order.status; never show a release destination as current progress.
+        const fulfillmentStatus = order.fulfillment?.fulfillment_status || "Not started";
 
         const setText = (id, value) => {
             const node = document.querySelector(id);
@@ -1058,6 +1095,7 @@
         setText("#snapshot-balance", balance);
         setText("#snapshot-submitted", submitted);
         setText("#snapshot-work-status", workStatus);
+        setText("#snapshot-fulfillment-status", fulfillmentStatus);
 
         const colourStatus = (selector, value) => {
             const node = document.querySelector(selector);
@@ -1070,6 +1108,7 @@
         };
         colourStatus("#snapshot-payment-status", paymentStatus);
         colourStatus("#snapshot-work-status", workStatus);
+        colourStatus("#snapshot-fulfillment-status", fulfillmentStatus);
     }
 
     /** Compact, always-visible summary of money and whatever the customer must do next. */
@@ -1124,7 +1163,11 @@
             const review = make("button", "btn btn-dark btn-small", "Review work");
             review.type = "button";
             review.disabled = !canAct;
-            review.addEventListener("click", () => workReviewPanel.scrollIntoView({ block: "start", behavior: "smooth" }));
+            review.addEventListener("click", () => {
+                currentStep = "approval";
+                if (currentOrder) syncOrderUrl(currentOrder.reference, currentStep);
+                workReviewPanel.scrollIntoView({ block: "start", behavior: "smooth" });
+            });
             item.append(review);
             row.append(item);
             actions.push("work");
@@ -1142,7 +1185,11 @@
             item.append(make("span", "", `${due.label}: send ${money(due.amount)} and submit your receipt.`));
             const pay = make("button", "btn btn-dark btn-small", "Go to payment");
             pay.type = "button";
-            pay.addEventListener("click", () => paymentPanel.scrollIntoView({ block: "start", behavior: "smooth" }));
+            pay.addEventListener("click", () => {
+                currentStep = "payment";
+                if (currentOrder) syncOrderUrl(currentOrder.reference, currentStep);
+                paymentPanel.scrollIntoView({ block: "start", behavior: "smooth" });
+            });
             item.append(pay);
             row.append(item);
             actions.push("payment");
@@ -1315,10 +1362,8 @@
         renderWorkReviewPanel(order);
         renderPaymentPanel(order);
         renderPaymentSnapshot(order);
-        const pendingStatuses = ["Pending Confirmation", "Under Review", "Awaiting Quotation", "Quotation Sent", "Quotation Declined", "Awaiting COD Confirmation", "Awaiting Down Payment"];
         // Confirmed orders have a verified payment, so they are never cancellable here.
-        const hasPendingPayment = (order.payment_submissions || []).some((item) => item.status === "pending");
-        const canCancel = pendingStatuses.includes(order.status) && order.payments.length === 0 && !hasPendingPayment;
+        const canCancel = canCancelOrder(order);
         const cancelButton = document.querySelector("#cancel-order");
         cancelButton.hidden = !canCancel;
         cancelButton.disabled = false;
@@ -1334,8 +1379,91 @@
         if (options.scroll) detail.scrollIntoView({ block: "start", behavior: "instant" });
     }
 
-    async function loadOrder(reference) {
+    function showOrderList() {
+        unwatch?.();
+        unwatch = null;
+        currentStep = "";
+        detail.hidden = true;
+        accountSection.hidden = false;
+        accountPanel.hidden = false;
+        lookupPanel.hidden = false;
+        list.hidden = true;
         error.textContent = "";
+        document.dispatchEvent(new CustomEvent("customer-orders-changed"));
+    }
+
+    /** True while a form has typed values or a chosen receipt: an update must not rebuild that form. */
+    function formBusy() {
+        if (confirmingAction) return true;
+        const fields = document.querySelectorAll(
+            "#customer-payment input:not([type=hidden]), #customer-payment textarea, "
+            + "#customer-work-review textarea, #customer-requests input:not([type=hidden]), #customer-requests textarea"
+        );
+        return Array.from(fields).some((field) => {
+            if (field.type === "file") return Boolean(field.files?.length);
+            // Radio/checkbox values are always present; only a selected one is real input.
+            if (field.type === "radio" || field.type === "checkbox") return field.checked;
+            return Boolean(field.value);
+        });
+    }
+
+    /** Status-only update for the case where an in-progress form must stay untouched. */
+    function applyLiveStatus(order) {
+        currentOrder = order;
+        const banner = document.querySelector("#detail-status");
+        banner.textContent = order.status;
+        banner.className = `status-banner ${statusSlug(order.status)}`;
+        renderTimeline(order);
+        renderPaymentSnapshot(order);
+        renderActionStrip(order);
+        const payment = order.payment || {};
+        const pending = (order.payment_submissions || []).some((item) => item.status === "pending");
+        const due = payment.next_payment;
+        const submit = paymentPanel.querySelector('button[type="submit"]');
+        if (submit) submit.disabled = !(due && !due.locked && !pending && order.customer_actions?.pay !== false && (detailSource === "account" || signedIn));
+        const work = order.work_approval || {};
+        const workPending = work.status === "pending";
+        document.querySelector("#approve-work").disabled = !workPending || !order.customer_actions?.approve_work;
+        document.querySelector("#request-work-revision").disabled = !workPending || !order.customer_actions?.request_work_revision;
+        document.querySelector("#cancel-order").hidden = !canCancelOrder(order);
+    }
+
+    let refreshing = false;
+    /** Called when the server's version moves: fetch the authoritative order and redraw without reloading. */
+    async function quietRefresh(reference) {
+        if (!currentOrder || currentOrder.reference !== reference || refreshing) return;
+        refreshing = true;
+        try {
+            const order = await request(`/api/account/orders/${encodeURIComponent(reference)}`);
+            if (formBusy()) {
+                // Keep the customer's typing and receipt; apply only the status and button changes now.
+                applyLiveStatus(order);
+            } else {
+                renderDetail(order);
+            }
+        } catch (issue) {
+            if (issue.status === 401) document.dispatchEvent(new CustomEvent("customer-session-ended"));
+            // A transient network error leaves the current view intact; the next poll retries.
+        } finally {
+            refreshing = false;
+        }
+    }
+
+    function subscribe(reference, version) {
+        unwatch?.();
+        unwatch = null;
+        if (!window.PrintShopWorkflowSync) return;
+        unwatch = window.PrintShopWorkflowSync.watch({
+            reference,
+            role: "account",
+            version,
+            onChange: () => { void quietRefresh(reference); },
+        });
+    }
+
+    async function loadOrder(reference, options = {}) {
+        error.textContent = "";
+        detailError.textContent = "";
         try {
             // Verified by the session: the server only returns orders owned by the signed-in account.
             const order = await request(`/api/account/orders/${encodeURIComponent(reference)}`);
@@ -1343,11 +1471,24 @@
             detailSource = "account";
             accountSection.hidden = true;
             lookupPanel.hidden = true;
+            list.hidden = true;
+            detail.hidden = false;
+            currentStep = options.step || currentStep;
             renderDetail(order, { scroll: true });
+            syncOrderUrl(order.reference, currentStep, Boolean(options.fromRoute));
+            subscribe(order.reference, order.version);
+            if (currentStep) focusStep(currentStep);
         } catch (issue) {
             if (issue.status === 401) {
                 // The sign-in ended (expired, or the password was reset on another device).
                 document.dispatchEvent(new CustomEvent("customer-session-ended"));
+                return;
+            }
+            if (issue.status === 404 && options.fromRoute) {
+                // A deleted order or hand-written URL: leave the stale route and explain why.
+                showOrderList();
+                error.textContent = "This order is no longer available.";
+                window.history.replaceState(null, "", "/customer-portal");
                 return;
             }
             error.textContent = issue instanceof Error ? issue.message : "The order could not be loaded.";
@@ -1357,24 +1498,20 @@
     document.addEventListener("customer-order-select", (event) => {
         const { reference } = event.detail || {};
         if (typeof reference !== "string" || !reference) return;
+        currentStep = "";
         void loadOrder(reference);
     });
 
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!form.reportValidity()) return;
+        currentStep = "";
         await loadOrder(referenceInput.value.trim());
     });
 
     document.querySelector("#back-to-orders").addEventListener("click", () => {
-        detail.hidden = true;
-        accountSection.hidden = false;
-        accountPanel.hidden = false;
-        lookupPanel.hidden = false;
-        list.hidden = true;
-        error.textContent = "";
-        // The order may have changed while it was open (approved, cancelled): reload the account's list.
-        document.dispatchEvent(new CustomEvent("customer-orders-changed"));
+        showOrderList();
+        window.history.pushState(null, "", "/customer-portal");
         accountPanel.scrollIntoView({ block: "start", behavior: "instant" });
     });
 
@@ -1385,11 +1522,42 @@
 
     document.querySelector("#cancel-order").addEventListener("click", async (event) => {
         const button = event.currentTarget;
-        if (!currentOrder || !(await confirmAction("Cancel this request? This cannot be undone.", { title: "Cancel request?", confirmLabel: "Cancel request", tone: "danger" }))) return;
+        if (!currentOrder || !(await confirmAction("Cancel this request? This cannot be done.", { title: "Cancel request?", confirmLabel: "Cancel request", tone: "danger" }))) return;
         void orderAction("cancel", {}, "The request could not be cancelled.", button);
+    });
+
+    // Back/Forward re-reads the route and the database; it never relies on the previous in-memory order.
+    window.addEventListener("popstate", () => {
+        const route = parseOrderRoute();
+        if (!route) {
+            showOrderList();
+            return;
+        }
+        currentStep = route.step || "";
+        void loadOrder(route.reference, { fromRoute: true, step: currentStep });
+    });
+    document.addEventListener("customer-session-ended", () => {
+        unwatch?.();
+        unwatch = null;
+        // A session can expire while an order is open. Return to this exact order after signing in again.
+        if (!parseOrderRoute()) return;
+        const target = window.location.pathname + window.location.search;
+        window.location.replace(`/sign-in?${new URLSearchParams({ next: target })}`);
     });
 
     // Old links (/customer-portal?email=…&ref=…) only prefill the reference; opening it still needs sign-in.
     const parameters = new URLSearchParams(window.location.search);
     if (parameters.get("ref")) referenceInput.value = parameters.get("ref");
+    // Restore the exact workflow from the URL only after the session has been restored.
+    void sessionReady.then((customer) => {
+        const route = parseOrderRoute();
+        if (!route) return;
+        if (!customer) {
+            const target = window.location.pathname + window.location.search;
+            window.location.replace(`/sign-in?${new URLSearchParams({ next: target })}`);
+            return;
+        }
+        currentStep = route.step || "";
+        void loadOrder(route.reference, { fromRoute: true, step: currentStep });
+    });
 })();

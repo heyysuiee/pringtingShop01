@@ -60,7 +60,7 @@ PRINTSHOP_SMTP_HOST=smtp.gmail.com
 PRINTSHOP_SMTP_PORT=587
 PRINTSHOP_SMTP_USERNAME=yourshop@gmail.com
 PRINTSHOP_SMTP_PASSWORD=your-16-character-app-password
-PRINTSHOP_SMTP_FROM=ImPRESSion PrintShop <yourshop@gmail.com>
+PRINTSHOP_SMTP_FROM=ImPRESS Print Works <yourshop@gmail.com>
 ```
 
 Then check the settings by sending a test email:

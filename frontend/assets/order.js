@@ -2237,37 +2237,127 @@
         const packageName = order.order_kind === "package" ? order.package?.name : (order.order_kind === "design" ? `${order.design?.name || "Shop"} design` : "");
         const fulfillment = order.fulfillment || {};
         const shipping = order.shipping || {};
-        const lines = [
-            el("p", "", `${order.product.name}${packageName ? ` · ${packageName}` : ""} · ${order.customization.quantity.toLocaleString()} pc(s) · ${order.status}`),
-        ];
+
+        // 1. Next Steps Section ("What happens next")
+        const nextSteps = el("div", "confirm-next-steps");
+        const stepsTitle = el("h3", "confirm-section-title", "What happens next");
+        const stepsGrid = el("div", "confirm-steps-grid");
+
+        const step1 = el("div", "confirm-step-item");
+        const step1Num = el("span", "confirm-step-num", "1");
+        const step1Body = el("div", "confirm-step-body");
+        step1Body.append(
+            el("strong", "", order.fixed_price ? "Shop Review & Approval" : "Quotation & Review"),
+            el("p", "", order.fixed_price
+                ? "The shop administrator reviews your specifications and approves your order."
+                : "The shop reviews your specifications and sends an official quotation to your portal.")
+        );
+        step1.append(step1Num, step1Body);
+
+        const step2 = el("div", "confirm-step-item");
+        const step2Num = el("span", "confirm-step-num", "2");
+        const step2Body = el("div", "confirm-step-body");
+        step2Body.append(
+            el("strong", "", "50% Down Payment"),
+            el("p", "", order.fixed_price
+                ? `Pay the 50% down payment through ${paymentMethodLabel} after the shop approves your order; your order is confirmed once verified.`
+                : `After accepting your quote, pay the 50% down payment through ${paymentMethodLabel} to confirm your order.`)
+        );
+        step2.append(step2Num, step2Body);
+
+        const step3 = el("div", "confirm-step-item");
+        const step3Num = el("span", "confirm-step-num", "3");
+        const step3Body = el("div", "confirm-step-body");
+        step3Body.append(
+            el("strong", "", "Draft Review & Printing"),
+            el("p", "", "Review and approve your draft under “NO APPROVAL, NO PRINT” before printing begins.")
+        );
+        step3.append(step3Num, step3Body);
+
+        stepsGrid.append(step1, step2, step3);
+        nextSteps.append(stepsTitle, stepsGrid);
+
+        // 2. Order Summary Card
+        const summaryCard = el("div", "confirm-summary-card");
+        const summaryHead = el("div", "confirm-summary-head");
+        const statusBadge = el("span", "order-status-pill status-pending-pill", order.status || "Pending Confirmation");
+        summaryHead.append(
+            el("h3", "confirm-summary-title", "Order Summary"),
+            statusBadge
+        );
+
+        const summaryList = el("dl", "confirm-summary-list");
+        function addSummaryRow(label, value) {
+            if (!value) return;
+            const row = el("div", "confirm-summary-row");
+            const dt = el("dt", "", label);
+            const dd = el("dd", "");
+            if (typeof value === "string") {
+                dd.textContent = value;
+            } else if (value instanceof Node) {
+                dd.appendChild(value);
+            }
+            row.append(dt, dd);
+            summaryList.appendChild(row);
+        }
+
+        const itemDesc = `${order.product.name}${packageName ? ` · ${packageName}` : ""}`;
+        addSummaryRow("Product", itemDesc);
+        addSummaryRow("Quantity", `${order.customization.quantity.toLocaleString()} pc(s)`);
+
         if (order.fixed_price) {
             const sizeText = order.price_list?.size ? ` · ${order.price_list.size}` : "";
-            lines.push(
-                el("p", "", `${order.fixed_price_label || "Package total"}: ${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece${sizeText})` : ""}.`),
-                el("p", "", `50% down payment: ${money(payment.down_payment_required)} · remaining balance ${money(payment.remaining_after_down_payment)}. `
-                    + `Pay the down payment through ${paymentMethodLabel} after the shop approves your order; your order is confirmed once the shop verifies it.`),
-            );
+            addSummaryRow(order.fixed_price_label || "Package total", `${money(order.total_amount)}${order.pricing?.unit_price ? ` (${money(order.pricing.unit_price)} per piece${sizeText})` : ""}`);
+            addSummaryRow("50% Down payment", `${money(payment.down_payment_required)} (required to confirm)`);
+            addSummaryRow("Remaining balance", `${money(payment.remaining_after_down_payment)} (due before release)`);
         } else {
-            lines.push(
-                el("p", "", estimate !== null && estimate !== undefined
-                    ? `Estimated total: ${money(estimate)} — the shop will send a quotation for you to accept or decline.`
-                    : "The shop will send a quotation for you to accept or decline."),
-                el("p", "", "You will be notified in the customer portal when the quotation is ready. After you accept it, pay the 50% down payment through the shop's e-wallet; your order is confirmed once the shop verifies it."),
-            );
+            const subtotalText = typeof payment.order_subtotal === "number" ? money(payment.order_subtotal) : "Set by shop quotation";
+            addSummaryRow("Order subtotal", subtotalText);
+            if (estimate !== null && estimate !== undefined) {
+                addSummaryRow("Estimated total", `${money(estimate)} (preliminary estimate)`);
+            } else {
+                addSummaryRow("Estimated total", "Quotation from the shop");
+            }
         }
-        lines.push(el("p", "", `Fulfillment: ${fulfillment.label || "Store Pickup"}${fulfillment.method === "delivery"
-            ? ` to ${fulfillment.address.filter((row) => ["street", "barangay", "city", "province"].includes(row.key)).map((row) => row.value).join(", ")}`
-            : fulfillment.pickup_location ? ` at ${fulfillment.pickup_location.name}` : ""}.`));
-        if (fulfillment.method === "delivery" && shipping.delivery_province) {
-            const subtotalText = typeof payment.order_subtotal === "number" ? money(payment.order_subtotal) : "Set by the shop's quotation";
-            const totalText = typeof payment.total_amount === "number" ? money(payment.total_amount) : "Quotation + shipping fee";
-            lines.push(
-                el("p", "", `Delivery province: ${shipping.delivery_province} · Destination region: ${shipping.destination_region}.`),
-                el("p", "", `Order subtotal: ${subtotalText} · Shipping fee: ${money(shipping.shipping_fee || 0)} · Total amount: ${totalText}.`),
-            );
-            if (shipping.estimated_delivery) lines.push(el("p", "", `Estimated delivery: ${shipping.estimated_delivery} (an estimate, not a guaranteed arrival date).`));
+
+        const fulfillmentLabel = fulfillment.label || (fulfillment.method === "delivery" ? "Delivery" : "Store Pickup");
+        addSummaryRow("Fulfillment", fulfillmentLabel);
+
+        if (fulfillment.method === "delivery") {
+            const addressParts = (fulfillment.address || [])
+                .filter((row) => ["street", "barangay", "city", "province"].includes(row.key))
+                .map((row) => row.value)
+                .filter(Boolean);
+            if (addressParts.length) {
+                const regionSuffix = shipping.destination_region ? ` (${shipping.destination_region})` : "";
+                addSummaryRow("Destination", `${addressParts.join(", ")}${regionSuffix}`);
+            }
+            if (shipping.shipping_fee !== undefined && shipping.shipping_fee !== null) {
+                addSummaryRow("Shipping fee", money(shipping.shipping_fee));
+            }
+            if (shipping.estimated_delivery) {
+                const cleaned = shipping.estimated_delivery.replace(/\s*\(estimate\).*/i, "").trim();
+                addSummaryRow("Estimated delivery", `${cleaned} (estimate · not guaranteed)`);
+            }
+        } else if (fulfillment.pickup_location?.name) {
+            addSummaryRow("Pickup location", fulfillment.pickup_location.name);
         }
-        details.replaceChildren(...lines);
+
+        summaryCard.append(summaryHead, summaryList);
+
+        // 3. Information Notice Callout
+        const notice = el("div", "confirm-notice");
+        const icon = el("span", "confirm-notice-icon", "ℹ️");
+        const textWrapper = el("div", "confirm-notice-text");
+        textWrapper.append(
+            el("strong", "", "No payment is required right now."),
+            el("p", "", order.fixed_price
+                ? "The shop will review and approve your request. You will then receive payment instructions in your customer portal to send the 50% down payment."
+                : "The shop will review your specifications and send an official quotation. You can accept or decline the quotation before making any payment.")
+        );
+        notice.append(icon, textWrapper);
+
+        details.replaceChildren(nextSteps, summaryCard, notice);
         $("#confirm-track").href = "/customer-portal";
         const confirmation = $("#confirmation");
         confirmation.hidden = false;
@@ -2317,6 +2407,47 @@
         if (state.activeStep === REVIEW_STEP) renderSummary();
     });
     form.addEventListener("submit", submitOrder);
+
+    const copyRefBtn = $("#copy-ref-btn");
+    if (copyRefBtn) {
+        copyRefBtn.addEventListener("click", async () => {
+            const ref = $("#confirm-ref")?.textContent.trim();
+            if (!ref) return;
+            const label = copyRefBtn.querySelector(".copy-label");
+            const markCopied = () => {
+                if (label) label.textContent = "Copied!";
+                copyRefBtn.classList.add("copied");
+                setTimeout(() => {
+                    if (label) label.textContent = "Copy";
+                    copyRefBtn.classList.remove("copied");
+                }, 2000);
+            };
+
+            if (navigator.clipboard && window.isSecureContext) {
+                try {
+                    await navigator.clipboard.writeText(ref);
+                    markCopied();
+                    return;
+                } catch (e) {
+                    // Fall back to execCommand
+                }
+            }
+
+            const temp = document.createElement("textarea");
+            temp.value = ref;
+            temp.style.position = "fixed";
+            temp.style.opacity = "0";
+            document.body.appendChild(temp);
+            temp.focus();
+            temp.select();
+            try {
+                document.execCommand("copy");
+                markCopied();
+            } finally {
+                document.body.removeChild(temp);
+            }
+        });
+    }
 
     // ---------------------------------------------------------------- services selection (/order with no service)
 

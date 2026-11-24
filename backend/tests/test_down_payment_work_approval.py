@@ -8,6 +8,7 @@ from __future__ import annotations
 import unittest
 
 from backend.tests import test_order_workflow as workflow
+from backend.tests.support import stored_order
 
 
 PNG = workflow.PNG
@@ -157,6 +158,126 @@ class DownPaymentWorkApprovalTests(workflow.WorkflowTestCase):
         paid = self.verify(reference)
         self.assertEqual(paid["payment"]["payment_status"], "Fully Paid")
         self.assertEqual(len(paid["payments"]), 2)
+
+
+    def test_payment_terms_default_down_payment_notifies_and_audits(self) -> None:
+        package = self.place_package()
+        reference = package["reference"]
+        approved = self.admin_post(reference, "confirm", {"payment_instructions": "GCash 0917 000 0000"})
+        before = self.admin_view(reference)
+        new_total = round(float(approved["total_amount"]) + 137.5, 2)
+        expected_down = round(new_total * 0.5, 2)
+
+        revised = self.admin_post(reference, "payment-terms", {
+            "total_amount": new_total,
+            "down_payment_amount": None,
+            "payment_instructions": "GCash 0917 000 0000",
+            "note": "Corrected total",
+        })
+
+        self.assertEqual(revised["total_amount"], new_total)
+        self.assertEqual(revised["payment"]["down_payment_required"], expected_down)
+        self.assertEqual(revised["payment"]["remaining_after_down_payment"], expected_down)
+        self.assertEqual(revised["payment"]["next_payment"]["amount"], expected_down)
+        self.assertFalse(revised["payment"]["admin_set_down_payment"])
+        self.assertTrue(any("50% down payment" in item["text"] and "Reason: Corrected total" in item["text"] for item in revised["history"]))
+
+        notice = next(item for item in self.notifications(reference=reference) if item["kind"] == "payment_terms_updated")
+        self.assertEqual(notice["title"], "Payment terms updated")
+        self.assertIn(f"PHP {new_total:,.2f}", notice["message"])
+        self.assertIn(f"PHP {expected_down:,.2f}", notice["message"])
+        self.assertIn("GCash 0917 000 0000", notice["message"])
+
+        entry = next(item for item in self.audit(reference) if item["action"] == "payment.terms_set")
+        self.assertEqual(entry["actor_type"], "admin")
+        self.assertTrue(entry["at"])
+        self.assertEqual(entry["details"]["note"], "Corrected total")
+        self.assertEqual(entry["details"]["down_payment"], expected_down)
+        self.assertEqual(entry["details"]["down_payment_source"], "default_50_percent")
+        self.assertEqual(entry["details"]["remaining_after_down_payment"], expected_down)
+        self.assertEqual(entry["details"]["total_from"], before["total_amount"])
+        self.assertEqual(entry["details"]["total_to"], new_total)
+
+        after = self.admin_view(reference)
+        self.assertEqual(after["pricing"], before["pricing"])
+        self.assertEqual(after["quotation_history"], before["quotation_history"])
+        self.assertEqual(stored_order(reference)["pricing"], before["pricing"])
+
+    def test_payment_terms_custom_down_payment_records_full_breakdown(self) -> None:
+        package = self.place_package()
+        reference = package["reference"]
+        approved = self.admin_post(reference, "confirm", {"payment_instructions": "GCash 0917 000 0000"})
+        new_total = round(float(approved["total_amount"]) + 200, 2)
+        custom_down = 125.0
+
+        revised = self.admin_post(reference, "payment-terms", {
+            "total_amount": new_total,
+            "down_payment_amount": custom_down,
+            "payment_instructions": "GCash 0917 000 0000",
+            "note": "Customer requested a smaller deposit",
+        })
+
+        self.assertEqual(revised["payment"]["down_payment_required"], custom_down)
+        self.assertEqual(revised["payment"]["remaining_after_down_payment"], round(new_total - custom_down, 2))
+        self.assertEqual(revised["payment"]["next_payment"]["amount"], custom_down)
+        self.assertTrue(revised["payment"]["admin_set_down_payment"])
+
+        entry = next(item for item in self.audit(reference) if item["action"] == "payment.terms_set")
+        self.assertEqual(entry["details"]["down_payment"], custom_down)
+        self.assertEqual(entry["details"]["down_payment_source"], "custom")
+        self.assertEqual(entry["details"]["remaining_after_down_payment"], round(new_total - custom_down, 2))
+        self.assertEqual(entry["details"]["note"], "Customer requested a smaller deposit")
+
+        notice = next(item for item in self.notifications(reference=reference) if item["kind"] == "payment_terms_updated")
+        self.assertIn(f"custom down payment PHP {custom_down:,.2f}", notice["message"])
+
+    def test_payment_terms_validation_failure_leaves_no_trace(self) -> None:
+        package = self.place_package()
+        reference = package["reference"]
+        approved = self.admin_post(reference, "confirm", {"payment_instructions": "GCash 0917 000 0000"})
+        before = self.admin_view(reference)
+        audit_count = len(self.audit(reference))
+        notice_count = len(self.notifications(reference=reference))
+        new_total = round(float(approved["total_amount"]) + 137.5, 2)
+        base = {"payment_instructions": "GCash 0917 000 0000", "note": "Bad attempt"}
+        cases = [
+            {"total_amount": new_total, "down_payment_amount": 0},
+            {"total_amount": new_total, "down_payment_amount": -5},
+            {"total_amount": new_total, "down_payment_amount": new_total + 1},
+            {"total_amount": new_total, "down_payment_amount": "not-a-number"},
+            {"total_amount": "", "down_payment_amount": None},
+            {"total_amount": new_total, "down_payment_amount": None, "note": ""},
+        ]
+        for case in cases:
+            with self.subTest(case=case):
+                self.admin_post(reference, "payment-terms", {**base, **case}, expect=422)
+
+        after = self.admin_view(reference)
+        self.assertEqual(after["version"], before["version"])
+        self.assertEqual(after["total_amount"], before["total_amount"])
+        self.assertEqual(after["required_down_payment"], before["required_down_payment"])
+        self.assertEqual(after["pricing"], before["pricing"])
+        self.assertEqual(len(self.audit(reference)), audit_count)
+        self.assertEqual(len(self.notifications(reference=reference)), notice_count)
+        self.assertFalse(any(item["kind"] == "payment_terms_updated" for item in self.notifications(reference=reference)))
+
+    def test_payment_terms_locked_after_payment_is_submitted_or_recorded(self) -> None:
+        package = self.place_package()
+        reference = package["reference"]
+        self.admin_post(reference, "confirm", {"payment_instructions": "GCash 0917 000 0000"})
+        self.submit_payment(reference)
+        attempt = {"total_amount": 9999, "down_payment_amount": 100, "note": "After payment"}
+
+        blocked = self.admin_post(reference, "payment-terms", attempt, expect=409)
+        self.assertIn("payment", blocked["detail"].lower())
+
+        pending = self.pending_submission(reference)
+        self.admin_post(reference, f"payment-submissions/{pending['id']}/reject", {"note": "Unreadable receipt"})
+        self.admin_post(reference, "payments", {"amount": 100, "method": "Cash", "received": True})
+        self.admin_post(reference, "payment-terms", attempt, expect=409)
+
+        self.assertFalse(any(item["action"] == "payment.terms_set" for item in self.audit(reference)))
+        self.assertFalse(any(item["kind"] == "payment_terms_updated" for item in self.notifications(reference=reference)))
 
 
 if __name__ == "__main__":

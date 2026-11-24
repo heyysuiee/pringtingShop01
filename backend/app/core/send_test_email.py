@@ -23,8 +23,8 @@ def main() -> int:
     try:
         email_service.send_message(
             sys.argv[1],
-            "ImPRESSion PrintShop test email",
-            "This is a test email from ImPRESSion PrintShop. Password reset codes will be sent the same way.",
+            "ImPRESS Print Works test email",
+            "This is a test email from ImPRESS Print Works. Password reset codes will be sent the same way.",
         )
     except email_service.EmailDeliveryError as error:
         cause = error.__cause__

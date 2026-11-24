@@ -79,7 +79,7 @@ class PaymentMethodTests(OperationsTestCase):
         self.assertIn("GCash", [item["provider"] for item in self.client.get("/api/payment-methods").json()["methods"]])
         try:
             updated = self.admin.patch(f"/api/admin/settings/payment-methods/{maya['id']}", json={
-                "active": True, "account_name": "ImPRESSion PrintShop", "account_number": "0918 000 1111",
+                "active": True, "account_name": "ImPRESS Print Works", "account_number": "0918 000 1111",
                 "instructions": "Send the exact amount.", "qr": {"name": "maya-qr.png", "dataUrl": PNG},
             })
             self.assertEqual(updated.status_code, 200, updated.text)
@@ -107,7 +107,7 @@ class PaymentMethodTests(OperationsTestCase):
         name = f"ShopeePay {uuid.uuid4().hex[:4]}"
         self.assertIn(self.shopper.post("/api/admin/settings/payment-methods", json={"provider": name}).status_code, {401, 403})
         created = self.admin.post("/api/admin/settings/payment-methods", json={
-            "provider": name, "account_name": "ImPRESSion", "account_number": "0917 222 3333", "active": True, "display_order": 5,
+            "provider": name, "account_name": "ImPRESS", "account_number": "0917 222 3333", "active": True, "display_order": 5,
         })
         self.assertEqual(created.status_code, 201, created.text)
         try:
@@ -130,6 +130,37 @@ class PaymentMethodTests(OperationsTestCase):
         finally:
             for item in active[1:]:
                 self.admin.patch(f"/api/admin/settings/payment-methods/{item['id']}", json={"active": True})
+
+    def test_active_payment_method_requires_account_details_and_preserves_history(self) -> None:
+        name = f"TestWallet {uuid.uuid4().hex[:4]}"
+        missing = self.admin.post("/api/admin/settings/payment-methods", json={
+            "provider": name, "account_name": "", "account_number": "", "active": True,
+        })
+        self.assertEqual(missing.status_code, 422, missing.text)
+
+        created = self.admin.post("/api/admin/settings/payment-methods", json={
+            "provider": name, "account_name": "ImPRESS", "account_number": "0917 111 2222",
+            "active": True, "display_order": 3, "instructions": "Send exact amount.",
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        method_id = created.json()["id"]
+        try:
+            reference = self.accept(self.customized_order(700))["reference"]
+            self.submit_payment(reference, method=name)
+            verified = self.verify(reference)
+            self.assertEqual(verified["payments"][0]["method"], name)
+
+            renamed = self.admin.patch(f"/api/admin/settings/payment-methods/{method_id}", json={
+                "provider": f"{name} Renamed", "active": False,
+            })
+            self.assertEqual(renamed.status_code, 200, renamed.text)
+
+            detail = self.admin_view(reference)
+            self.assertEqual(detail["payments"][0]["method"], name)
+            self.assertEqual(detail["payment_submissions"][0]["method"], name)
+            self.assertNotIn(f"{name} Renamed", [item["provider"] for item in self.client.get("/api/payment-methods").json()["methods"]])
+        finally:
+            self.admin.delete(f"/api/admin/settings/payment-methods/{method_id}")
 
     def test_proof_files_are_validated(self) -> None:
         reference = self.accept(self.customized_order(500))["reference"]

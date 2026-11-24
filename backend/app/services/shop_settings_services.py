@@ -272,11 +272,26 @@ def _validate_verification(values: dict[str, Any], current: dict[str, Any] | Non
         raise _bad("Configure a gateway endpoint and API key before enabling provider confirmation.")
 
 
+def _validate_availability(values: dict[str, Any], current: dict[str, Any] | None = None, *, creating: bool = False) -> None:
+    active = values.get("active", (current or {}).get("active", True))
+    if not active:
+        return
+    activating = creating or values.get("active") is True or not (current or {}).get("active", False)
+    details_touched = any(key in values for key in ("account_name", "account_number"))
+    if not activating and not details_touched:
+        return
+    account_name = str(values.get("account_name", (current or {}).get("account_name", "")) or "").strip()
+    account_number = str(values.get("account_number", (current or {}).get("account_number", "")) or "").strip()
+    if not account_name or not account_number:
+        raise _bad("Enter the account / merchant name and account number before making a payment method active.")
+
+
 @file_services.compensating_files
 def create_payment_method(payload: dict[str, Any]) -> dict[str, Any]:
     values = _method_values(payload, partial=False)
     _validate_verification(values)
     _ensure_unique_provider(values["provider"])
+    _validate_availability(values, creating=True)
     values["qr_file"] = _qr_upload(payload["qr"]) if payload.get("qr") else None
     return _method_view(payment_method_repository.insert(values), admin=True)
 
@@ -290,6 +305,7 @@ def update_payment_method(method_id: str, payload: dict[str, Any]) -> dict[str, 
     _validate_verification(values, current)
     if "provider" in values:
         _ensure_unique_provider(values["provider"], method_id)
+    _validate_availability(values, current)
     old_qr = current.get("qr_file")
     if payload.get("qr"):
         values["qr_file"] = _qr_upload(payload["qr"])

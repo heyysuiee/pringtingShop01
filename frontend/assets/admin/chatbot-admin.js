@@ -225,7 +225,7 @@
             ] : [];
             return h("div", { className: `cb-message ${assistant ? "cb-assistant" : "cb-user"}` },
                 h("div", { className: "cb-message-head" },
-                    h("strong", { text: assistant ? "ImPRESSion Assistant" : (conversation.customer_name || "Visitor") }),
+                    h("strong", { text: assistant ? "ImPRESS Assistant" : (conversation.customer_name || "Visitor") }),
                     h("span", { className: "table-secondary", text: dateTime(message.created_at) }), ...tags),
                 chatMarkup(message.content),
                 message.links && message.links.length
@@ -365,7 +365,7 @@
                 toast(error.message, "error");
             }
         }));
-        const subject = encodeURIComponent("Your inquiry to ImPRESSion PrintShop");
+        const subject = encodeURIComponent("Your inquiry to ImPRESS Print Works");
         UI.openModal(h("div", {},
             h("header", { className: "order-modal-header" }, h("div", {},
                 h("p", { className: "eyebrow", text: "Chatbot inquiry" }),

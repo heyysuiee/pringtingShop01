@@ -59,10 +59,22 @@
 }
 
 .loading-block {
-    padding: 34px 18px;
+    position: relative;
+    padding: 68px 18px 30px;
     color: var(--ui-muted);
     font-size: 14px;
     text-align: center;
+}
+
+.loading-block::before {
+    content: "";
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    width: 36px;
+    height: 36px;
+    transform: translateX(-50%);
+    background: url("/assets/image/brand/logo-icon.jpg") center / contain no-repeat;
 }
 
 .notice-error {
@@ -293,6 +305,25 @@
     border: 1px solid var(--admin-border, var(--line-strong));
     border-radius: var(--admin-radius, 14px);
     background: var(--ui-surface);
+}
+
+.report-filters .filter-field {
+    min-width: 160px;
+    flex: 1 1 160px;
+}
+
+.report-filters .filter-field.narrow {
+    min-width: 96px;
+    flex: 0 0 110px;
+}
+
+.report-filters .export-group {
+    margin-left: auto;
+    align-self: flex-end;
+}
+
+.report-filters .button {
+    align-self: flex-end;
 }
 
 .filter-search {
@@ -2163,6 +2194,12 @@ button.notification-item:hover {
         width: 100%;
         min-width: 0;
         flex: 1 1 100%;
+    }
+
+    .report-filters .export-group {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-start;
     }
 
     .filter-field.narrow {

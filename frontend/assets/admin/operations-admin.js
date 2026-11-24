@@ -603,9 +603,16 @@
         const quantity = h("input", { type: "number", min: "1", step: "1", required: true, max: String(order.production?.ordered_quantity || ""), value: order.production?.completed_quantity ?? order.customization?.quantity ?? "" });
         const remarks = textArea({ placeholder: "Packaging remarks" });
         const proof = fileInput("packaging-proof");
-        const paid = order.summary.payment_status === "Fully Paid";
-        const next = paid ? (order.fulfillment?.release_status || "Ready for Pickup") : "Awaiting Full Payment";
-        const form = actionForm("Complete packaging", paid ? `The order is fully paid: it moves to ${next} and the customer is notified.` : `A balance of ${money(order.summary.balance)} is due: the order waits in Awaiting Full Payment and the customer is asked to pay it before release.`,
+        const f = order.fulfillment || {};
+        const releaseReady = f.release_ready === true;
+        const next = releaseReady ? (f.next_release_status || f.release_status || "Ready for Pickup") : "Awaiting Full Payment";
+        const excess = Number(order.payment?.excess_amount || 0);
+        const holdReason = excess > 0.005
+            ? `A flagged excess of ${money(excess)} still needs review: the order waits in Awaiting Full Payment until the shop resolves it.`
+            : `A balance of ${money(order.summary.balance)} is due: the order waits in Awaiting Full Payment and the customer is asked to pay it before release.`;
+        const form = actionForm("Complete packaging", releaseReady
+            ? `The order is fully paid: it moves to ${next} and the customer is notified.`
+            : holdReason,
             h("div", { className: "form-grid" }, formField("Packed quantity", quantity), formField("Remarks", remarks, true), formField("Packaging proof (optional photos)", proof, true)),
             h("div", { className: "dialog-actions" }, h("button", { className: "button button-primary", type: "submit", text: "Packaging completed" })));
         return bindSubmit(form, ctx, order, "packaging", async () => ({ completed_quantity: intValue(quantity), remarks: remarks.value.trim(), proof: await readFiles(proof) }), {
@@ -660,6 +667,35 @@
             h("div", { className: "form-grid" }, formField("New delivery date", scheduled), formField("Remarks", remarks, true)),
             h("div", { className: "dialog-actions" }, h("button", { className: "button button-primary", type: "submit", text: "Reschedule" })));
         return bindSubmit(form, ctx, order, "delivery/reschedule", async () => ({ scheduled_date: scheduled.value, remarks: remarks.value.trim() }), { success: "Delivery rescheduled.", reload });
+    }
+
+    function completeFulfillmentForm(order, ctx, reload) {
+        const ready = order.status === "Delivered" || order.status === "Order Claimed";
+        const note = textInput({ maxlength: 500, placeholder: "Optional note for the order history" });
+        const form = actionForm(
+            "Mark order as completed",
+            ready
+                ? "This closes the fulfillment cycle after the actual pickup/delivery has already been confirmed. The order must remain fully paid."
+                : "The order can be completed only after it is Delivered or Order Claimed.",
+            formField("Note", note, true),
+            h("div", { className: "dialog-actions" }, h("button", {
+                className: "button button-primary",
+                type: "submit",
+                text: "Mark as completed",
+                disabled: !ready,
+            })),
+        );
+        if (!ready) return form;
+        return bindSubmit(form, ctx, order, "status", async () => ({ status: "Completed", note: note.value.trim() }), {
+            confirm: {
+                title: "Mark this order as completed?",
+                message: "Make sure the order has been actually received/claimed and all required payments are verified. This records the completion in the order history.",
+                confirmLabel: "Mark completed",
+                tone: "primary",
+            },
+            success: "Order marked as completed.",
+            reload,
+        });
     }
 
     function pickupScheduleForm(order, ctx, reload) {
@@ -756,6 +792,7 @@
         if (a.dispatch) items.push(dispatchForm(order, ctx, reload));
         if (a.confirm_delivery) items.push(...deliveredForm(order, ctx, reload));
         if (a.reschedule_delivery) items.push(rescheduleForm(order, ctx, reload));
+        if (a.complete_fulfillment) items.push(completeFulfillmentForm(order, ctx, reload));
         if (a.start_reprint) items.push(reprintForm(order, ctx, reload));
         return items;
     }
@@ -964,7 +1001,7 @@
     // ================================================================ settings
 
     function paymentMethodsPanel(ctx) {
-        const host = h("div", { className: "op-settings" }, ctx.loadingBlock("Loading payment methods…"));
+        const host = h("div", { className: "op-settings op-payment-settings" }, ctx.loadingBlock("Loading payment methods…"));
         const load = async () => {
             let data;
             try {
@@ -975,25 +1012,47 @@
             }
             host.replaceChildren(
                 h("p", { className: "field-note", text: "Customers see only active methods, with these account details and QR codes. Receipt scanning is advisory: payments stay Pending Verification until you check the money in the shop's account or an authorized provider independently confirms it." }),
-                ...data.methods.map((method) => methodEditor(method, load)),
-                h("details", { className: "op-details" }, h("summary", { text: "Add another e-wallet" }), methodEditor(null, load)),
+                ...data.methods.map((method, index) => methodEditor(method, load, index === 0)),
+                h("details", { className: "op-details op-method-card op-method-card-add" }, h("summary", { className: "op-method-summary", text: "Add another e-wallet" }), methodEditor(null, load, true)),
             );
         };
         load();
         return ctx.panel("Payment methods", "The e-wallets and other payment options the shop accepts", host);
     }
 
-    function methodEditor(method, reload) {
+    function methodEditor(method, reload, open = false) {
         const isNew = !method;
         const provider = textInput({ required: true, maxlength: 60, value: method?.provider || "", placeholder: "e.g. ShopeePay" });
-        const accountName = textInput({ maxlength: 120, value: method?.account_name || "", placeholder: "Account / merchant name" });
-        const accountNumber = textInput({ maxlength: 60, value: method?.account_number || "", placeholder: "e.g. 0917 123 4567" });
+        const accountName = textInput({ required: true, maxlength: 120, value: method?.account_name || "", placeholder: "Account / merchant name" });
+        const accountNumber = textInput({ required: true, maxlength: 60, value: method?.account_number || "", placeholder: "e.g. 0917 123 4567" });
         const instructions = textArea({ value: method?.instructions || "", placeholder: "Payment instructions shown to customers" });
         instructions.value = method?.instructions || "";
         const order = h("input", { type: "number", min: "0", max: "999", step: "1", value: method?.display_order ?? 10 });
         const active = h("input", { type: "checkbox", checked: method ? method.active : true });
         const qr = fileInput(`qr-${method?.id || "new"}`, { multiple: false, accept: IMAGE_ACCEPT });
         const removeQr = method?.qr_url ? h("input", { type: "checkbox" }) : null;
+        let qrPreview = method?.qr_url
+            ? h("img", { className: "op-qr", src: method.qr_url, alt: `${method.provider} QR code` })
+            : h("span", { className: "op-qr op-qr-empty", text: "No QR" });
+        const setQrPreview = (src, alt, emptyText = "No QR") => {
+            const next = src
+                ? h("img", { className: "op-qr", src, alt: alt || `${provider.value || "Payment method"} QR code` })
+                : h("span", { className: "op-qr op-qr-empty", text: emptyText });
+            qrPreview.replaceWith(next);
+            qrPreview = next;
+        };
+        qr.addEventListener("change", () => {
+            const [file] = qr.files || [];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => { setQrPreview(String(reader.result || ""), `${provider.value || "Payment method"} QR code preview`); if (removeQr) removeQr.checked = false; };
+            reader.readAsDataURL(file);
+        });
+        removeQr?.addEventListener("change", () => {
+            qr.value = "";
+            if (removeQr.checked) { setQrPreview("", "", "QR removed"); return; }
+            setQrPreview(method?.qr_url || "", `${method?.provider || "Payment method"} QR code`);
+        });
         const verification = h("select", {},
             h("option", { value: "manual", text: "Manual confirmation (recommended)" }),
             h("option", { value: "api", text: "Independent provider API confirmation" }));
@@ -1005,21 +1064,35 @@
         const gatewayNote = h("p", { className: "field-note", text: method?.gateway?.configured ? "An API key is saved. It is never shown to customers or returned by this settings page." : "No API key is saved. With API mode selected, receipts stay pending until you confirm them manually." });
         const save = h("button", { className: "button button-primary button-small", type: "submit", text: isNew ? "Add payment method" : "Save" });
         const remove = isNew ? null : h("button", { className: "button button-small button-danger-strong", type: "button", text: "Delete" });
-        const form = h("form", { className: "op-method" },
-            h("div", { className: "op-method-head" },
-                method?.qr_url ? h("img", { className: "op-qr", src: method.qr_url, alt: `${method.provider} QR code` }) : h("span", { className: "op-qr op-qr-empty", text: "No QR" }),
-                h("div", {}, h("strong", { text: method?.provider || "New e-wallet" }), method ? badge(method.active ? "Active" : "Inactive") : null,
-                    method && !method.configured ? h("p", { className: "field-note", text: "Account number or QR code not set yet." }) : null)),
-            h("div", { className: "form-grid" },
-                formField("Provider", provider), formField("Account / merchant name", accountName), formField("Account number", accountNumber),
-                formField("Display order", order), formField("Instructions", instructions, true), formField("QR code image (PNG, JPG, WebP)", qr, true),
-                formField("Payment verification method", verification, true)),
-            h("details", { className: "op-details" }, h("summary", { text: "Provider API settings (optional)" }), gatewayNote,
-                h("div", { className: "form-grid" }, formField("Gateway provider", gatewayProvider), formField("Verification endpoint", gatewayEndpoint),
-                    formField("API key", gatewayKey), formField("Timeout (seconds)", gatewayTimeout))),
-            h("label", { className: "check-row" }, active, " Active (shown to customers)"),
+
+        const section = (title, note, content) => h("section", { className: "op-method-section" },
+            h("div", { className: "op-method-section-head" }, h("h4", { text: title }), note ? h("p", { className: "field-note", text: note }) : null),
+            content);
+
+        const qrControls = h("div", { className: "op-qr-controls" },
+            formField("QR code image (PNG, JPG, WebP)", qr, true),
             removeQr ? h("label", { className: "check-row" }, removeQr, " Remove the current QR code") : null,
-            h("div", { className: "dialog-actions" }, remove, save));
+            h("p", { className: "field-note", text: "Upload a clear QR code so customers can scan it. Removing or replacing a QR does not affect recorded payments." }));
+
+        const form = h("form", { className: "op-method op-method-form" },
+            section("Provider information", "Basic details customers identify in the payment flow.", h("div", { className: "form-grid op-method-grid" },
+                formField("Provider", provider),
+                formField("Display order", order),
+                h("div", { className: "form-field" }, h("label", { className: "form-label", text: "Availability" }), h("label", { className: "check-row op-method-active" }, active, " Active (shown to customers)"), h("p", { className: "field-note", text: "Inactive methods are hidden from customers but preserved for historical records." })))),
+            section("Account details", "These details appear to customers for the selected active method.", h("div", { className: "form-grid op-method-grid" },
+                formField("Account / merchant name", accountName),
+                formField("Account / merchant number", accountNumber),
+                formField("Payment instructions", instructions, true))),
+            section("QR code", "Preview and manage the payment QR image.", h("div", { className: "op-qr-layout" },
+                h("div", { className: "op-qr-preview" }, qrPreview),
+                qrControls)),
+            section("Verification settings", "Verification is separate from provider/account details. OCR remains advisory; provider confirmation is optional.", h("div", { className: "op-method-verification" },
+                h("div", { className: "form-grid op-method-grid" }, formField("Payment verification method", verification, true)),
+                h("details", { className: "op-details op-verification-details" }, h("summary", { text: "Provider API settings (optional)" }), gatewayNote,
+                    h("div", { className: "form-grid op-method-grid" }, formField("Gateway provider", gatewayProvider), formField("Verification endpoint", gatewayEndpoint),
+                        formField("API key", gatewayKey), formField("Timeout (seconds)", gatewayTimeout))))),
+            h("div", { className: "dialog-actions op-method-actions" }, remove || h("span"), save));
+
         form.addEventListener("submit", async (event) => {
             event.preventDefault();
             if (!form.reportValidity()) return;
@@ -1058,7 +1131,16 @@
                 toast(error.message, "error");
             }
         });
-        return form;
+
+        if (isNew) return form;
+
+        const summary = h("summary", { className: "op-method-summary" },
+            method?.qr_url ? h("img", { className: "op-qr op-qr-summary", src: method.qr_url, alt: `${method.provider} QR code` }) : h("span", { className: "op-qr op-qr-empty op-qr-summary", text: "No QR" }),
+            h("div", { className: "op-method-summary-main" },
+                h("div", { className: "op-method-summary-title" }, h("strong", { text: method.provider }), badge(method.active ? "Active" : "Inactive"), method.configured ? null : badge("Needs setup", "warning")),
+                h("p", { className: "field-note", text: `${method.account_name || "No account name"} • ${method.account_number || "No account number"}` })),
+            h("div", { className: "op-method-summary-meta" }, h("span", { className: "field-note", text: `Order ${method.display_order ?? 0}` }), h("span", { className: "op-method-chevron", "aria-hidden": "true", text: "▾" })));
+        return h("details", { className: "op-details op-method-card", open: !!open }, summary, form);
     }
 
     function fulfillmentSettingsPanel(ctx) {

@@ -5,7 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#FAF8F4">
-    <meta name="description" content="Track your Printing Shop order with your reference number and email.">
+    <link rel="icon" href="/assets/image/brand/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" href="/assets/image/brand/favicon.png">
+    <link rel="apple-touch-icon" href="/assets/image/brand/favicon.png">
+    <meta name="description" content="Track your ImPRESS Print Works order with your reference number and email.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
@@ -17,7 +20,7 @@
     <link rel="stylesheet" href="/assets/portal-tracking.css">
     <link rel="stylesheet" href="/assets/light-theme.css">
     <script src="/assets/theme-toggle.js"></script>
-    <title>Customer Portal — Printing Shop</title>
+    <title>Customer Portal — ImPRESS Print Works</title>
 </head>
 
 <body class="inner-page portal-system">
@@ -32,7 +35,10 @@
     <!-- Main Navigation Bar -->
     <nav class="nav" aria-label="Main navigation">
         <div class="nav-brand">
-            <a class="brand-link" href="/home" aria-label="ImPRESSion PrintShop home"><span class="brand-mark" aria-hidden="true">iP</span><span class="brand-word">ImPRESSion <span>PrintShop</span></span></a>
+            <a class="brand-link" href="/home" aria-label="ImPRESS Print Works home">
+                <img class="brand-logo brand-logo-wide" data-brand-logo="horizontal" src="/assets/image/brand/logo-horizontal.jpg" width="910" height="330" alt="ImPRESS Print Works">
+                <img class="brand-logo brand-logo-small" data-brand-logo="compact" src="/assets/image/brand/logo-horizontal.jpg" width="910" height="330" alt="" aria-hidden="true">
+            </a>
         </div>
         <div class="nav-menu" id="navMenu">
             <a href="/home">Home</a>
@@ -190,6 +196,10 @@
                         <div class="snapshot-card">
                             <span class="snapshot-label">Work status</span>
                             <strong class="snapshot-value snapshot-status" id="snapshot-work-status">—</strong>
+                        </div>
+                        <div class="snapshot-card">
+                            <span class="snapshot-label">Fulfillment status</span>
+                            <strong class="snapshot-value snapshot-status" id="snapshot-fulfillment-status">—</strong>
                         </div>
                     </div>
                 </section>
@@ -349,7 +359,7 @@
     <footer class="main-footer">
         <div class="container">
             <div class="footer-bottom">
-                <p>&copy; 2026 Printing Shop System (imPRESSions Print Works). All rights reserved.</p>
+                <p>&copy; 2026 ImPRESS Print Works. All rights reserved.</p>
             </div>
         </div>
     </footer>
@@ -358,6 +368,7 @@
     <script src="/assets/phone.js"></script>
     <script src="/assets/account.js"></script>
     <script src="/assets/confirm-dialog.js"></script>
+    <script src="/assets/workflow-sync.js"></script>
     <script src="/assets/portal.js"></script>
     <script src="/assets/portal-tracking.js"></script>
     <script src="/assets/chatbot.js" defer></script>

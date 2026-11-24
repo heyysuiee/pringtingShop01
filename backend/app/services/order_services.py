@@ -360,8 +360,81 @@ def fulfillment_method(order: Mapping[str, Any]) -> str:
 
 
 def release_status(order: Mapping[str, Any]) -> str:
-    """Where a packed, fully paid order goes next: Ready for Dispatch (delivery) or Ready for Pickup."""
+    """Where a packed, fully paid order goes next: Ready for Dispatch (delivery) or Ready for Pickup.
+
+    This is a release *destination*, not the order's current status. Callers that display progress must use
+    ``fulfillment_status``; this value is only shown as a forward-looking release step once packing is done.
+    """
     return "Ready for Dispatch" if fulfillment_method(order) == "delivery" else "Ready for Pickup"
+
+
+def next_release_status(order: Mapping[str, Any]) -> str:
+    """Explicit name for the release destination kept alongside the legacy ``release_status`` field."""
+    return release_status(order)
+
+
+def fulfillment_status(order: Mapping[str, Any]) -> str:
+    """One current fulfillment label, derived from the authoritative order status.
+
+    Payment and work progress stay in their own dimensions; this only describes what has happened to the
+    physical order. It never reports a release destination before the order is actually ready.
+    """
+    status = order["status"]
+    if status in CANCELLED_STATUSES:
+        return "Not applicable"
+    if status == "Ready for Pickup":
+        return "Ready for pickup"
+    if status == "Ready for Dispatch":
+        return "Ready for dispatch"
+    if status == "Out for Delivery":
+        return "Out for delivery"
+    if status == "Delivery Failed":
+        return "Delivery failed"
+    if status == "Delivered":
+        return "Delivered"
+    if status == "Order Claimed":
+        return "Order claimed"
+    if status == "Completed":
+        return "Completed"
+    if status == "Awaiting Full Payment":
+        return "Awaiting full payment"
+    if status == "Packaging":
+        return "Packaging"
+    if status == "Quality Checking":
+        return "Quality checking"
+    if status in PRODUCTION_STATUSES | {"Approved for Printing"}:
+        return "In production"
+    return "Not started"
+
+
+def release_ready(order: Mapping[str, Any]) -> bool:
+    """Whether an order may be announced as ready for pickup or dispatch right now.
+
+    The same rule is used by packaging completion and by final-payment verification, so no order can enter a
+    Ready status while money still needs review, a balance is outstanding, or a cancellation is pending.
+    """
+    return bool(
+        not pending_cancellation(order)
+        and pending_excess_amount(order) <= MONEY_TOLERANCE
+        and is_fully_paid(order)
+    )
+
+
+def ensure_release_ready(order: Mapping[str, Any], what: str = "release this order") -> None:
+    """Raise the same clear gate errors used by dispatch and pickup before any Ready status is saved."""
+    ensure_no_pending_cancellation(order)
+    pending_excess = pending_excess_amount(order)
+    if pending_excess > MONEY_TOLERANCE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Resolve the flagged excess of PHP {pending_excess:,.2f} before {what}. Unreviewed money is never treated as paid.",
+        )
+    if not is_fully_paid(order):
+        breakdown = payment_breakdown(order)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Verify the remaining balance of PHP {float(breakdown['balance'] or 0):,.2f} before {what}. Unpaid orders are never released.",
+        )
 
 
 def production(order: Mapping[str, Any]) -> dict[str, Any]:
@@ -490,6 +563,7 @@ def release_updates(order: Mapping[str, Any], stored_fulfillment: dict[str, Any]
 
     Store pickup orders get a one-time pickup code, which the claimant shows at the shop.
     """
+    ensure_release_ready(order, "release the order")
     record = stored_fulfillment if stored_fulfillment is not None else fulfillment(order)
     record = json_copy(record)
     record.setdefault("method", fulfillment_method(order))
@@ -877,7 +951,12 @@ def fulfillment_view(order: Mapping[str, Any], admin: bool = False) -> dict[str,
         # Orders placed before customers chose a fulfillment method default to store pickup.
         "recorded": bool(stored.get("method")),
         "address": rows,
+        # Current progress is a separate dimension from the forward-looking release destination.
+        "fulfillment_status": fulfillment_status(order),
+        "release_ready": release_ready(order),
+        # Kept for compatibility; ``next_release_status`` is the explicit name for the same value.
         "release_status": release_status(order),
+        "next_release_status": next_release_status(order),
         **fulfillment_services.fulfillment_details(order, admin),
         # The shipping fields are a snapshot: later fee changes never rewrite an existing order.
         **shipping_view(order),
@@ -1659,6 +1738,40 @@ def account_order(customer_id: str, reference: str) -> dict[str, Any]:
     view = order_view(order)
     view["status_timeline"] = status_timeline(order)
     return view
+
+
+def workflow_state(order: Mapping[str, Any]) -> dict[str, Any]:
+    """A small read-only snapshot so open pages can detect changes without reloading full orders.
+
+    ``version`` is the same counter returned with every order view and sent with admin actions. Every
+    field here comes from the stored order: a polling response never decides what the next workflow step
+    is, it only tells the page whether it should fetch the authoritative order again.
+    """
+    return {
+        "reference": order["reference"],
+        "version": order_repository.order_version(order),
+        "status": order["status"],
+        "payment_status": payment_status(order),
+        "work_status": work_status(order),
+        "fulfillment_status": fulfillment_status(order),
+        "work_approval_status": work_approval_view(order).get("status", ""),
+        "pending_submissions": len(pending_submissions(order)),
+        "confirmed_payments": round(payments_total(order["payments"]), 2),
+        "updated_at": order["updated_at"],
+    }
+
+
+def account_order_state(customer_id: str, reference: str) -> dict[str, Any]:
+    """Ownership-checked snapshot for the customer's open order."""
+    return workflow_state(customer_owned_order(reference, None, customer_id))
+
+
+def admin_order_state(reference: str) -> dict[str, Any]:
+    """Admin-only snapshot for the order currently open in a modal or verification view."""
+    order = order_repository.get_order(reference)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found.")
+    return workflow_state(order)
 
 
 def status_timeline(order: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -2571,22 +2684,71 @@ def set_payment_terms(reference: str, payload: Mapping[str, Any], actor: str = A
         raise HTTPException(status_code=422, detail="Enter a valid total order amount.")
     total = round(float(total_value), 2)
     down = validate_down_payment(payload.get("down_payment_amount"), total)
-    down_text = f"down payment PHP {down:,.2f}" if down is not None else f"50% down payment PHP {round(total * DOWN_PAYMENT_RATE, 2):,.2f}"
     instructions = _text(payload.get("payment_instructions", "") or "", "Payment instructions", 1000)
-    note = _text(payload.get("note", "") or "", "Reason", 500)
+    stored_total = order.get("total_amount")
+    stored_down = order.get("required_down_payment")
+    stored_instructions = str(order.get("payment_instructions") or "")
+    stored_total_value = round(float(stored_total), 2) if _valid_amount(stored_total) else None
+    stored_down_value = round(float(stored_down), 2) if _valid_amount(stored_down) else stored_down
+    changed = (
+        stored_total_value != total
+        or stored_down_value != down
+        or stored_instructions != instructions
+    )
+    # A revision needs an explanation in the order history and the append-only audit log.
+    note = _text(payload.get("note", "") or "", "Reason", 500, required=changed)
+
+    # Project the values being saved through the authoritative breakdown so the saved event, audit entry,
+    # and customer notification all describe the same figures the portal will show.
+    projected = dict(order)
+    projected.update({"total_amount": total, "required_down_payment": down})
+    breakdown = payment_breakdown(projected)
+    effective_down = round(float(breakdown["down_payment_required"]), 2)
+    remaining_after = round(float(breakdown["remaining_after_down_payment"]), 2)
+    subtotal = round(float(breakdown["subtotal"] or 0), 2)
+    fee = round(float(breakdown["delivery_fee"] or 0), 2)
+    down_source = "default_50_percent" if down is None else "custom"
+    down_text = (
+        f"custom down payment PHP {effective_down:,.2f}" if down is not None
+        else f"50% down payment PHP {effective_down:,.2f}"
+    )
     updates: OrderUpdates = {"total_amount": total, "required_down_payment": down}
     if instructions:
         updates["payment_instructions"] = instructions
-    event = f"Administrator set the payment terms: total PHP {total:,.2f}; {down_text}."
+    event = (
+        f"Administrator set the payment terms: printing subtotal PHP {subtotal:,.2f}; "
+        f"delivery fee PHP {fee:,.2f}; confirmed total PHP {total:,.2f}; {down_text}; "
+        f"remaining after down payment PHP {remaining_after:,.2f}."
+    )
     if note:
         event += f" Reason: {note}"
+    message = (
+        f"The shop updated the payment terms for your order. Confirmed total PHP {total:,.2f}; "
+        f"{down_text}; remaining after down payment PHP {remaining_after:,.2f}. "
+    )
+    if instructions:
+        message += f"Payment instructions: {instructions}. "
+    message += "Review the details in your customer portal."
+    notification = notification_services.build(
+        order,
+        "payment_terms_updated",
+        f"payment-terms:{order_repository.order_version(order) + 1}",
+        "Payment terms updated",
+        message,
+    )
     return _save(
         order,
         updates,
         event,
         payload.get("expected_version"),
         admin=True,
-        audit=_audit("payment.terms_set", ADMIN, actor, total=total, down_payment=down, note=note),
+        audit=_audit(
+            "payment.terms_set", ADMIN, actor,
+            total=total, down_payment=effective_down, down_payment_source=down_source,
+            remaining_after_down_payment=remaining_after, payment_instructions_changed=stored_instructions != instructions,
+            note=note,
+        ),
+        notifications=[notification],
     )
 
 
@@ -2608,14 +2770,17 @@ def _payment_updates(order: OrderRecord, payment: dict[str, Any]) -> tuple[Order
     (Awaiting Full Payment) is released for pickup or dispatch as soon as it is fully paid.
     """
     payments = order["payments"] + [payment]
+    projected = {**order, "payments": payments}
     updates: OrderUpdates = {"payments": payments}
     total_paid = payments_total(payments)
     confirmed = order["status"] == "Awaiting Down Payment" and total_paid >= down_payment_due(order) - 0.005
     extra: list[dict[str, Any]] = []
     if confirmed:
         updates["status"] = "Confirmed"
-    elif order["status"] in {"Awaiting Full Payment", "Awaiting Final Payment"} and total_paid >= round(float(order["total_amount"] or 0), 2) - 0.005:
-        status, record, notice = release_updates(order)
+    elif order["status"] in {"Awaiting Full Payment", "Awaiting Final Payment"} and release_ready(projected):
+        # The projected order includes this payment, so an unreviewed excess or a pending cancellation cannot
+        # put the order into a Ready status that the release actions would immediately refuse.
+        status, record, notice = release_updates(projected)
         updates["status"] = status
         updates["fulfillment"] = record
         extra.append(notice)
@@ -3530,7 +3695,7 @@ STATUS_NOTIFICATIONS = {
     "In Production": ("Production started", "Printing of your order has started."),
     "Ready for Pickup": ("Ready for pickup", "Your order is ready for pickup at the shop."),
     "Out for Delivery": ("Out for delivery", "Your order is out for delivery."),
-    "Completed": ("Order completed", "Your order is completed. Thank you for ordering with ImPRESSion PrintShop!"),
+    "Completed": ("Order completed", "Your order is completed. Thank you for ordering with ImPRESS Print Works!"),
     "Rejected": ("Order request rejected", "The shop could not accept your order request."),
     "Cancelled": ("Order cancelled", "The shop cancelled your order."),
 }

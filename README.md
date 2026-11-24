@@ -1,4 +1,4 @@
-# ImPRESSion PrintShop
+# ImPRESS Print Works
 
 FastAPI serves the existing HTML/CSS/JavaScript storefront and admin pages from one origin. The current order workflow defaults to local SQLite and disk uploads for self-hosting; Vercel uses Turso with database-backed files. Passwords for customer accounts are PBKDF2-SHA256 hashes and sessions use signed, HttpOnly cookies.
 

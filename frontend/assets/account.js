@@ -442,8 +442,16 @@
         }
     });
 
-    request("/api/customer/session")
-        .then((result) => renderCustomer(result.customer))
-        .catch(showSignedOut);
+    // Exposed so the portal can wait for session restoration before opening an order from its URL.
+    const sessionReady = request("/api/customer/session")
+        .then((result) => {
+            renderCustomer(result.customer);
+            return result.customer;
+        })
+        .catch((error) => {
+            showSignedOut();
+            return null;
+        });
+    window.PrintShopAccount = { ready: sessionReady };
     void loadLocationOptions();
 })();
